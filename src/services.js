@@ -11,6 +11,7 @@ const DEFAULT_SERVICES = [
   { id: 'max',         name: 'Max',         url: 'https://play.max.com',          color: '#3b5bff' },
   { id: 'hulu',        name: 'Hulu',        url: 'https://www.hulu.com',          color: '#1ce783' },
   { id: 'youtube',     name: 'YouTube',     url: 'https://www.youtube.com',       color: '#ff0033' },
+  { id: 'youtubetv',   name: 'YouTube TV',  url: 'https://tv.youtube.com',        color: '#cc0000' },
   { id: 'appletv',     name: 'Apple TV+',   url: 'https://tv.apple.com',          color: '#457fe6' },
   { id: 'paramount',   name: 'Paramount+',  url: 'https://www.paramountplus.com', color: '#0064ff' },
   { id: 'peacock',     name: 'Peacock',     url: 'https://www.peacocktv.com',     color: '#8b5cf6' },
