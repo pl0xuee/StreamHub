@@ -76,21 +76,33 @@ const PLAYPAUSE_JS = `(() => {
   return v.paused ? 'paused' : 'playing';
 })()`;
 
-// JS injected to pause every playing <video> on a page — run on the service being
-// switched away from so it doesn't keep playing in the background. Returns true if it
-// actually paused something, so we know whether to auto-resume on switch-back (a video
-// the user had already paused returns false and is left alone).
+// JS injected to pause every playing <video>/<audio> on a page — run on the service being
+// switched away from so it doesn't keep playing in the background. Each element we stop is
+// marked, so RESUME_JS can later restart exactly those and leave alone anything the user
+// had already paused. Returns true if it actually paused something.
+//
+// A picture-in-picture video is deliberately left running: it is floating on the user's
+// desktop, in plain sight, which is the whole point of having put it there.
 const PAUSE_ALL_JS = `(() => {
   let paused = false;
-  for (const v of document.querySelectorAll('video')) { if (!v.paused) { v.pause(); paused = true; } }
+  for (const m of document.querySelectorAll('video, audio')) {
+    if (m.paused || m.ended || m === document.pictureInPictureElement) continue;
+    m.pause();
+    m.__streamhubAutoPaused = true;
+    paused = true;
+  }
   return paused;
 })()`;
 
-// JS injected to resume the main <video> when returning to a service we auto-paused.
+// JS injected when returning to a service we auto-paused: restart just the elements
+// PAUSE_ALL_JS stopped, so a background trailer we never played doesn't spring to life.
 const RESUME_JS = `(() => {
-  const vids = Array.from(document.querySelectorAll('video'));
-  const v = vids.find(x => x.readyState > 2) || vids[0];
-  if (v) { const r = v.play(); if (r && r.catch) r.catch(() => {}); }
+  for (const m of document.querySelectorAll('video, audio')) {
+    if (!m.__streamhubAutoPaused) continue;
+    m.__streamhubAutoPaused = false;
+    const r = m.play();
+    if (r && r.catch) r.catch(() => {});
+  }
 })()`;
 
 /**
@@ -202,7 +214,10 @@ class ViewManager {
     // inhibitor keys off — far better than polling the page for a playing <video>. Note both
     // fire for muted/looping decorative video too; the inhibitor treats any playback as
     // reason enough to keep the display on, which is the safe way round.
-    wc.on('media-started-playing', () => this.onMediaChange(view, true));
+    wc.on('media-started-playing', () => {
+      this.onMediaChange(view, true);
+      if (view !== this.active) this.enforcePaused(view);
+    });
     wc.on('media-paused', () => this.onMediaChange(view, false));
 
     view.setVisible(false);
@@ -289,19 +304,49 @@ class ViewManager {
     return this.active ? this.active.webContents : null;
   }
 
+  // Run a snippet in every frame of a view, not just the top one: several services play
+  // inside a cross-origin <iframe>, and webContents.executeJavaScript only ever reaches the
+  // main frame. Resolves to one result per frame; a frame that has gone away yields
+  // undefined rather than rejecting the batch.
+  eachFrame(wc, code) {
+    if (!wc || wc.isDestroyed()) return Promise.resolve([]);
+    let frames;
+    try {
+      frames = wc.mainFrame.framesInSubtree; // includes the main frame itself
+    } catch {
+      return Promise.resolve([]);
+    }
+    return Promise.all(frames.map((f) => f.executeJavaScript(code).catch(() => undefined)));
+  }
+
   pauseView(view) {
     const wc = view && view.webContents;
     if (!wc || wc.isDestroyed()) return;
-    wc.executeJavaScript(PAUSE_ALL_JS)
-      .then((paused) => {
-        if (paused) this.autoPaused.add(view);
+    this.eachFrame(wc, PAUSE_ALL_JS)
+      .then((results) => {
+        if (!results.some(Boolean)) return; // nothing was playing; nothing to restore
+        // Injection is async, so the user can be back on this service by the time it lands.
+        // Undo it rather than leaving them looking at a video we paused behind their back.
+        if (this.active === view) this.resumeView(view);
+        else this.autoPaused.add(view);
       })
       .catch(() => {});
   }
 
   resumeView(view) {
     const wc = view && view.webContents;
-    if (wc && !wc.isDestroyed()) wc.executeJavaScript(RESUME_JS).catch(() => {});
+    if (!wc || wc.isDestroyed()) return;
+    this.eachFrame(wc, RESUME_JS).catch(() => {});
+  }
+
+  // A service we left can start playing without us: an autoplaying trailer on its home
+  // page, or a player that quietly resumes itself after our pause. Chromium tells us the
+  // moment any media starts, so put a background view straight back to sleep. It is not
+  // recorded as auto-paused — we never chose to play it, so there is nothing to resume.
+  enforcePaused(view) {
+    const wc = view && view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    this.eachFrame(wc, PAUSE_ALL_JS).catch(() => {});
   }
 
   togglePip() {
