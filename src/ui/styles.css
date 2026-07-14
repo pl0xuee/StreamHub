@@ -1,16 +1,16 @@
 :root {
   /* Dark gunmetal-grey palette — cool blue-grey with a metallic sheen. */
-  --bg: #14161a;
-  --sidebar-top: #23272e;
-  --sidebar-bottom: #191c21;
-  --surface: #1e2228;
-  --elevated: #2a2f37;
-  --elevated-2: #333944;
-  --border: #363c45;
-  --border-soft: #292e36;
-  --text: #e9ebee;
-  --muted: #949ba5;
-  --muted-2: #6c727c;
+  --bg: #0b0d10;
+  --sidebar-top: #171a1f;
+  --sidebar-bottom: #0e1014;
+  --surface: #13161a;
+  --elevated: #1c2027;
+  --elevated-2: #252a32;
+  --border: #282d35;
+  --border-soft: #1b1f25;
+  --text: #e4e7ea;
+  --muted: #8a919b;
+  --muted-2: #626871;
   --accent: #63b3d6;
   --accent-dim: #4d94b5;
   --accent-soft: rgba(99, 179, 214, 0.14);
@@ -42,13 +42,13 @@ body {
   width: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #363b44;
+  background: #282d35;
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #454b56;
+  background: #353b45;
   background-clip: padding-box;
 }
 
@@ -60,8 +60,8 @@ body {
   width: var(--sidebar-width);
   height: 100%;
   background: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
-  border-right: 1px solid #0e1013;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03), 2px 0 12px rgba(0, 0, 0, 0.35);
+  border-right: 1px solid #05070a;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03), 2px 0 12px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   padding: 14px 12px;
@@ -157,13 +157,13 @@ body {
   transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
 }
 .service:hover {
-  background: linear-gradient(180deg, var(--elevated) 0%, #262b33 100%);
+  background: linear-gradient(180deg, var(--elevated) 0%, #181c22 100%);
   color: var(--text);
 }
 .service.active {
   background: linear-gradient(180deg, var(--elevated-2) 0%, var(--elevated) 100%);
   color: var(--text);
-  border-color: #3d434d;
+  border-color: #2e343d;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 /* Accent highlight bar on the active service, with a soft glow. */
@@ -241,7 +241,7 @@ body {
   flex: 1;
   background: transparent;
   color: var(--muted);
-  border: 1px dashed #3a404a;
+  border: 1px dashed #2c323b;
   border-radius: var(--radius-sm);
   padding: 8px 6px;
   font-size: 12px;
@@ -318,7 +318,7 @@ body.collapsed #btn-update {
 }
 .toolbar button {
   flex: 1;
-  background: linear-gradient(180deg, #2a2f37 0%, #222730 100%);
+  background: linear-gradient(180deg, #1c2027 0%, #15181d 100%);
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -331,12 +331,12 @@ body.collapsed #btn-update {
 }
 .toolbar button:hover {
   color: var(--text);
-  background: linear-gradient(180deg, #313742 0%, #272c34 100%);
-  border-color: #454b56;
+  background: linear-gradient(180deg, #242a32 0%, #1b1f26 100%);
+  border-color: #353b45;
 }
 .toolbar button:active {
-  background: #202429;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+  background: #0e1014;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 .toolbar button:focus-visible {
   outline: 2px solid var(--accent);
@@ -378,7 +378,7 @@ body.collapsed .list-actions {
 body.removed-window {
   padding: 18px;
   overflow-y: auto;
-  background: linear-gradient(180deg, #1b1e24 0%, var(--bg) 100%);
+  background: linear-gradient(180deg, #121519 0%, var(--bg) 100%);
 }
 .removed-header h1 {
   font-size: 15px;
@@ -391,7 +391,7 @@ body.removed-window {
 }
 .removed-window .service.restorable {
   border: 1px solid var(--border-soft);
-  background: linear-gradient(180deg, #22272e 0%, #1c2027 100%);
+  background: linear-gradient(180deg, #171b21 0%, #12151a 100%);
   margin-bottom: 7px;
   transition: border-color 0.14s ease, background 0.14s ease;
 }
