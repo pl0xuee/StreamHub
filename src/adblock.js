@@ -37,6 +37,37 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BRAVE_EXPERIMENTAL_URL =
   'https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/experimental.txt';
 
+// Exception rules that keep the filter lists from breaking the services this app exists to
+// show. A general-purpose blocklist assumes a browser, where a broken site is a tab you
+// close; here it is the whole product, so a service that a rule breaks is worse than an ad
+// that slips through.
+//
+// Netflix breaks in TWO independent ways, and it takes the error page down only if both are
+// undone — each on its own is enough to produce "Something went wrong / NSES-UHX" instead of
+// the browse page. Bisected against the live site with the engine's two halves toggled
+// separately:
+//
+//  1. The lists carry `##+js(no-fetch-if, logs.netflix.com)`, which injects uBO's
+//     no-fetch-if scriptlet. That scriptlet replaces window.fetch wholesale, and Netflix's
+//     UI is driven entirely through fetch, so patching it to suppress one telemetry beacon
+//     takes the whole page with it. Disabled here for netflix.com only.
+//  2. EasyPrivacy separately blocks the same telemetry at the network layer
+//     (netflix.com/log, /ichnaea, logs.netflix.com). Netflix treats those cancelled requests
+//     as fatal too, so they have to be allowed through.
+//
+// Add to this list only with a reproduction — an exception that is not needed is blocking
+// quietly given away.
+const UNBREAK_RULES = [
+  // 1. every scriptlet on netflix.com, not just no-fetch-if — the others break it too, and
+  //    Netflix is a paid, ad-free service whose cosmetic payload is 0 bytes of CSS, so
+  //    scriptlets there can only cost us breakage and buy nothing.
+  'netflix.com#@#+js()',
+  // 2. the telemetry endpoints themselves
+  '@@||netflix.com/log/',
+  '@@||netflix.com/ichnaea/',
+  '@@||logs.netflix.com^',
+];
+
 function enginePath() {
   return path.join(app.getPath('userData'), 'adblock-engine.bin');
 }
@@ -120,6 +151,10 @@ class AdBlocker {
         // eslint-disable-next-line no-console
         console.warn('[adblock] Brave experimental rules unavailable:', err.message);
       }
+
+      // Applied last, and never over the network: an exception that failed to download would
+      // mean a silently broken service, which is exactly what these exist to prevent.
+      blocker.updateFromDiff({ added: UNBREAK_RULES });
 
       this.blocker = blocker;
       this.error = null;
