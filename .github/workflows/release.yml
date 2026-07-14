@@ -50,16 +50,35 @@ jobs:
           python -m pip install --upgrade castlabs-evs
           python -m castlabs_evs.account --no-ask reauth
 
+      # `--publish never` keeps electron-builder from auto-publishing to GitHub (which
+      # would also upload its electron-updater metadata, latest*.yml, that this app
+      # doesn't use). The upload step below attaches only the two installers.
       - name: Build
         env:
           EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run ${{ matrix.script }}
+        run: npm run ${{ matrix.script }} -- --publish never
 
       - name: Attach installers to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true # auto changelog ("What's Changed") from commits
+          body: |
+            ## Install
+
+            **Linux** — download `StreamHub-*.AppImage`, then:
+            ```bash
+            chmod +x StreamHub-*.AppImage
+            ./StreamHub-*.AppImage        # needs FUSE 2 (see the README)
+            ```
+
+            **Windows** — download and run `StreamHub Setup *.exe`. SmartScreen may warn
+            (unsigned installer); click *More info → Run anyway*.
+
+            Playback caps at ~720p on the DRM services (a Linux/Widevine limitation);
+            YouTube/Twitch and other non-DRM services can go higher.
+
+            ---
           files: |
             dist/*.AppImage
             dist/*.exe
