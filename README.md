@@ -1,164 +1,113 @@
 # StreamHub
 
-A desktop app that wraps the **official** streaming websites (Netflix, Prime Video,
-Disney+, Max, Hulu, YouTube, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Tubi,
-and any others you add) behind one unified, gunmetal-grey UI — so you get an app-like
-experience instead of juggling browser tabs.
+One desktop app for the **official** streaming sites — Netflix, Prime Video, Disney+, Max,
+Hulu, YouTube, YouTube TV, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Tubi, and any
+others you add — instead of a drawer full of browser tabs.
 
-Playback happens on each service's own website using its own DRM. **No DRM is
-circumvented, extracted, or bypassed** — the app is a purpose-built Chromium shell
-that hosts the official web players.
+Each service loads its own website and plays through its own DRM. **No DRM is circumvented,
+extracted, or bypassed:** this is a purpose-built Chromium shell hosting the official web
+players, built on [castLabs ECS](https://github.com/castlabs/electron-releases), an Electron
+fork that bundles the licensed Widevine CDM (vanilla Electron cannot play these sites).
 
 ## Download
 
-Grab the latest `StreamHub-*.AppImage` from the [Releases](https://github.com/pl0xuee/StreamHub/releases)
-page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--limits-linux)).
+Grab the latest `StreamHub.AppImage` from
+[Releases](https://github.com/pl0xuee/StreamHub/releases).
 
-## How it works
+It needs **FUSE 2** (`libfuse.so.2`), which many distros no longer ship by default:
 
-- Built on [castLabs "Electron for Content Security" (ECS)](https://github.com/castlabs/electron-releases),
-  a drop-in Electron fork that bundles the licensed **Widevine** CDM. This is what
-  makes Netflix/Prime/etc. actually play — vanilla Electron cannot.
-- Each service loads in its own `WebContentsView` with a **persistent, isolated
-  session** (`persist:<service>@default`), so every service stays logged in and keeps
-  its cookies separate from the others.
-- Each service view presents a desktop Chrome identity (User-Agent **and** matching
-  `Sec-CH-UA` client hints) so sign-in flows behave the same as they do in Chrome.
-- The sidebar (the only part this app styles) switches services and can collapse to a
-  narrow icon rail; the streaming sites keep their own look inside the content area.
+| Distro | |
+| --- | --- |
+| Arch / CachyOS | `sudo pacman -S fuse2` |
+| Debian / Ubuntu | `sudo apt install libfuse2` |
+| Fedora | `sudo dnf install fuse` |
 
-## Requirements & limits (Linux)
+Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 
-- **Resolution caps at ~720p.** Netflix and most services require hardware DRM
-  (Widevine L1 + HDCP) for 1080p/4K, which Linux browsers don't have. This matches what
-  Chrome/Firefox deliver on Linux today — it is a platform limit, not an app bug.
-  (YouTube, Twitch and other non-DRM services can go higher via their own quality menus.)
-- **FUSE 2 is needed to run the AppImage** (`libfuse.so.2`), which many current distros
-  no longer ship by default:
-  - Arch/CachyOS: `sudo pacman -S fuse2`
-  - Debian/Ubuntu: `sudo apt install libfuse2`
-  - Fedora: `sudo dnf install fuse`
+## Know before you install
 
-  Or run it without FUSE via `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub-*.AppImage`
-  (unpacks to a temp dir on each launch).
-- **No offline downloads** — ECS does not support persistent Widevine licenses on Linux.
+- **Video caps at ~720p.** 1080p/4K needs hardware DRM (Widevine L1 + HDCP), which no Linux
+  browser has. Chrome and Firefox are capped the same way — it's a platform limit, not a bug.
+  Non-DRM services (YouTube, Twitch) go higher via their own quality menus.
+- **No offline downloads** — ECS has no persistent Widevine licenses on Linux.
+- Linux only.
 
 ## Features
 
-- Unified sidebar + one-click service switching
-- **Manage your list**: drag to reorder, delete a service (it moves to a separate
-  "Removed" window), and click it there to add it back — all saved automatically
-- **Pause on switch**: leaving a service pauses its video so nothing plays in the
-  background; returning resumes it (unless you'd paused it yourself)
-- **Experimental ad blocker** (off by default), per-service — see [Ad blocking](#ad-blocking)
-- **Keeps the screen awake** while something is playing
-- **Picks up where you left off** — window size/position, last service, sidebar state
-- **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen show and drive playback
-- **Optional tray icon** — closing the window keeps a stream running
-- **Sign out / clear data** per service (right-click it)
-- Collapsible sidebar (icon rail) to give the video more width
-- Persistent, per-service logins (isolated sessions)
-- Popup-based sign-in ("Sign in with Google/Apple") works via real child windows
-- Fullscreen (F11 / the site's own button; sidebar auto-hides during video fullscreen)
-- Media keys (play/pause, and ±10s seek on next/prev) — only while the app is focused
-- Picture-in-picture / floating mini-player
+- Sidebar with one-click switching; drag to reorder, delete to a "Removed" list, click to
+  restore. Collapses to an icon rail.
+- **Pause on switch** — leaving a service pauses its video, returning resumes it.
+- **Stays signed in**, per service, in isolated sessions. Popup sign-in ("Sign in with
+  Google/Apple") works. Right-click a service to sign out and wipe its data.
+- **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen drive playback.
+  Media keys work while the app is focused.
+- **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
+- **Remembers where you left off** — window, last service, sidebar state.
+- **Settings** (sidebar gear, or `Ctrl+,`) — ad blocker, tray behaviour, updates.
+- **Optional tray icon** — closing the window keeps a stream running.
 
 ## Updating
 
-"Check for updates" in the sidebar downloads the new build and restarts into it, in place —
-no browser, no reinstall.
+"Check for updates" in Settings downloads the new build, swaps the AppImage in place and
+restarts into it — no browser, no reinstall. The sidebar's gear shows a dot when one is
+waiting.
 
-- The download lands in `~/.cache/streamhub-updater/pending/`, then replaces the AppImage you
-  launched from and relaunches it.
-- The AppImage is deliberately named **`StreamHub.AppImage`, with no version in it**. Updates
-  overwrite that one file, so its path never changes and your desktop entry, dock icon and
-  any other shortcuts keep working. (electron-updater only overwrites in place when the
-  filename carries no version; a versioned name makes it write a *new* file and delete the
-  old one, breaking every shortcut pointing at it.)
-- Coming from a build named `StreamHub-<version>.AppImage`, the update renames the file once,
-  to `StreamHub.AppImage`. The app warns you before restarting. Repoint your shortcuts that
-  one time and updates stop disturbing them.
-- Self-updating only works when running as the AppImage. Started any other way (`npm start`,
-  a distro package), there is nothing to swap, so the app sends you to the download page.
+The file is deliberately named `StreamHub.AppImage`, with no version in it, so updates
+overwrite that one path and your desktop entry and dock icon keep working. Coming from an
+older `StreamHub-<version>.AppImage`, the update renames the file once and warns you first;
+repoint your shortcuts that one time and updates stop disturbing them.
+
+Self-updating only works when running as the AppImage. Started any other way, the app sends
+you to the download page instead.
 
 ## Ad blocking
 
-The sidebar has an **Experimental ad blocker** toggle. It is **off by default**; the choice
-is saved with the rest of your settings.
+Off by default, and **experimental** — the toggle is in Settings.
 
-- It blocks **network requests** (ads, trackers) and applies **cosmetic filters** and
-  **scriptlets**, using the standard uBlock Origin / EasyList filter syntax — the same
-  rules an EasyList + EasyPrivacy setup gives you in a browser.
-- uBlock Origin Lite itself can't be installed here: it's a Manifest V3 extension built on
-  Chrome's `declarativeNetRequest`, which Electron doesn't implement. So the engine runs
-  natively in the main process instead ([`@ghostery/adblocker`](https://github.com/ghostery/adblocker)),
-  attached to each service's session.
-- The filter engine is downloaded on first enable and cached in your userData dir
-  (`adblock-engine.bin`), then refreshed weekly. With no network and no cache, the toggle
-  reports the failure and stays off rather than pretending to be on.
-- Toggling it reloads the open services, since blocking only affects new requests.
+It blocks network requests and applies cosmetic filters using standard uBlock Origin /
+EasyList rules, via [`@ghostery/adblocker`](https://github.com/ghostery/adblocker) running in
+the main process (uBlock Origin Lite itself is a Manifest V3 extension, which Electron can't
+load). Filters are fetched on first enable, cached, and refreshed weekly. Right-click a
+service to turn blocking off for just that site.
 
-**Caveats, honestly:** it's labelled experimental for a reason.
+Honest caveats:
 
-- **Server-stitched ads still get through.** Where ads are muxed into the video stream
-  itself (Hulu's ad tier, Peacock free, some YouTube ads) there is no separate request to
-  block. This is the same limit every blocker hits, uBlock Origin Lite included.
+- **Server-stitched ads still get through.** Where ads are muxed into the video itself
+  (Hulu's ad tier, Peacock free, some YouTube ads) there is no request to block. Every
+  blocker hits this limit.
 - **It may break a service.** An over-broad rule can take out a player or a sign-in flow.
-  If a service misbehaves, turn the toggle off and reload.
-- Blocking ads on an ad-supported tier may be against that service's terms of use. Your
-  call — the feature ships off.
+  Turn it off and reload if a site misbehaves.
+- Blocking ads on an ad-supported tier may breach that service's terms. Your call — it ships
+  off.
 
-## Run from source
+## Privacy
+
+No account, no server, no telemetry. Logins are ordinary browser cookies under
+`~/.config/streamhub/`, encrypted through your OS secret store (kwallet/gnome-libsecret) the
+same way Chrome's are.
+
+Two limits: cookies written by an older build stay plaintext until the site rewrites them
+(sign out and back in to convert one), and on a system with no keyring Chromium falls back to
+a hardcoded key, which is obfuscation rather than security. **A session cookie is a working
+login** — don't sync or commit that directory.
+
+## Development
 
 ```bash
 npm install     # downloads the castLabs ECS binary (bundles Widevine)
 npm start
+npm run build   # -> dist/StreamHub.AppImage
 ```
 
-First launch downloads and verifies the Widevine component before the window opens.
-
-## Build (AppImage)
-
-```bash
-npm run build          # -> dist/StreamHub.AppImage
-```
-
-## Adding or changing services
-
-The built-in list lives in [`src/services.js`](src/services.js) as `DEFAULT_SERVICES`.
-Add an entry — `{ id, name, url, color }` — and it appears automatically (the config
-loader folds in any new built-in without disturbing a user's existing order or removals).
-Your own reordering/removals are saved per-user in `~/.config/streamhub/services.json`,
-never in the source.
-
-## Privacy
-
-Everything runs and stays on your machine — there is no account, server, or telemetry.
-Logins are stored as ordinary browser cookies under your user config directory
-(`~/.config/streamhub/Partitions/<service>@default/`).
-
-Those cookies are **encrypted through your OS secret store** (kwallet or gnome-libsecret on
-Linux), the same way Chrome's are. This is switched on by an Electron build-time fuse
-(`EnableCookieEncryption`, see `build/afterPack.js`) — it is baked into the binary and cannot
-be enabled from the app's own code.
-
-Two limits worth knowing:
-
-- **It does not reach backwards.** Cookies already written in plaintext by an older build
-  stay that way until the site rewrites them. To convert a service in one go, right-click it
-  → **Sign out / clear data**, then sign in again.
-- **No secret store, no real protection.** On a system without a keyring (a bare window
-  manager, a container), Chromium falls back to encrypting with a hardcoded key — which is
-  obfuscation, not security. You can tell which you have: a `v11` prefix on the stored
-  ciphertext means a real key from your keyring, `v10` means the fallback.
-
-A **session cookie is a working login**, so regardless of encryption, don't sync or back up
-that config directory anywhere shared, and don't commit it.
+The built-in service list is `DEFAULT_SERVICES` in [`src/services.js`](src/services.js) — add
+`{ id, name, url, color }` and it shows up, including for existing users, without disturbing
+their order or removals. Personal lists live in `~/.config/streamhub/services.json`, never in
+the source.
 
 ## Legal
 
-This is a personal-use shell around official streaming sites. castLabs ECS is free for
-personal/development use; wider redistribution has its own VMP signing/license terms.
-Keep the app a shell only — no scraping of protected streams, no key handling.
+A personal-use shell around official streaming sites. castLabs ECS is free for
+personal/development use; redistribution has its own VMP signing and license terms. Keep it a
+shell — no scraping of protected streams, no key handling.
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE).
