@@ -185,13 +185,14 @@ function renderAdblockCount(blocked) {
   );
 }
 
-// "3 days ago" — the useful question is how stale the rules are, not the exact timestamp.
+// How stale the rules are, which is the useful question — not the exact timestamp. Kept
+// short so it sits on one line beside the Update button in a 220px sidebar.
 function ageText(ms) {
-  if (!ms) return 'Filters: unknown age';
+  if (!ms) return 'Age unknown';
   const days = Math.floor((Date.now() - ms) / 86400000);
-  if (days <= 0) return 'Filters: updated today';
-  if (days === 1) return 'Filters: 1 day old';
-  return `Filters: ${days} days old`;
+  if (days <= 0) return 'Updated today';
+  if (days === 1) return '1 day old';
+  return `${days} days old`;
 }
 
 function renderAdblock(ab) {

@@ -151,8 +151,10 @@ body {
 .service {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
+  /* Tight, because the row has to hold an icon, the name, a blocked count and a delete
+     button inside 220px — a roomier gap is what was clipping "Prime Video" to "Prime …". */
+  gap: 9px;
+  padding: 7px 8px;
   border-radius: var(--radius);
   border: 1px solid transparent;
   color: var(--muted);
@@ -184,8 +186,8 @@ body {
 }
 
 .service .icon {
-  width: 30px;
-  height: 30px;
+  width: 27px;
+  height: 27px;
   border-radius: 8px;
   display: grid;
   place-items: center;
@@ -271,25 +273,22 @@ body {
   line-height: 15px;
 }
 
-/* Per-service blocked count, sitting between the label and the delete button. */
+/* Per-service blocked count. Deliberately quiet: it is a reassurance that the blocker is
+   working, not a number anyone reads closely, and the service's name matters more than it
+   does — so no pill, no background, and it gives up its own width before the label does. */
 .service .shield {
   flex-shrink: 0;
   font-size: 10px;
   font-weight: 600;
-  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   color: var(--muted-2);
-  min-width: 0;
-  padding: 0 4px;
-  border-radius: 7px;
-  background: transparent;
-}
-.service .shield:not(:empty) {
-  background: var(--elevated-2);
+  opacity: 0.75;
 }
 /* Blocking deliberately off here, while it is on elsewhere. */
 .service .shield.off {
   color: var(--danger);
-  background: transparent;
+  opacity: 1;
   font-size: 12px;
 }
 /* The delete button appears on hover and takes the shield's place. */
@@ -349,12 +348,13 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  margin-top: -2px;
-  padding: 0 9px 0 35px; /* line up under the checkbox's label, not the checkbox */
+  margin-top: -3px;
+  padding: 0 4px 0 35px; /* line up under the checkbox's label, not the checkbox */
 }
 #filter-age {
   font-size: 10.5px;
   color: var(--muted-2);
+  white-space: nowrap; /* "Updated today" must not wrap beside the button */
 }
 #btn-refresh-filters {
   background: transparent;
@@ -386,8 +386,8 @@ body {
 .setting {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 9px;
+  gap: 9px;
+  padding: 7px 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: linear-gradient(180deg, #171b21 0%, #12151a 100%);
