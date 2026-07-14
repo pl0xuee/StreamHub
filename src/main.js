@@ -51,6 +51,7 @@ let config = { services: [], removed: [], settings: {} }; // the user's list, lo
 let activeServiceId = null;
 let sidebarCollapsed = false;
 let adblockStatsTimer = null;
+let pendingUpdate = null; // version string of a newer release we already know about, else null
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
@@ -67,6 +68,7 @@ function statePayload() {
     sidebarCollapsed,
     version: APP_VERSION,
     adblock: adblocker.status(),
+    updateAvailable: pendingUpdate,
   };
 }
 
@@ -336,6 +338,35 @@ function appImageWillBeRenamed() {
   return Boolean(current) && /\d+\.\d+\.\d+/.test(path.basename(current));
 }
 
+// Ask whether a newer release exists, quietly: no dialogs, no download, and failures
+// (offline, GitHub rate-limited, castLabs down) resolve to null rather than throwing. This
+// runs unprompted in the background, so it must never interrupt the user — the only thing it
+// is allowed to do is light up the sidebar button.
+async function checkQuietly() {
+  try {
+    if (!canSelfUpdate()) {
+      const latest = await fetchLatestRelease();
+      return isNewerVersion(latest.version, APP_VERSION) ? latest.version : null;
+    }
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result && result.updateInfo && result.updateInfo.version;
+    return latest && isNewerVersion(latest, APP_VERSION) ? latest : null;
+  } catch {
+    return null; // a background check that cannot reach the network is not an error
+  }
+}
+
+// autoDownload is off, so this only ever fetches release metadata — the ~130MB AppImage is
+// still not touched until the user asks for it.
+const UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
+
+async function pollForUpdate() {
+  const latest = await checkQuietly();
+  if (latest === pendingUpdate) return; // nothing changed; don't churn the UI
+  pendingUpdate = latest;
+  broadcast();
+}
+
 // Download the new AppImage in place, then restart into it. Progress goes to the sidebar
 // button so a 120MB download isn't a silently frozen UI.
 async function downloadAndInstall(info) {
@@ -375,13 +406,18 @@ async function downloadAndInstall(info) {
 }
 
 // Check for a newer release and, when we can, install it in place rather than making the
-// user download it from a browser.
+// user download it from a browser. Whatever this learns also settles the sidebar button's
+// highlight: finding nothing must clear it, or it would keep flashing at an update the user
+// has just been told they do not have.
 ipcMain.handle('check-for-updates', async () => {
   const current = APP_VERSION;
   try {
     if (!canSelfUpdate()) {
       const latest = await fetchLatestRelease();
-      if (latest.version && isNewerVersion(latest.version, current)) {
+      const newer = Boolean(latest.version) && isNewerVersion(latest.version, current);
+      pendingUpdate = newer ? latest.version : null;
+      broadcast();
+      if (newer) {
         const r = await dialog.showMessageBox(baseWindow, {
           type: 'info',
           message: `Update available: v${latest.version}`,
@@ -405,7 +441,10 @@ ipcMain.handle('check-for-updates', async () => {
 
     const result = await autoUpdater.checkForUpdates();
     const latest = result?.updateInfo?.version;
-    if (!latest || !isNewerVersion(latest, current)) {
+    const newer = Boolean(latest) && isNewerVersion(latest, current);
+    pendingUpdate = newer ? latest : null;
+    broadcast();
+    if (!newer) {
       dialog.showMessageBox(baseWindow, {
         type: 'info',
         message: "You're up to date",
@@ -475,6 +514,12 @@ app.whenReady().then(async () => {
 
   buildAppMenu();
   createWindow();
+
+  // Look for a new release in the background so the sidebar button can announce one instead
+  // of the user having to think to go and ask. Deferred a little: startup is already busy
+  // fetching Widevine, the filter engine and the first service, and nothing here is urgent.
+  setTimeout(pollForUpdate, 10000);
+  setInterval(pollForUpdate, UPDATE_POLL_MS);
 });
 
 app.on('window-all-closed', () => {

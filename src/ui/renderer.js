@@ -110,12 +110,30 @@ function renderAdblock(ab) {
   else setAdblockSub(ADBLOCK_SUB, false);
 }
 
+// The button is the only place an update is announced, so it says which version is waiting
+// rather than just glowing. `busy` covers the checking/downloading states, where the button
+// is reporting on itself and must not be overwritten by a state broadcast.
+let updateBusy = false;
+
+function renderUpdateButton() {
+  if (updateBusy) return;
+  const btn = document.getElementById('btn-update');
+  const version = state.updateAvailable;
+  btn.textContent = version ? `Update to v${version}` : 'Check for updates';
+  btn.title = version ? `Install StreamHub v${version}` : 'Check for updates';
+  btn.classList.toggle('has-update', Boolean(version));
+  // The button is hidden in the collapsed rail, so mark the body too — that lets the rail
+  // show a dot instead, rather than the update going unmentioned until the sidebar is opened.
+  document.body.classList.toggle('update-available', Boolean(version));
+}
+
 function applyState(next) {
   state = next;
   renderServices();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
   renderAdblock(state.adblock);
+  renderUpdateButton();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
@@ -129,9 +147,8 @@ async function init() {
 
   document.getElementById('btn-removed').addEventListener('click', () => window.shell.openRemovedWindow());
   const updateBtn = document.getElementById('btn-update');
-  const UPDATE_LABEL = updateBtn.textContent;
 
-  // Downloading the new build takes a while (the AppImage is ~120MB), so report progress
+  // Downloading the new build takes a while (the AppImage is ~130MB), so report progress
   // on the button rather than leaving it sitting on "Checking…".
   window.shell.onUpdateProgress((percent) => {
     updateBtn.textContent = percent === null ? 'Checking…' : `Downloading ${percent}%`;
@@ -140,9 +157,14 @@ async function init() {
   updateBtn.addEventListener('click', () => {
     updateBtn.disabled = true;
     updateBtn.textContent = 'Checking…';
+    updateBtn.classList.remove('has-update'); // stop pulsing the moment it is acted on
+    updateBusy = true;
     Promise.resolve(window.shell.checkForUpdates()).finally(() => {
       updateBtn.disabled = false;
-      updateBtn.textContent = UPDATE_LABEL;
+      updateBusy = false;
+      // The main process has since told us whether an update is really there, so let the
+      // button settle back to whatever the truth now is.
+      renderUpdateButton();
     });
   });
   // Toggling reloads every open service, and turning it on the first time may have to

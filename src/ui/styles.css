@@ -394,6 +394,59 @@ body.collapsed .settings {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ---- An update is waiting ---- */
+/* A slow accent pulse: enough to catch the eye on a glance at the sidebar, not so much that
+   it nags at someone who is trying to watch something. */
+@keyframes update-pulse {
+  0%,
+  100% {
+    border-color: var(--accent-dim);
+    box-shadow: 0 0 0 rgba(99, 179, 214, 0);
+  }
+  50% {
+    border-color: var(--accent);
+    box-shadow: 0 0 9px rgba(99, 179, 214, 0.55);
+  }
+}
+
+#btn-update.has-update {
+  color: var(--text);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+  animation: update-pulse 1.9s ease-in-out infinite;
+}
+#btn-update.has-update:hover {
+  animation-play-state: paused; /* settle once it is being aimed at */
+  border-color: var(--accent);
+}
+
+/* Collapsed to the rail, the button is hidden — so put an accent dot on the version instead,
+   which is the only part of the footer still on screen. */
+body.collapsed.update-available #app-version {
+  color: var(--accent);
+}
+body.collapsed.update-available #app-version::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(99, 179, 214, 0.8);
+  animation: update-pulse 1.9s ease-in-out infinite;
+}
+
+/* Respect a reduced-motion preference: still clearly marked, just not moving. */
+@media (prefers-reduced-motion: reduce) {
+  #btn-update.has-update,
+  body.collapsed.update-available #app-version::after {
+    animation: none;
+    border-color: var(--accent);
+  }
+}
 /* In the collapsed rail, show just the version, no update button. */
 body.collapsed .app-meta {
   justify-content: center;
