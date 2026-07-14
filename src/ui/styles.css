@@ -1,0 +1,373 @@
+:root {
+  /* Dark gunmetal-grey palette — cool blue-grey with a metallic sheen. */
+  --bg: #14161a;
+  --sidebar-top: #23272e;
+  --sidebar-bottom: #191c21;
+  --surface: #1e2228;
+  --elevated: #2a2f37;
+  --elevated-2: #333944;
+  --border: #363c45;
+  --border-soft: #292e36;
+  --text: #e9ebee;
+  --muted: #949ba5;
+  --muted-2: #6c727c;
+  --accent: #63b3d6;
+  --accent-dim: #4d94b5;
+  --accent-soft: rgba(99, 179, 214, 0.14);
+  --danger: #c8323d;
+  --sidebar-width: 220px;
+  --radius: 9px;
+  --radius-sm: 6px;
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  user-select: none;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin gunmetal scrollbars. */
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #363b44;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #454b56;
+  background-clip: padding-box;
+}
+
+/* Sidebar: brushed-metal vertical gradient with a lit right edge. */
+#sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100%;
+  background: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
+  border-right: 1px solid #0e1013;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03), 2px 0 12px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 6px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.brand-text {
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #ffffff 0%, #b9c0ca 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Hamburger: collapses the sidebar to an icon rail and back. */
+#btn-collapse {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+#btn-collapse:hover {
+  background: var(--elevated);
+  border-color: var(--border);
+}
+.bars,
+.bars::before,
+.bars::after {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--muted);
+  transition: background 0.14s ease;
+}
+.bars {
+  position: relative;
+}
+.bars::before,
+.bars::after {
+  content: "";
+  position: absolute;
+  left: 0;
+}
+.bars::before {
+  top: -5px;
+}
+.bars::after {
+  top: 5px;
+}
+#btn-collapse:hover .bars,
+#btn-collapse:hover .bars::before,
+#btn-collapse:hover .bars::after {
+  background: var(--text);
+}
+
+.services {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.service {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.service:hover {
+  background: linear-gradient(180deg, var(--elevated) 0%, #262b33 100%);
+  color: var(--text);
+}
+.service.active {
+  background: linear-gradient(180deg, var(--elevated-2) 0%, var(--elevated) 100%);
+  color: var(--text);
+  border-color: #3d434d;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+/* Accent highlight bar on the active service, with a soft glow. */
+.service.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(99, 179, 214, 0.6);
+}
+
+.service .icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  /* Metallic gloss + depth over the brand colour. */
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 3px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+.service .label {
+  font-size: 13.5px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Per-service delete button, revealed on hover. */
+.service .del {
+  flex-shrink: 0;
+  width: 21px;
+  height: 21px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.service:hover .del {
+  opacity: 1;
+}
+.service .del:hover {
+  background: var(--danger);
+  color: #fff;
+}
+.service.dragging {
+  opacity: 0.45;
+  background: var(--elevated);
+  border-color: var(--accent-dim);
+}
+
+/* Add-site / Removed buttons under the list. */
+.list-actions {
+  display: flex;
+  gap: 7px;
+}
+.list-actions button {
+  flex: 1;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed #3a404a;
+  border-radius: var(--radius-sm);
+  padding: 8px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.list-actions button:hover {
+  color: var(--text);
+  border-color: var(--accent-dim);
+  border-style: solid;
+  background: var(--accent-soft);
+}
+#removed-count {
+  display: inline-block;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--elevated-2);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.sidebar-footer {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 11px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+}
+.toolbar button {
+  flex: 1;
+  background: linear-gradient(180deg, #2a2f37 0%, #222730 100%);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.toolbar button:hover {
+  color: var(--text);
+  background: linear-gradient(180deg, #313742 0%, #272c34 100%);
+  border-color: #454b56;
+}
+.toolbar button:active {
+  background: #202429;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.toolbar button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- Collapsed sidebar (icon rail) ---- */
+body.collapsed {
+  --sidebar-width: 56px;
+}
+body.collapsed #sidebar {
+  padding: 14px 8px;
+}
+body.collapsed .brand {
+  justify-content: center;
+  padding: 4px 0 14px;
+}
+body.collapsed .brand-text,
+body.collapsed .service .label {
+  display: none;
+}
+body.collapsed .service {
+  justify-content: center;
+  padding: 7px 0;
+  gap: 0;
+}
+body.collapsed .service.active::before {
+  left: -8px;
+}
+body.collapsed .toolbar {
+  flex-direction: column;
+}
+body.collapsed .service .del,
+body.collapsed .list-actions {
+  display: none;
+}
+
+/* ---- Removed-services window ---- */
+body.removed-window {
+  padding: 18px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #1b1e24 0%, var(--bg) 100%);
+}
+.removed-header h1 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.removed-header p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 5px 0 16px;
+}
+.removed-window .service.restorable {
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, #22272e 0%, #1c2027 100%);
+  margin-bottom: 7px;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.removed-window .service.restorable:hover {
+  border-color: var(--accent-dim);
+  color: var(--text);
+}
+.removed-window .service .restore-plus {
+  flex-shrink: 0;
+  font-size: 19px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.empty {
+  color: var(--muted-2);
+  font-size: 13px;
+  text-align: center;
+  margin-top: 44px;
+}

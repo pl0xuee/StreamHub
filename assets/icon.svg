@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <!-- Gunmetal body, matching the app palette (elevated to bg) -->
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#333944"/>
+      <stop offset="0.55" stop-color="#22262c"/>
+      <stop offset="1" stop-color="#171a1f"/>
+    </linearGradient>
+    <!-- Accent play button, brighter at top -->
+    <linearGradient id="play" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7cc3e0"/>
+      <stop offset="1" stop-color="#4a97b8"/>
+    </linearGradient>
+    <!-- Soft cyan glow behind the play button (mirrors the sidebar brand-dot glow) -->
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5aa9c9" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#5aa9c9" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Smooth top-down sheen, no hard edge -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.07"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded-square app body with a subtle top highlight for depth -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#body)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="111.5" fill="none"
+        stroke="#464c57" stroke-opacity="0.6" stroke-width="1.5"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#sheen)"/>
+
+  <!-- Glow + play triangle, centred -->
+  <circle cx="264" cy="256" r="150" fill="url(#glow)"/>
+  <path d="M 214 168 L 214 344 L 366 256 Z"
+        fill="url(#play)" stroke="url(#play)" stroke-width="34"
+        stroke-linejoin="round" stroke-linecap="round" filter="url(#soft)" opacity="0.35"/>
+  <path d="M 214 168 L 214 344 L 366 256 Z"
+        fill="url(#play)" stroke="url(#play)" stroke-width="34"
+        stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

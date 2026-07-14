@@ -1,0 +1,39 @@
+{
+  "name": "streamhub",
+  "version": "0.1.0",
+  "description": "A desktop wrapper that hosts the official streaming websites (Netflix, Prime Video, Disney+, Max, Hulu, YouTube) behind one unified UI. Playback stays on each service's own site using its own DRM.",
+  "main": "src/main.js",
+  "author": "StreamHub",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
+    "start": "electron .",
+    "build": "electron-builder --linux AppImage",
+    "build:pacman": "electron-builder --linux pacman"
+  },
+  "devDependencies": {
+    "electron": "https://github.com/castlabs/electron-releases#v43.0.0+wvcus",
+    "electron-builder": "^25.1.8"
+  },
+  "allowScripts": {
+    "electron": true
+  },
+  "build": {
+    "appId": "com.streamhub.app",
+    "productName": "StreamHub",
+    "electronDist": "node_modules/electron/dist",
+    "electronVersion": "43.0.0",
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "AudioVideo",
+      "icon": "assets/icon.png"
+    }
+  }
+}

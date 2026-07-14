@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <title>StreamHub</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <nav id="sidebar">
+      <div class="brand">
+        <button id="btn-collapse" title="Hide sidebar" aria-label="Hide sidebar">
+          <span class="bars"></span>
+        </button>
+        <span class="brand-text">StreamHub</span>
+      </div>
+
+      <ul id="service-list" class="services"></ul>
+
+      <div class="list-actions">
+        <button id="btn-removed" title="Show removed services">Removed <span id="removed-count">0</span></button>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="toolbar">
+          <button id="btn-back" title="Back">‹</button>
+          <button id="btn-reload" title="Reload">⟳</button>
+          <button id="btn-pip" title="Picture-in-picture">⧉</button>
+          <button id="btn-fullscreen" title="Fullscreen (F11)">⛶</button>
+        </div>
+      </div>
+    </nav>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
