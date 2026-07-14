@@ -1,4 +1,6 @@
 const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
 const {
   app,
   BaseWindow,
@@ -22,10 +24,19 @@ const { adblocker } = require('./adblock');
 const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 
-// Updates are always user-initiated (the sidebar's "Check for updates" button), so never
+// Updates are always user-initiated (the settings window's update button), so never
 // download in the background — decide first, then fetch.
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+
+// Where the new build actually landed. Normally it replaces the running file, but a build
+// still running under an older, versioned filename gets written beside it under the new name
+// (see appImageWillBeRenamed) — and it is the new file we have to restart into, not the path
+// we were launched from, which by then no longer exists.
+let installedAppImage = null;
+autoUpdater.on('appimage-filename-updated', (file) => {
+  installedAppImage = file;
+});
 
 const REPO = 'pl0xuee/StreamHub'; // for the update check
 // Read from package.json directly — app.getVersion() returns Electron's version when the
@@ -612,27 +623,60 @@ async function pollForUpdate() {
   broadcast();
 }
 
-// Download the new AppImage in place, then restart into it. Progress goes to the sidebar
+// Start the new AppImage once this process is gone.
+//
+// The obvious ways to do this — electron-updater's own run-after-install, or app.relaunch() —
+// both launch the successor from inside a process that is about to disappear, and everything
+// this process runs from (the Electron binary, its libraries) lives in the AppImage's mount
+// under /tmp/.mount_*, which the runtime tears down the moment we exit. That race is why
+// "Restart now" could leave the user with no app running at all.
+//
+// So the job goes to /bin/sh, which is a real file on the host and outlives us: it waits for
+// our pid to disappear, then execs the new build. Its environment is stripped of the old
+// mount's variables — they point into a directory that is about to stop existing — and the
+// new AppImage's runtime sets its own on the way up.
+function relaunchAfterExit(appImagePath) {
+  const env = { ...process.env };
+  for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'LD_LIBRARY_PATH', 'LD_PRELOAD']) {
+    delete env[key];
+  }
+
+  const child = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
+      'streamhub-relaunch', // $0
+      String(process.pid), //  $1: wait for us to exit…
+      appImagePath, //         $2: …then become the new build
+    ],
+    {
+      detached: true, // its own session, so our exit doesn't take it down with us
+      stdio: 'ignore',
+      env,
+      cwd: os.homedir(), // our cwd may itself be inside the mount that is about to go away
+    },
+  );
+  child.unref();
+}
+
+// Download the new AppImage in place, then restart into it. Progress goes to the update
 // button so a 120MB download isn't a silently frozen UI.
 async function downloadAndInstall(info) {
-  const send = (channel, payload) => {
-    if (chromeView && !chromeView.webContents.isDestroyed()) {
-      chromeView.webContents.send(channel, payload);
-    }
-  };
-
-  autoUpdater.on('download-progress', (p) => send('update-progress', Math.round(p.percent)));
+  autoUpdater.on('download-progress', (p) =>
+    sendToUi('update-progress', Math.round(p.percent)),
+  );
 
   try {
     await autoUpdater.downloadUpdate();
   } catch (err) {
-    send('update-progress', null);
+    sendToUi('update-progress', null);
     throw err;
   }
-  send('update-progress', null);
+  sendToUi('update-progress', null);
 
   const renamed = appImageWillBeRenamed();
-  const r = await dialog.showMessageBox(baseWindow, {
+  const r = await dialog.showMessageBox(uiParent(), {
     type: 'info',
     message: `StreamHub v${info.version} is ready`,
     detail: renamed
@@ -645,9 +689,26 @@ async function downloadAndInstall(info) {
     defaultId: 0,
     cancelId: 1,
   });
-  // isSilent: true — there is no installer to show on Linux; this just swaps the AppImage.
-  // Deferring is safe: the download is cached and applies on the next quit.
-  if (r.response === 0) setImmediate(() => autoUpdater.quitAndInstall(true, true));
+  // "Later" is safe to take: the download is cached, and autoInstallOnAppQuit applies it the
+  // next time the app is closed (without restarting into it, which is what "later" means).
+  if (r.response !== 0) return;
+
+  // isSilent: true — there is no installer UI to show on Linux; this just swaps the AppImage.
+  // isForceRunAfter: false — we relaunch ourselves, below, rather than letting electron-updater
+  // spawn the new build from this dying process.
+  //
+  // The swap is synchronous (the quit it triggers is not), so once this returns the new file
+  // is on disk and we know its final path, including the one-off rename case.
+  let installError = null;
+  const onError = (err) => {
+    installError = err;
+  };
+  autoUpdater.once('error', onError);
+  autoUpdater.quitAndInstall(true, false);
+  autoUpdater.off('error', onError);
+  if (installError) throw installError; // no new build to restart into; offer the download page
+
+  relaunchAfterExit(installedAppImage || process.env.APPIMAGE);
 }
 
 // Check for a newer release and, when we can, install it in place rather than making the
