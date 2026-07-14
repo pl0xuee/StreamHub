@@ -38,13 +38,22 @@ const SIDEBAR_WIDTH = 220;
 // to click to bring it back.
 const SIDEBAR_RAIL_WIDTH = 56;
 
-// NOTE: cookies — i.e. the logins — are stored UNENCRYPTED on disk, in
-// <userData>/Partitions/<service>@default/Cookies. Unlike Chrome, Electron does not attach
-// a crypto delegate to its cookie store, so the --password-store switch and safeStorage do
-// not change this: verified on a fresh profile with kwallet6 active and encryption
-// reported available, and every cookie still landed in plaintext. There is no supported way
-// to turn it on. The file is mode 0600, so the exposure is to this user's own processes and
-// to anything that copies the directory wholesale (backups, cloud sync, disk images).
+// NOTE: cookies — i.e. the logins — live in <userData>/Partitions/<service>@default/Cookies.
+// They are encrypted through the OS secret store (kwallet/gnome-libsecret on Linux), which is
+// switched on by the EnableCookieEncryption fuse flipped at package time — see
+// build/afterPack.js. It is a property of the binary, so it cannot be turned on from here,
+// and neither --password-store nor safeStorage substitutes for it.
+//
+// Two things this does NOT do:
+//   * It does not reach back. Cookies already written in plaintext stay that way until the
+//     site rewrites them; "Sign out / clear data" on a service and signing in again is what
+//     converts one wholesale.
+//   * With no secret store available (a bare WM, a container), Chromium falls back to its
+//     "basic" store, which encrypts with a hardcoded key — cosmetic, not protection. A "v10"
+//     prefix on the ciphertext means that fallback; "v11" means a real key from the keyring.
+//
+// The file is mode 0600 either way, so the exposure was always to this user's own processes
+// and to anything copying the directory wholesale (backups, cloud sync, disk images).
 
 let baseWindow;
 let chromeView; // the app's own UI (sidebar), hosted in its own view

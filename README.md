@@ -132,10 +132,23 @@ Everything runs and stays on your machine — there is no account, server, or te
 Logins are stored as ordinary browser cookies under your user config directory
 (`~/.config/streamhub/Partitions/<service>@default/`).
 
-Note that Electron stores these cookies **unencrypted** on disk (unlike Chrome, it does
-not attach an OS-keyring crypto layer, and no setting changes this). The files are
-readable only by your own user, but a **session cookie is a working login** — so do not
-sync or back up that config directory to anywhere shared, and don't commit it.
+Those cookies are **encrypted through your OS secret store** (kwallet or gnome-libsecret on
+Linux), the same way Chrome's are. This is switched on by an Electron build-time fuse
+(`EnableCookieEncryption`, see `build/afterPack.js`) — it is baked into the binary and cannot
+be enabled from the app's own code.
+
+Two limits worth knowing:
+
+- **It does not reach backwards.** Cookies already written in plaintext by an older build
+  stay that way until the site rewrites them. To convert a service in one go, right-click it
+  → **Sign out / clear data**, then sign in again.
+- **No secret store, no real protection.** On a system without a keyring (a bare window
+  manager, a container), Chromium falls back to encrypting with a hardcoded key — which is
+  obfuscation, not security. You can tell which you have: a `v11` prefix on the stored
+  ciphertext means a real key from your keyring, `v10` means the fallback.
+
+A **session cookie is a working login**, so regardless of encryption, don't sync or back up
+that config directory anywhere shared, and don't commit it.
 
 ## Legal
 
