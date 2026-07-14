@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <title>Settings</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="settings-window">
+    <header class="settings-header">
+      <h1>Settings</h1>
+      <p>Saved on this machine, and applied as soon as you change them.</p>
+    </header>
+
+    <section class="settings-section">
+      <h2>Privacy</h2>
+      <div class="settings">
+        <label class="setting" for="chk-adblock">
+          <input type="checkbox" id="chk-adblock" />
+          <span class="setting-text">
+            <span class="setting-title">Experimental ad blocker</span>
+            <span class="setting-sub" id="adblock-sub">Brave Experimental Adblock Rules</span>
+          </span>
+        </label>
+
+        <div class="setting-extra" id="adblock-extra" hidden>
+          <span id="filter-age">—</span>
+          <button id="btn-refresh-filters" title="Fetch the latest filter lists now">Update</button>
+        </div>
+      </div>
+      <p class="section-note">
+        Right-click a service in the sidebar to turn blocking off for just that site — some
+        players object to it.
+      </p>
+    </section>
+
+    <section class="settings-section">
+      <h2>Window</h2>
+      <div class="settings">
+        <label class="setting" for="chk-tray">
+          <input type="checkbox" id="chk-tray" />
+          <span class="setting-text">
+            <span class="setting-title">Keep running in tray</span>
+            <span class="setting-sub">Closing the window keeps playback going</span>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Updates</h2>
+      <div class="setting update-row">
+        <span class="setting-text">
+          <span class="setting-title" id="update-title">StreamHub</span>
+          <span class="setting-sub" id="update-sub">Checking is manual — nothing is downloaded until you say so.</span>
+        </span>
+        <button id="btn-update" title="Check for updates">Check for updates</button>
+      </div>
+    </section>
+
+    <script src="settings.js"></script>
+  </body>
+</html>

@@ -346,9 +346,8 @@ body {
 .setting-extra {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: -3px;
+  gap: 8px;
+  margin-top: -2px;
   padding: 0 4px 0 35px; /* line up under the checkbox's label, not the checkbox */
 }
 #filter-age {
@@ -376,7 +375,7 @@ body {
   cursor: default;
 }
 
-/* ---- Settings (ad blocker toggle) ---- */
+/* ---- Settings controls (live in the settings window; see .settings-window below) ---- */
 .settings {
   display: flex;
   flex-direction: column;
@@ -445,27 +444,19 @@ body {
   gap: 2px;
   min-width: 0;
 }
-/* Sized to keep "Experimental ad blocker" on one line in the 220px sidebar. */
 .setting-title {
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
   line-height: 1.25;
-  white-space: nowrap;
 }
 .setting-sub {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted-2);
-  line-height: 1.3;
+  line-height: 1.35;
 }
 .setting-sub.error {
   color: var(--danger);
-}
-
-/* In the collapsed rail there is no room for the label, so drop the row entirely —
-   the toggle stays reachable by expanding the sidebar. */
-body.collapsed .settings {
-  display: none;
 }
 
 .sidebar-footer {
@@ -485,7 +476,12 @@ body.collapsed .settings {
   color: var(--muted-2);
   letter-spacing: 0.02em;
 }
-#btn-update {
+/* The settings window's update button, and the sidebar's gear that leads to it. */
+#btn-update,
+#btn-settings {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   color: var(--muted);
   border: 1px solid var(--border);
@@ -496,7 +492,8 @@ body.collapsed .settings {
   cursor: pointer;
   transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
 }
-#btn-update:hover {
+#btn-update:hover,
+#btn-settings:hover {
   color: var(--text);
   border-color: var(--accent-dim);
   background: var(--accent-soft);
@@ -504,6 +501,17 @@ body.collapsed .settings {
 #btn-update:disabled {
   opacity: 0.6;
   cursor: default;
+}
+#btn-settings .gear {
+  font-size: 13px;
+  line-height: 1;
+}
+/* The gear turns as it is aimed at — the one bit of movement the footer gets. */
+#btn-settings:hover .gear {
+  transform: rotate(45deg);
+}
+#btn-settings .gear {
+  transition: transform 0.25s ease;
 }
 
 /* ---- An update is waiting ---- */
@@ -521,15 +529,31 @@ body.collapsed .settings {
   }
 }
 
-#btn-update.has-update {
+#btn-update.has-update,
+#btn-settings.has-update {
   color: var(--text);
   border-color: var(--accent-dim);
   background: var(--accent-soft);
   animation: update-pulse 1.9s ease-in-out infinite;
 }
-#btn-update.has-update:hover {
+#btn-update.has-update:hover,
+#btn-settings.has-update:hover {
   animation-play-state: paused; /* settle once it is being aimed at */
   border-color: var(--accent);
+}
+
+/* The update itself is installed from the settings window, so the sidebar's gear only has to
+   say that one is waiting. */
+#btn-settings.has-update .btn-label::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(99, 179, 214, 0.8);
 }
 
 /* Collapsed to the rail, the button is hidden — so put an accent dot on the version instead,
@@ -553,17 +577,32 @@ body.collapsed.update-available #app-version::after {
 /* Respect a reduced-motion preference: still clearly marked, just not moving. */
 @media (prefers-reduced-motion: reduce) {
   #btn-update.has-update,
+  #btn-settings.has-update,
   body.collapsed.update-available #app-version::after {
     animation: none;
     border-color: var(--accent);
   }
+  #btn-settings:hover .gear {
+    transform: none;
+  }
 }
-/* In the collapsed rail, show just the version, no update button. */
+/* In the collapsed rail there is no room beside the version, so the gear drops its label and
+   sits under it — and the update dot moves to the version (above), which is the only part of
+   the footer still carrying text. */
 body.collapsed .app-meta {
-  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
 }
-body.collapsed #btn-update {
+body.collapsed #btn-settings {
+  justify-content: center;
+  width: 100%;
+  padding: 6px 0;
+}
+body.collapsed #btn-settings .btn-label {
   display: none;
+}
+body.collapsed #btn-settings .gear {
+  font-size: 15px;
 }
 
 .toolbar {
@@ -626,6 +665,56 @@ body.collapsed .toolbar {
 body.collapsed .service .del,
 body.collapsed .list-actions {
   display: none;
+}
+
+/* ---- Settings window ---- */
+/* Settings get their own window rather than a panel in the main one: the sidebar is 220px
+   wide and the active service's view covers everything to its right, so there is nowhere in
+   the main window to put a panel that isn't the sidebar itself. */
+body.settings-window {
+  padding: 18px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #121519 0%, var(--bg) 100%);
+}
+.settings-header h1 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.settings-header p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 5px 0 18px;
+}
+.settings-section {
+  margin-bottom: 20px;
+}
+.settings-section h2 {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 9px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.section-note {
+  margin-top: 8px;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted-2);
+}
+/* The update row is a .setting without a checkbox: the same card, with the button where the
+   toggle would be. */
+.update-row {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: default;
+}
+.settings-window #btn-update {
+  flex-shrink: 0;
 }
 
 /* ---- Removed-services window ---- */

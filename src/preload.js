@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('shell', {
   removeService: (id) => ipcRenderer.send('remove-service', id),
   restoreService: (id) => ipcRenderer.send('restore-service', id),
   openRemovedWindow: () => ipcRenderer.send('open-removed-window'),
+  openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
   toggleFullscreen: () => ipcRenderer.send('toggle-fullscreen'),
   togglePip: () => ipcRenderer.send('toggle-pip'),

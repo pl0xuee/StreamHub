@@ -59,6 +59,7 @@ const SIDEBAR_RAIL_WIDTH = 56;
 let baseWindow;
 let chromeView; // the app's own UI (sidebar), hosted in its own view
 let removedWindow = null; // separate window listing removed services
+let settingsWindow = null; // separate window holding the app's settings
 let viewManager;
 let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
@@ -145,14 +146,32 @@ function statePayload() {
   };
 }
 
+// Every window that renders app state: the sidebar, plus the two secondary windows when open.
+function uiWebContents() {
+  const out = [];
+  if (chromeView && !chromeView.webContents.isDestroyed()) out.push(chromeView.webContents);
+  if (removedWindow && !removedWindow.isDestroyed()) out.push(removedWindow.webContents);
+  if (settingsWindow && !settingsWindow.isDestroyed()) out.push(settingsWindow.webContents);
+  return out;
+}
+
 function broadcast() {
   const payload = statePayload();
-  if (chromeView && !chromeView.webContents.isDestroyed()) {
-    chromeView.webContents.send('state', payload);
-  }
-  if (removedWindow && !removedWindow.isDestroyed()) {
-    removedWindow.webContents.send('state', payload);
-  }
+  for (const wc of uiWebContents()) wc.send('state', payload);
+}
+
+// Live counters and progress, which have their own channels rather than riding the full state
+// payload. Sent to whichever windows are open — the ad blocker's tally and an update's
+// progress are both rendered in the settings window.
+function sendToUi(channel, payload) {
+  for (const wc of uiWebContents()) wc.send(channel, payload);
+}
+
+// The settings window owns the controls that raise these dialogs, so it is the window they
+// belong to while it is open — parenting them to the main window would put them behind it.
+function uiParent() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) return settingsWindow;
+  return baseWindow;
 }
 
 function persist() {
@@ -169,9 +188,7 @@ function startAdblockStats() {
     const { blocked } = adblocker.status();
     if (blocked === last) return;
     last = blocked;
-    if (chromeView && !chromeView.webContents.isDestroyed()) {
-      chromeView.webContents.send('adblock-stats', blocked);
-    }
+    sendToUi('adblock-stats', blocked);
   }, 2000);
 }
 
@@ -325,6 +342,36 @@ function openRemovedWindow() {
   });
 }
 
+// Settings live in their own window rather than in the sidebar: the sidebar is 220px wide and
+// is covered by the active service's view everywhere else, so there is nowhere in the main
+// window to put a panel that isn't the sidebar itself.
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 440,
+    height: 580,
+    minWidth: 380,
+    minHeight: 420,
+    backgroundColor: '#0b0d10',
+    title: 'Settings',
+    autoHideMenuBar: true,
+    parent: baseWindow || undefined,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+}
+
 // A tiny menu that keeps useful accelerators (F11 fullscreen, reload) without the
 // sprawling default template. autoHideMenuBar keeps it hidden until Alt is pressed.
 function buildAppMenu() {
@@ -335,6 +382,12 @@ function buildAppMenu() {
         submenu: [
           { role: 'togglefullscreen' },
           { role: 'reload' },
+          { type: 'separator' },
+          {
+            label: 'Settings',
+            accelerator: 'CmdOrCtrl+,',
+            click: () => openSettingsWindow(),
+          },
           { type: 'separator' },
           { role: 'quit' },
         ],
@@ -404,6 +457,7 @@ ipcMain.on('restore-service', (_e, serviceId) => {
 });
 
 ipcMain.on('open-removed-window', () => openRemovedWindow());
+ipcMain.on('open-settings-window', () => openSettingsWindow());
 
 // Toggle ad blocking across every service session. Turning it on for the first time has to
 // fetch the filter engine, which can fail (offline, upstream down) — setEnabled reports the
@@ -609,7 +663,7 @@ ipcMain.handle('check-for-updates', async () => {
       pendingUpdate = newer ? latest.version : null;
       broadcast();
       if (newer) {
-        const r = await dialog.showMessageBox(baseWindow, {
+        const r = await dialog.showMessageBox(uiParent(), {
           type: 'info',
           message: `Update available: v${latest.version}`,
           detail:
@@ -622,7 +676,7 @@ ipcMain.handle('check-for-updates', async () => {
         if (r.response === 0) openDownloadPage(latest.url);
         return { hasUpdate: true, latest: latest.version, current, selfUpdate: false };
       }
-      dialog.showMessageBox(baseWindow, {
+      dialog.showMessageBox(uiParent(), {
         type: 'info',
         message: "You're up to date",
         detail: `StreamHub v${current} is the latest version.`,
@@ -636,7 +690,7 @@ ipcMain.handle('check-for-updates', async () => {
     pendingUpdate = newer ? latest : null;
     broadcast();
     if (!newer) {
-      dialog.showMessageBox(baseWindow, {
+      dialog.showMessageBox(uiParent(), {
         type: 'info',
         message: "You're up to date",
         detail: `StreamHub v${current} is the latest version.`,
@@ -644,7 +698,7 @@ ipcMain.handle('check-for-updates', async () => {
       return { hasUpdate: false, latest, current };
     }
 
-    const r = await dialog.showMessageBox(baseWindow, {
+    const r = await dialog.showMessageBox(uiParent(), {
       type: 'info',
       message: `Update available: v${latest}`,
       detail: `You're on v${current}. Download and install it now?`,
@@ -659,7 +713,7 @@ ipcMain.handle('check-for-updates', async () => {
   } catch (err) {
     // A failed self-update must not be a dead end (read-only AppImage path, no release
     // metadata, flaky network) — offer the browser download instead.
-    const r = await dialog.showMessageBox(baseWindow, {
+    const r = await dialog.showMessageBox(uiParent(), {
       type: 'error',
       message: 'Update failed',
       detail: `${err.message}\n\nOpen the download page instead?`,

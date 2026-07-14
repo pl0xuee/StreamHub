@@ -24,29 +24,6 @@
         <button id="btn-removed" title="Show removed services">Removed <span id="removed-count">0</span></button>
       </div>
 
-      <div class="settings">
-        <label class="setting" for="chk-adblock">
-          <input type="checkbox" id="chk-adblock" />
-          <span class="setting-text">
-            <span class="setting-title">Experimental ad blocker</span>
-            <span class="setting-sub" id="adblock-sub">Brave Experimental Adblock Rules</span>
-          </span>
-        </label>
-
-        <div class="setting-extra" id="adblock-extra" hidden>
-          <span id="filter-age">—</span>
-          <button id="btn-refresh-filters" title="Fetch the latest filter lists now">Update</button>
-        </div>
-
-        <label class="setting" for="chk-tray">
-          <input type="checkbox" id="chk-tray" />
-          <span class="setting-text">
-            <span class="setting-title">Keep running in tray</span>
-            <span class="setting-sub">Closing keeps playing</span>
-          </span>
-        </label>
-      </div>
-
       <div class="sidebar-footer">
         <div class="toolbar">
           <button id="btn-back" title="Back">‹</button>
@@ -56,7 +33,10 @@
         </div>
         <div class="app-meta">
           <span id="app-version">v—</span>
-          <button id="btn-update" title="Check for updates">Check for updates</button>
+          <button id="btn-settings" title="Settings">
+            <span class="gear" aria-hidden="true">⚙</span>
+            <span class="btn-label">Settings</span>
+          </button>
         </div>
       </div>
     </nav>
