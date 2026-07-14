@@ -17,11 +17,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags, so the changelog can diff against the last tag
 
-      - uses: actions/setup-node@v4
+      # node-version is the Node the *build* runs on. It is unrelated to the Node the actions
+      # themselves run on, which is what their major versions pin — those had to move off the
+      # retired Node 20 action runtime.
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -38,7 +41,7 @@ jobs:
 
       - name: Upload build for manual test runs
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: StreamHub-AppImage
           path: dist/*.AppImage
@@ -79,7 +82,7 @@ jobs:
 
       - name: Attach AppImage to the release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body: |
             ## Install (Linux)
