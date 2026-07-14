@@ -18,6 +18,48 @@ const TRACK_ID = '/org/mpris/MediaPlayer2/streamhub/track';
 // dbus-native marshals a variant as [signature, value].
 const v = (signature, value) => [signature, value];
 
+// dbus-native answers a property read by looking the name up in the interface description
+// and on the implementation object, and marshalling both — with no check that either exists.
+// Anything on the bus can therefore ask StreamHub for a property nobody declared and take the
+// main process down with "Serialisation of JS 'undefined' type is not supported by d-bus".
+// Declaring the whole spec (below) fixes every property a real client reads, but the failure
+// mode is too severe to leave standing on that alone: a panel widget must not be able to
+// crash the app.
+//
+// So swallow exactly those — errors thrown inside dbus-native — and let every other uncaught
+// exception through untouched, so real bugs still surface instead of being hidden.
+let guarded = false;
+let current = null; // the live Mpris, so the guard can put it back on the bus
+let restarts = 0;
+const MAX_RESTARTS = 3;
+
+function guardAgainstDbusCrashes() {
+  if (guarded) return;
+  guarded = true;
+  process.on('uncaughtException', (err) => {
+    const stack = (err && err.stack) || '';
+    if (!stack.includes('dbus-native')) {
+      throw err; // not ours — restore the normal crash
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[mpris] ignored a bad D-Bus request:', err.message);
+
+    // The throw happens mid-reply, and it takes the connection down with it: the bus name
+    // goes away and the media controls quietly stop working. Surviving is not enough — put
+    // the player back. Capped, so a client spraying bad requests cannot spin us forever.
+    if (!current || restarts >= MAX_RESTARTS) return;
+    restarts += 1;
+    setTimeout(() => {
+      try {
+        current.stop();
+        current.start();
+      } catch {
+        /* the bus is gone; media controls stay absent, the app carries on */
+      }
+    }, 500);
+  });
+}
+
 class Mpris {
   // `controls` is the bridge to the app: playPause/seek/raise, plus what is playing now.
   constructor(controls) {
@@ -37,6 +79,8 @@ class Mpris {
       return; // no session bus (a container, a TTY) — media controls are simply absent
     }
     if (!this.bus) return;
+    current = this;
+    guardAgainstDbusCrashes();
     // Errors on the bus must never take the app down; losing the panel applet is not worth
     // a crash. 0x4 = DBUS_NAME_FLAG_DO_NOT_QUEUE.
     this.bus.connection.on('error', () => {});
@@ -76,6 +120,10 @@ class Mpris {
         HasTrackList: false,
         SupportedUriSchemes: [],
         SupportedMimeTypes: [],
+        // Declared for the same reason as the Player extras: a property a client reads but
+        // we never declared marshals as `undefined` and crashes the process.
+        Fullscreen: false,
+        CanSetFullscreen: false,
       },
       OBJECT_PATH,
       {
@@ -89,6 +137,8 @@ class Mpris {
           HasTrackList: 'b',
           SupportedUriSchemes: 'as',
           SupportedMimeTypes: 'as',
+          Fullscreen: 'b',
+          CanSetFullscreen: 'b',
         },
         signals: {},
       },
@@ -140,6 +190,19 @@ class Mpris {
         CanControl: true,
         // Seeking to an absolute position is not wired up, so do not advertise a scrubber.
         CanSeek: false,
+
+        // The rest of the Player spec. We do not act on these, but they MUST still be
+        // declared and defined: a client that reads a property we left out gets `undefined`
+        // for both its type and its value, and the marshaller throws on that — an uncaught
+        // exception that takes the whole app down. Plasma's media applet reads Position and
+        // Volume the moment it sees a player, which is exactly how that crash was found.
+        Position: 0,
+        Rate: 1,
+        MinimumRate: 1,
+        MaximumRate: 1,
+        Volume: 1,
+        LoopStatus: 'None',
+        Shuffle: false,
       },
       OBJECT_PATH,
       {
@@ -161,6 +224,13 @@ class Mpris {
           CanGoPrevious: 'b',
           CanControl: 'b',
           CanSeek: 'b',
+          Position: 'x',
+          Rate: 'd',
+          MinimumRate: 'd',
+          MaximumRate: 'd',
+          Volume: 'd',
+          LoopStatus: 's',
+          Shuffle: 'b',
         },
         signals: {},
       },
