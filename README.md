@@ -96,19 +96,6 @@ git push --follow-tags # pushes the commit and the tag -> CI builds + publishes
 
 (Run the workflow manually from the Actions tab to test a build without publishing.)
 
-### Windows + Widevine (VMP signing)
-
-For **protected playback to work in the packaged Windows build**, the app must be
-VMP-signed with a free [castLabs EVS](https://castlabs.com/evs/) account — electron-builder's
-repackaging invalidates the stock signature. Add two repository secrets and CI signs the
-Windows build automatically (`build/afterPack.cjs`):
-
-- `EVS_ACCOUNT_NAME`
-- `EVS_PASSWD`
-
-Without them the Windows installer still builds, but DRM won't play until it's signed.
-Linux needs no signing — the stock ECS signature works there.
-
 ## Adding or changing services
 
 The built-in list lives in [`src/services.js`](src/services.js) as `DEFAULT_SERVICES`.
