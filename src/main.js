@@ -322,6 +322,20 @@ async function fetchLatestRelease() {
   return { version: String(data.tag_name || '').replace(/^v/, ''), url: data.html_url };
 }
 
+// electron-updater deletes the running AppImage and writes the new one beside it. It keeps
+// the SAME path — so desktop entries, docks and pinned icons keep working — only when the
+// current filename carries no version number; otherwise it names the new file after the new
+// version, and every launcher the user set up points at a file that no longer exists. We
+// ship "StreamHub.AppImage" (see build.artifactName) precisely to take the in-place branch.
+//
+// The one exception is a build still running under an older, versioned name: that update has
+// to rename the file once. Detect it so we can say so up front rather than silently breaking
+// their launchers again. See AppImageUpdater.doInstall in electron-updater.
+function appImageWillBeRenamed() {
+  const current = process.env.APPIMAGE;
+  return Boolean(current) && /\d+\.\d+\.\d+/.test(path.basename(current));
+}
+
 // Download the new AppImage in place, then restart into it. Progress goes to the sidebar
 // button so a 120MB download isn't a silently frozen UI.
 async function downloadAndInstall(info) {
@@ -341,10 +355,16 @@ async function downloadAndInstall(info) {
   }
   send('update-progress', null);
 
+  const renamed = appImageWillBeRenamed();
   const r = await dialog.showMessageBox(baseWindow, {
     type: 'info',
     message: `StreamHub v${info.version} is ready`,
-    detail: 'Restart now to finish updating?',
+    detail: renamed
+      ? 'Restart now to finish updating?\n\nThis update also drops the version number from ' +
+        `the AppImage's filename (it becomes "StreamHub.AppImage"), so shortcuts and pinned ` +
+        'icons will need pointing at it one last time. From then on the file keeps its name ' +
+        'and path, and updates will no longer break them.'
+      : 'Restart now to finish updating?',
     buttons: ['Restart now', 'Later'],
     defaultId: 0,
     cancelId: 1,

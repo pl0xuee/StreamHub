@@ -28,6 +28,7 @@
       "src/**/*",
       "assets/**/*"
     ],
+    "artifactName": "${productName}.AppImage",
     "linux": {
       "target": [
         "AppImage"

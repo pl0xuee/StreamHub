@@ -58,6 +58,24 @@ page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--
 - Media keys (play/pause, and ±10s seek on next/prev) — only while the app is focused
 - Picture-in-picture / floating mini-player
 
+## Updating
+
+"Check for updates" in the sidebar downloads the new build and restarts into it, in place —
+no browser, no reinstall.
+
+- The download lands in `~/.cache/streamhub-updater/pending/`, then replaces the AppImage you
+  launched from and relaunches it.
+- The AppImage is deliberately named **`StreamHub.AppImage`, with no version in it**. Updates
+  overwrite that one file, so its path never changes and your desktop entry, dock icon and
+  any other shortcuts keep working. (electron-updater only overwrites in place when the
+  filename carries no version; a versioned name makes it write a *new* file and delete the
+  old one, breaking every shortcut pointing at it.)
+- Coming from a build named `StreamHub-<version>.AppImage`, the update renames the file once,
+  to `StreamHub.AppImage`. The app warns you before restarting. Repoint your shortcuts that
+  one time and updates stop disturbing them.
+- Self-updating only works when running as the AppImage. Started any other way (`npm start`,
+  a distro package), there is nothing to swap, so the app sends you to the download page.
+
 ## Ad blocking
 
 The sidebar has an **Experimental ad blocker** toggle. It is **off by default**; the choice
