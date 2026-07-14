@@ -140,8 +140,12 @@ body {
   gap: 3px;
   flex: 1;
   overflow-y: auto;
-  margin: 0 -4px;
-  padding: 0 4px;
+  /* overflow-y: auto forces overflow-x to compute to auto, so the scroll container clips
+     at its padding box. The padding must therefore be wide enough to hold the active
+     row's accent bar, which sits 12px to the left of the row; the negative margin cancels
+     it so the rows themselves stay put. */
+  margin: 0 -12px;
+  padding: 0 12px;
 }
 
 .service {
