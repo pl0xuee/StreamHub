@@ -50,7 +50,12 @@ page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--
   "Removed" window), and click it there to add it back — all saved automatically
 - **Pause on switch**: leaving a service pauses its video so nothing plays in the
   background; returning resumes it (unless you'd paused it yourself)
-- **Experimental ad blocker** (off by default) — see [Ad blocking](#ad-blocking) below
+- **Experimental ad blocker** (off by default), per-service — see [Ad blocking](#ad-blocking)
+- **Keeps the screen awake** while something is playing
+- **Picks up where you left off** — window size/position, last service, sidebar state
+- **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen show and drive playback
+- **Optional tray icon** — closing the window keeps a stream running
+- **Sign out / clear data** per service (right-click it)
 - Collapsible sidebar (icon rail) to give the video more width
 - Persistent, per-service logins (isolated sessions)
 - Popup-based sign-in ("Sign in with Google/Apple") works via real child windows

@@ -19,6 +19,7 @@ const { autoUpdater } = require('electron-updater');
 const configStore = require('./config');
 const { ViewManager } = require('./views');
 const { adblocker } = require('./adblock');
+const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 
 // Updates are always user-initiated (the sidebar's "Check for updates" button), so never
@@ -68,6 +69,7 @@ let tray = null;
 let quitting = false; // distinguishes a real quit from a close-to-tray
 let sleepBlockerId = null; // powerSaveBlocker id held while something is playing
 let saveWindowTimer = null;
+let mpris = null; // Linux system media controls (KDE panel, lock screen)
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
@@ -88,6 +90,26 @@ function setPlaybackInhibitor(playing) {
     powerSaveBlocker.stop(sleepBlockerId);
     sleepBlockerId = null;
   }
+}
+
+// Whatever is playing also drives the system media controls, so the panel and the lock
+// screen show the right thing. The page title is the closest we get to a track name — the
+// sites do set navigator.mediaSession, but that lives in the page and Electron does not
+// surface it to the main process.
+async function onPlaybackChange(playing) {
+  setPlaybackInhibitor(playing);
+  if (!mpris) return;
+
+  const service = config.services.find((s) => s.id === activeServiceId);
+  let title = service ? service.name : 'StreamHub';
+  const wc = viewManager.getActiveWebContents();
+  if (wc && !wc.isDestroyed()) {
+    // Strip the site's own suffix ("… - YouTube") so the panel does not say it twice.
+    const raw = wc.getTitle() || '';
+    const cleaned = raw.replace(/\s*[-|–]\s*(YouTube|Twitch|Netflix|Hulu|Prime Video)\s*$/i, '');
+    if (cleaned.trim()) title = cleaned.trim();
+  }
+  mpris.update({ playing, title, service: service ? service.name : '' });
 }
 
 // Remember the window's geometry. Debounced: resize and move fire continuously while the
@@ -198,8 +220,8 @@ function createWindow() {
   chromeView.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
 
   viewManager = new ViewManager(baseWindow, SIDEBAR_WIDTH);
-  // Keep the display awake whenever any service is playing (see setPlaybackInhibitor).
-  viewManager.onPlaybackChange = setPlaybackInhibitor;
+  // Playing/stopping drives both the display-sleep inhibitor and the system media controls.
+  viewManager.onPlaybackChange = onPlaybackChange;
 
   layout();
   baseWindow.on('resize', layout);
@@ -690,6 +712,28 @@ app.whenReady().then(async () => {
   createWindow();
   applyTraySetting();
 
+  // System media controls. Electron gives us none on Linux, so serve MPRIS ourselves — the
+  // hardware media keys already work (see shortcuts.js); this is what makes the *panel*,
+  // the lock screen and the media applet show and drive what is playing. Absent (not fatal)
+  // where there is no session bus.
+  mpris = new Mpris({
+    playPause: () => viewManager.playPause(),
+    seek: (seconds) => {
+      const wc = viewManager.getActiveWebContents();
+      if (wc) {
+        wc.executeJavaScript(
+          `(() => { const v = document.querySelector('video'); if (v) v.currentTime += ${seconds}; })()`,
+        ).catch(() => {});
+      }
+    },
+    raise: () => showWindow(),
+    quit: () => {
+      quitting = true;
+      app.quit();
+    },
+  });
+  mpris.start();
+
   // The sidebar starts collapsed if that is how it was left, so the service view has to
   // start at the rail's edge rather than the full sidebar's.
   if (sidebarCollapsed) viewManager.setSidebarWidth(SIDEBAR_RAIL_WIDTH);
@@ -718,4 +762,5 @@ app.on('will-quit', () => {
   unregisterMediaKeys();
   setPlaybackInhibitor(false); // never leave the display-sleep inhibitor held after we exit
   destroyTray();
+  if (mpris) mpris.stop(); // drop the bus name, or the panel keeps a dead player around
 });
