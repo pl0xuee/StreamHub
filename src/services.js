@@ -42,10 +42,30 @@ const CHROME_FULL_VERSION_LIST =
   `"Not;A=Brand";v="8.0.0.0", "Chromium";v="${CHROME_MAJOR}.0.0.0", ` +
   `"Google Chrome";v="${CHROME_MAJOR}.0.0.0"`;
 
+// Google refuses to accept a password when it decides sign-in is happening inside an
+// embedded Chromium browser — "This browser or app may not be secure" — which is exactly
+// what every service view is. The block is aimed at embedded Chromium specifically, so on
+// Google's sign-in host alone we drop the Chrome disguise above and present Firefox, a
+// browser Google's check waves through. Everywhere else stays Chrome, which the streaming
+// sites' reCAPTCHA and DRM want. Firefox sends no Sec-CH-UA client hints and no
+// navigator.userAgentData, so those are stripped alongside the UA swap (see views.js and
+// service-preload.js); a Firefox UA carrying Chrome hints would be its own automation tell.
+const FIREFOX_UA =
+  'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0';
+
+// Only the account/sign-in host wears the Firefox disguise, so it never touches playback.
+const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'accounts.youtube.com']);
+
+function isGoogleAuthHost(hostname) {
+  return GOOGLE_AUTH_HOSTS.has(hostname);
+}
+
 module.exports = {
   DEFAULT_SERVICES,
   CHROME_UA,
   CHROME_MAJOR,
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
+  FIREFOX_UA,
+  isGoogleAuthHost,
 };

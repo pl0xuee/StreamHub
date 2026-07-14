@@ -5,6 +5,8 @@ const {
   CHROME_MAJOR,
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
+  FIREFOX_UA,
+  isGoogleAuthHost,
 } = require('./services');
 const { adblocker } = require('./adblock');
 
@@ -15,6 +17,26 @@ const { adblocker } = require('./adblock');
 function alignClientHints(ses) {
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = details.requestHeaders;
+
+    // On Google's sign-in host we masquerade as Firefox (see services.js): send the Firefox
+    // UA and drop every Sec-CH-UA* client hint, since Firefox emits none. The JS-visible half
+    // of this identity (navigator.userAgent / userAgentData) is handled in service-preload.js.
+    let host = '';
+    try {
+      host = new URL(details.url).hostname;
+    } catch {
+      // Non-URL request target (unusual); fall through to the Chrome path.
+    }
+    if (isGoogleAuthHost(host)) {
+      for (const name of Object.keys(headers)) {
+        const lower = name.toLowerCase();
+        if (lower === 'user-agent') headers[name] = FIREFOX_UA;
+        else if (lower.startsWith('sec-ch-ua')) delete headers[name];
+      }
+      callback({ requestHeaders: headers });
+      return;
+    }
+
     for (const name of Object.keys(headers)) {
       switch (name.toLowerCase()) {
         case 'sec-ch-ua':
