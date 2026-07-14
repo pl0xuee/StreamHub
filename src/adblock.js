@@ -13,6 +13,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { app, ipcMain } = require('electron');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
+const { parse: parseHost } = require('tldts-experimental');
 
 // The cosmetic-filtering half of the blocker registers these two ipcMain handlers *every*
 // time it is enabled in a session. ipcMain.handle throws on a duplicate channel, and we
@@ -20,10 +21,42 @@ const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 // handlers are bound to the blocker rather than to any one session, so a single live
 // registration correctly serves every session: we drop the pair and let the next enable()
 // put it straight back. See BlockingContext.enable() in @ghostery/adblocker-electron.
-const COSMETIC_CHANNELS = [
-  '@ghostery/adblocker/inject-cosmetic-filters',
-  '@ghostery/adblocker/is-mutation-observer-enabled',
-];
+const INJECT_CHANNEL = '@ghostery/adblocker/inject-cosmetic-filters';
+const COSMETIC_CHANNELS = [INJECT_CHANNEL, '@ghostery/adblocker/is-mutation-observer-enabled'];
+
+// Why we take the blocker's cosmetic handler off it (see injectCosmetics below).
+//
+// A page gets many scriptlets — YouTube alone gets 28 — and the library runs each one with
+// its own executeJavaScript call. Every scriptlet ships the same uBO helper preamble, which
+// declares things like `JSONPath` at top level, and executeJavaScript evaluates its argument
+// as a *program*: top-level declarations land in the frame's global lexical scope and stay
+// there. So scriptlet #1 defines JSONPath, and #2 onwards all die with "Identifier
+// 'JSONPath' has already been declared" — 27 of the 28 never run.
+//
+// That is why ads came through: the scriptlets that strip YouTube's ad payload are among the
+// ones that never executed. It also explains the broken players — the surviving fragments
+// left window.fetch wrapped around itself, so calling fetch recursed until it blew the stack
+// ("Maximum call stack size exceeded"), which took out Netflix's browse page, Twitch's module
+// loader and YouTube's player.
+//
+// A browser extension gets this for free by running each scriptlet as its own script element.
+// We get it by giving each one its own function scope, so their declarations are local and
+// cannot collide. They are also run in the frame that asked for them rather than in the top
+// frame, which is where the library sent them regardless of origin.
+function scoped(script) {
+  // Trailing newline first: a scriptlet ending in a // comment would otherwise swallow the
+  // closing brace.
+  return `(function(){\n${script}\n})();`;
+}
+
+function injectInto(frame, scripts) {
+  if (!frame || frame.detached) return;
+  for (const script of scripts) {
+    // executeJavaScript returns a promise; a frame can go away mid-navigation, and an
+    // unhandled rejection per dead frame would bury real errors.
+    Promise.resolve(frame.executeJavaScript(scoped(script), true)).catch(() => {});
+  }
+}
 
 // Filter lists go stale, and the cached engine is just a serialized snapshot of them, so
 // re-fetch it once a week. Upstream rebuilds it on roughly that cadence.
@@ -37,42 +70,19 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BRAVE_EXPERIMENTAL_URL =
   'https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/experimental.txt';
 
-// Exception rules that keep the filter lists from breaking the services this app exists to
-// show. A general-purpose blocklist assumes a browser, where a broken site is a tab you
-// close; here it is the whole product, so a service that a rule breaks is worse than an ad
-// that slips through.
+// Exception rules for filter rules that break a service. A general-purpose blocklist assumes
+// a browser, where a broken site is a tab you close; here it is the whole product, so a
+// service a rule breaks is worse than an ad that slips through.
 //
-// Netflix breaks in TWO independent ways, and it takes the error page down only if both are
-// undone — each on its own is enough to produce "Something went wrong / NSES-UHX" instead of
-// the browse page. Bisected against the live site with the engine's two halves toggled
-// separately:
+// Empty, and worth keeping that way. Netflix, Twitch and YouTube each used to need an entry
+// here — the browse page, the module loader and the player respectively — and every one of
+// those turned out to be the scriptlet-scoping bug above rather than a bad rule. Fixing the
+// injection fixed all three, so the exceptions came back out: each one had been quietly
+// giving up real blocking (Twitch's was disabling an ad-blocking scriptlet outright).
 //
-//  1. The lists carry `##+js(no-fetch-if, logs.netflix.com)`, which injects uBO's
-//     no-fetch-if scriptlet. That scriptlet replaces window.fetch wholesale, and Netflix's
-//     UI is driven entirely through fetch, so patching it to suppress one telemetry beacon
-//     takes the whole page with it. Disabled here for netflix.com only.
-//  2. EasyPrivacy separately blocks the same telemetry at the network layer
-//     (netflix.com/log, /ichnaea, logs.netflix.com). Netflix treats those cancelled requests
-//     as fatal too, so they have to be allowed through.
-//
-// Add to this list only with a reproduction — an exception that is not needed is blocking
-// quietly given away.
-const UNBREAK_RULES = [
-  // 1. every scriptlet on netflix.com, not just no-fetch-if — the others break it too, and
-  //    Netflix is a paid, ad-free service whose cosmetic payload is 0 bytes of CSS, so
-  //    scriptlets there can only cost us breakage and buy nothing.
-  'netflix.com#@#+js()',
-  // 2. the telemetry endpoints themselves
-  '@@||netflix.com/log/',
-  '@@||netflix.com/ichnaea/',
-  '@@||logs.netflix.com^',
-  // 3. Twitch: the same no-fetch-if scriptlet, this time via Brave's list
-  //    (twitch.tv##+js(no-fetch-if, edge.ads.twitch.tv)). Patching window.fetch here sends
-  //    the player's module loader into infinite recursion — "Error loading module.
-  //    RangeError: Maximum call stack size exceeded" — and no video plays. Dropped narrowly,
-  //    so Twitch keeps its other ad-blocking scriptlet.
-  'twitch.tv#@#+js(no-fetch-if, edge.ads.twitch.tv)',
-];
+// Add to this list only with a reproduction, and only after ruling out the injection path —
+// an exception that is not needed is blocking silently given away.
+const UNBREAK_RULES = [];
 
 function enginePath() {
   return path.join(app.getPath('userData'), 'adblock-engine.bin');
@@ -184,7 +194,43 @@ class AdBlocker {
     // Re-register the shared cosmetic handlers (see COSMETIC_CHANNELS).
     for (const channel of COSMETIC_CHANNELS) ipcMain.removeHandler(channel);
     this.blocker.enableBlockingInSession(ses);
+    // ...then take the scriptlet-injecting one back off the library (see injectInto).
+    ipcMain.removeHandler(INJECT_CHANNEL);
+    ipcMain.handle(INJECT_CHANNEL, (event, url, msg) => this.injectCosmetics(event, url, msg));
     this.active.add(ses);
+  }
+
+  // Stands in for the library's cosmetic handler. Same rule lookup — only the scriptlets are
+  // run in the frame that asked for them rather than in the top frame.
+  injectCosmetics(event, url, msg) {
+    if (!this.blocker) return;
+    const { hostname, domain } = parseHost(url);
+    const isFirstRun = msg === undefined; // updates carry DOM info; the first call does not
+    const { active, styles, scripts } = this.blocker.getCosmeticsFilters({
+      domain: domain || '',
+      hostname: hostname || '',
+      url,
+      classes: msg && msg.classes,
+      hrefs: msg && msg.hrefs,
+      ids: msg && msg.ids,
+      getBaseRules: isFirstRun,
+      getInjectionRules: isFirstRun,
+      getExtendedRules: false,
+      getRulesFromHostname: isFirstRun,
+      getRulesFromDOM: !isFirstRun,
+      callerContext: {
+        frameId: event.frameId,
+        processId: event.processId,
+        lifecycle: msg && msg.lifecycle,
+      },
+    });
+    if (active === false) return;
+    if (styles && styles.length > 0) {
+      event.sender.insertCSS(styles, { cssOrigin: 'user' });
+    }
+    if (scripts && scripts.length > 0) {
+      injectInto(event.senderFrame, scripts);
+    }
   }
 
   detach(ses) {
