@@ -58,6 +58,19 @@ jobs:
           EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
         run: npm run ${{ matrix.script }} -- --publish never
 
+      # Manual (workflow_dispatch) runs: publish the build as a downloadable artifact for
+      # testing. Secrets are available on dispatch, so the Windows build is still signed.
+      - name: Upload build for manual test runs
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamHub-${{ matrix.os }}
+          path: |
+            dist/*.AppImage
+            dist/*.exe
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Attach installers to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

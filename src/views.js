@@ -10,9 +10,12 @@ const {
 } = require('./services');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
-// presents. Only headers Chromium already decided to send are overwritten — adding ones
-// it withheld (it omits them on insecure origins) would itself be an oddity. The JS-side
-// half of this lives in service-preload.js.
+// presents. Every hint we spoof in JS (navigator.userAgentData, see service-preload.js)
+// is also rewritten here as a header, because Netflix (and others) compare the two: if
+// the JS says one platform/version/arch and the high-entropy headers say another, they
+// flag it as a spoofed browser (Netflix error M7111-1957-205064). Only headers Chromium
+// already decided to send are overwritten — the values below must stay in lock-step with
+// service-preload.js.
 function alignClientHints(ses) {
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = details.requestHeaders;
@@ -29,6 +32,18 @@ function alignClientHints(ses) {
           break;
         case 'sec-ch-ua-platform':
           headers[name] = `"${CHROME_PLATFORM}"`;
+          break;
+        case 'sec-ch-ua-platform-version':
+          headers[name] = `"${CHROME_PLATFORM_VERSION}"`;
+          break;
+        case 'sec-ch-ua-arch':
+          headers[name] = '"x86"';
+          break;
+        case 'sec-ch-ua-bitness':
+          headers[name] = '"64"';
+          break;
+        case 'sec-ch-ua-model':
+          headers[name] = '""';
           break;
         case 'sec-ch-ua-mobile':
           headers[name] = '?0';
