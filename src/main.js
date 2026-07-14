@@ -8,6 +8,9 @@ const {
   ipcMain,
   dialog,
   Menu,
+  Tray,
+  nativeImage,
+  powerSaveBlocker,
   shell,
 } = require('electron');
 
@@ -52,11 +55,48 @@ let activeServiceId = null;
 let sidebarCollapsed = false;
 let adblockStatsTimer = null;
 let pendingUpdate = null; // version string of a newer release we already know about, else null
+let tray = null;
+let quitting = false; // distinguishes a real quit from a close-to-tray
+let sleepBlockerId = null; // powerSaveBlocker id held while something is playing
+let saveWindowTimer = null;
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
   chromeView.setBounds({ x: 0, y: 0, width, height });
   viewManager.layout(width, height);
+}
+
+// Hold the display awake while a service is playing. Watching a film is the one time a
+// desktop sees no input for two hours, which is exactly when the screensaver fires — the
+// sites' own wake locks do not reliably carry through Electron, so hold one ourselves.
+// 'prevent-display-sleep' also implies preventing system suspend.
+function setPlaybackInhibitor(playing) {
+  if (playing) {
+    if (sleepBlockerId === null) sleepBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    return;
+  }
+  if (sleepBlockerId !== null) {
+    powerSaveBlocker.stop(sleepBlockerId);
+    sleepBlockerId = null;
+  }
+}
+
+// Remember the window's geometry. Debounced: resize and move fire continuously while the
+// user drags, and this writes a file.
+function rememberWindowLater() {
+  clearTimeout(saveWindowTimer);
+  saveWindowTimer = setTimeout(() => {
+    if (!baseWindow || baseWindow.isDestroyed()) return;
+    // A maximized/fullscreen window's bounds are the screen's, not the size to restore to,
+    // so keep the last normal geometry and record the maximized state separately.
+    const maximized = baseWindow.isMaximized();
+    if (!maximized && !baseWindow.isFullScreen()) {
+      const { x, y, width, height } = baseWindow.getBounds();
+      config.window = { ...config.window, x, y, width, height };
+    }
+    config.window = { ...config.window, maximized };
+    persist();
+  }, 600);
 }
 
 // The single source of truth pushed to every window (main sidebar + removed window).
@@ -69,6 +109,8 @@ function statePayload() {
     version: APP_VERSION,
     adblock: adblocker.status(),
     updateAvailable: pendingUpdate,
+    lastServiceId: config.lastServiceId,
+    minimizeToTray: config.settings.minimizeToTray === true,
   };
 }
 
@@ -111,14 +153,22 @@ function switchService(serviceId) {
   const service = config.services.find((s) => s.id === serviceId);
   if (!service) return;
   activeServiceId = serviceId;
+  // Reopen on this service next launch rather than always landing on the first one.
+  if (config.lastServiceId !== serviceId) {
+    config.lastServiceId = serviceId;
+    persist();
+  }
   viewManager.show(service);
   broadcast();
 }
 
 function createWindow() {
+  const saved = config.window || {};
   baseWindow = new BaseWindow({
-    width: 1280,
-    height: 800,
+    width: saved.width || 1280,
+    height: saved.height || 800,
+    // x/y are absent on a first run; leaving them undefined lets the WM place the window.
+    ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 940,
     minHeight: 600,
     backgroundColor: '#0b0d10',
@@ -126,6 +176,7 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   });
+  if (saved.maximized) baseWindow.maximize();
 
   chromeView = new WebContentsView({
     webPreferences: {
@@ -138,11 +189,18 @@ function createWindow() {
   chromeView.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
 
   viewManager = new ViewManager(baseWindow, SIDEBAR_WIDTH);
+  // Keep the display awake whenever any service is playing (see setPlaybackInhibitor).
+  viewManager.onPlaybackChange = setPlaybackInhibitor;
 
   layout();
   baseWindow.on('resize', layout);
   baseWindow.on('enter-full-screen', layout);
   baseWindow.on('leave-full-screen', layout);
+
+  baseWindow.on('resize', rememberWindowLater);
+  baseWindow.on('move', rememberWindowLater);
+  baseWindow.on('maximize', rememberWindowLater);
+  baseWindow.on('unmaximize', rememberWindowLater);
 
   // Hold the media keys only while our window is focused, so they pass through to
   // other players (Spotify, etc.) when the app is in the background. The window opens
@@ -153,10 +211,59 @@ function createWindow() {
   baseWindow.on('focus', wireMediaKeys);
   baseWindow.on('blur', unregisterMediaKeys);
 
+  // With "minimize to tray" on, closing the window hides it and playback carries on — the
+  // point of the setting is to keep a stream running with the window out of the way. Quit
+  // still quits: the tray menu and app.quit() set `quitting` first.
+  baseWindow.on('close', (e) => {
+    if (quitting || !config.settings.minimizeToTray || !tray) return;
+    e.preventDefault();
+    baseWindow.hide();
+  });
+
   baseWindow.on('closed', () => {
     baseWindow = null;
     if (removedWindow && !removedWindow.isDestroyed()) removedWindow.close();
   });
+}
+
+// Tray icon: only useful alongside "minimize to tray", so it exists exactly while that is on
+// — a tray icon that does nothing is clutter.
+function showWindow() {
+  if (!baseWindow || baseWindow.isDestroyed()) return;
+  baseWindow.show();
+  baseWindow.focus();
+}
+
+function buildTray() {
+  if (tray) return;
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.png'));
+  tray = new Tray(icon.resize({ width: 22, height: 22 }));
+  tray.setToolTip('StreamHub');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show StreamHub', click: showWindow },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', showWindow);
+}
+
+function destroyTray() {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
+}
+
+function applyTraySetting() {
+  if (config.settings.minimizeToTray) buildTray();
+  else destroyTray();
 }
 
 // Separate window listing removed services; clicking one restores it to the sidebar.
@@ -214,6 +321,8 @@ ipcMain.on('toggle-sidebar', () => {
   sidebarCollapsed = !sidebarCollapsed;
   // The service view starts where the sidebar ends, so collapsing widens the video.
   viewManager.setSidebarWidth(sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
+  config.settings.sidebarCollapsed = sidebarCollapsed;
+  persist();
   broadcast();
 });
 
@@ -279,6 +388,57 @@ ipcMain.handle('set-adblock', async (_e, on) => {
   viewManager.reloadAll();
   broadcast();
   return adblocker.status();
+});
+
+// Turn blocking off for a single service while leaving it on everywhere else. This is the
+// escape hatch when a filter rule breaks one site: it should cost you that site's blocking,
+// not all of it.
+ipcMain.handle('set-service-adblock', async (_e, serviceId, on) => {
+  if (typeof serviceId !== 'string') return adblocker.status();
+  await adblocker.setServiceEnabled(serviceId, on !== false);
+  config.settings.adblockOff = adblocker.status().excluded;
+  persist();
+  const service = config.services.find((s) => s.id === serviceId);
+  if (service) viewManager.reloadService(service); // blocking only affects new requests
+  broadcast();
+  return adblocker.status();
+});
+
+// Sign out of a service by wiping its cookies/storage/cache. Destructive and easy to hit by
+// accident from a context menu, so confirm first and name the service being wiped.
+ipcMain.handle('clear-service-data', async (_e, serviceId) => {
+  const service = config.services.find((s) => s.id === serviceId);
+  if (!service) return false;
+  const r = await dialog.showMessageBox(baseWindow, {
+    type: 'warning',
+    message: `Sign out of ${service.name}?`,
+    detail:
+      `This clears ${service.name}'s cookies, storage and cache, so you will be signed out ` +
+      'and it may ask you to verify this device again next time. Nothing else is affected.',
+    buttons: ['Sign out', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (r.response !== 0) return false;
+  await viewManager.clearServiceData(service);
+  return true;
+});
+
+// Pull fresh filter lists now. The fix for a site's new anti-adblock arrives as a list
+// update, so waiting out the weekly refresh is not always acceptable.
+ipcMain.handle('refresh-filters', async () => {
+  const ok = await adblocker.refresh();
+  if (ok) viewManager.reloadAll();
+  broadcast();
+  return adblocker.status();
+});
+
+ipcMain.handle('set-tray', (_e, on) => {
+  config.settings.minimizeToTray = on === true;
+  persist();
+  applyTraySetting();
+  broadcast();
+  return config.settings.minimizeToTray;
 });
 
 ipcMain.on('toggle-fullscreen', () => {
@@ -501,6 +661,11 @@ app.whenReady().then(async () => {
     );
   }
   config = configStore.load(); // the user's list, from their userData dir
+  sidebarCollapsed = config.settings.sidebarCollapsed === true;
+
+  // Restore the per-service exclusions before anything is attached, or a service the user
+  // turned blocking off for would get the engine for the first page load and then lose it.
+  adblocker.setExcluded(config.settings.adblockOff);
 
   // Bring the filter engine up *before* the first service view exists. Attaching it after
   // the window opens would race the first page load, letting exactly the requests we mean
@@ -514,6 +679,11 @@ app.whenReady().then(async () => {
 
   buildAppMenu();
   createWindow();
+  applyTraySetting();
+
+  // The sidebar starts collapsed if that is how it was left, so the service view has to
+  // start at the rail's edge rather than the full sidebar's.
+  if (sidebarCollapsed) viewManager.setSidebarWidth(SIDEBAR_RAIL_WIDTH);
 
   // Look for a new release in the background so the sidebar button can announce one instead
   // of the user having to think to go and ask. Deferred a little: startup is already busy
@@ -523,8 +693,20 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  // With "minimize to tray" on, closing the window only hides it, so this fires only on a
+  // real quit. Without it, closing the window is quitting, as before.
   unregisterMediaKeys();
   app.quit();
 });
 
-app.on('will-quit', unregisterMediaKeys);
+// Any route to quitting (menu, Ctrl+Q, session logout) has to get past the close-to-tray
+// handler, which only stands aside once this is set.
+app.on('before-quit', () => {
+  quitting = true;
+});
+
+app.on('will-quit', () => {
+  unregisterMediaKeys();
+  setPlaybackInhibitor(false); // never leave the display-sleep inhibitor held after we exit
+  destroyTray();
+});

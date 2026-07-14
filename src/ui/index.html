@@ -32,6 +32,19 @@
             <span class="setting-sub" id="adblock-sub">Brave Experimental Adblock Rules</span>
           </span>
         </label>
+
+        <div class="setting-extra" id="adblock-extra" hidden>
+          <span id="filter-age">Filters: —</span>
+          <button id="btn-refresh-filters" title="Fetch the latest filter lists now">Update</button>
+        </div>
+
+        <label class="setting" for="chk-tray">
+          <input type="checkbox" id="chk-tray" />
+          <span class="setting-text">
+            <span class="setting-title">Keep running in tray</span>
+            <span class="setting-sub">Closing the window keeps playback going</span>
+          </span>
+        </label>
       </div>
 
       <div class="sidebar-footer">
@@ -47,6 +60,13 @@
         </div>
       </div>
     </nav>
+
+    <!-- Right-click menu for a service row. Hidden until a row is right-clicked. -->
+    <div id="service-menu" class="context-menu" hidden>
+      <div class="context-title" id="menu-title">Service</div>
+      <button id="menu-adblock" class="context-item">Block ads here</button>
+      <button id="menu-signout" class="context-item danger">Sign out / clear data</button>
+    </div>
 
     <script src="renderer.js"></script>
   </body>

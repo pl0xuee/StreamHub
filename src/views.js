@@ -107,6 +107,18 @@ class ViewManager {
     this.autoPaused = new Set(); // views we paused on switch-away, to resume on return
     this.videoFullscreen = false;
     this.bounds = { width: 0, height: 0 };
+    this.playing = new Set(); // views with media playing, for the screen-sleep inhibitor
+    this.onPlaybackChange = () => {}; // set by main.js
+  }
+
+  // Track which views are playing and tell main.js when that set becomes empty or non-empty,
+  // so it can hold or release the display-sleep inhibitor.
+  onMediaChange(view, isPlaying) {
+    const before = this.playing.size > 0;
+    if (isPlaying) this.playing.add(view);
+    else this.playing.delete(view);
+    const after = this.playing.size > 0;
+    if (before !== after) this.onPlaybackChange(after);
   }
 
   // The "@default" suffix is a leftover from a removed multi-profile feature. It is
@@ -128,9 +140,9 @@ class ViewManager {
     ses.setUserAgent(CHROME_UA);
     alignClientHints(ses);
     // Every service has its own session, so the ad blocker has to be attached to each one.
-    // This is a no-op while blocking is off; flipping it on later reaches back through the
-    // sessions registered here.
-    adblocker.register(ses);
+    // This is a no-op while blocking is off for this service; turning it on later reaches
+    // back through the sessions registered here.
+    adblocker.register(ses, service.id);
 
     const view = new WebContentsView({
       webPreferences: {
@@ -181,6 +193,17 @@ class ViewManager {
     // window (hiding the sidebar) and put the OS window into fullscreen too.
     wc.on('enter-html-full-screen', () => this.setVideoFullscreen(true));
     wc.on('leave-html-full-screen', () => this.setVideoFullscreen(false));
+
+    // Blocked requests only identify the webContents that made them, so tie this one to its
+    // service to be able to count them per service.
+    adblocker.bindWebContents(wc.id, service.id);
+
+    // Chromium tells us when media actually starts and stops, which is what the screen-sleep
+    // inhibitor keys off — far better than polling the page for a playing <video>. Note both
+    // fire for muted/looping decorative video too; the inhibitor treats any playback as
+    // reason enough to keep the display on, which is the safe way round.
+    wc.on('media-started-playing', () => this.onMediaChange(view, true));
+    wc.on('media-paused', () => this.onMediaChange(view, false));
 
     view.setVisible(false);
     this.win.contentView.addChildView(view);
@@ -234,9 +257,26 @@ class ViewManager {
     if (!view) return;
     if (this.active === view) this.active = null;
     this.autoPaused.delete(view);
+    // A destroyed view cannot report that it stopped playing, so drop it from the playing
+    // set by hand or the display-sleep inhibitor would be held forever.
+    this.onMediaChange(view, false);
+    if (!view.webContents.isDestroyed()) adblocker.unbindWebContents(view.webContents.id);
     this.win.contentView.removeChildView(view);
     view.webContents.close();
     this.views.delete(key);
+  }
+
+  // Sign out of a service: wipe its cookies, storage and cache, then reload it so the site
+  // comes back logged out. The partition itself stays (it is what makes the service's data
+  // separate); only its contents go.
+  async clearServiceData(service) {
+    const ses = session.fromPartition(`persist:${this.key(service.id)}`);
+    await ses.clearStorageData(); // cookies, localStorage, IndexedDB, service workers…
+    await ses.clearCache();
+    const view = this.views.get(this.key(service.id));
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents.loadURL(service.url); // back to the front door, signed out
+    }
   }
 
   setVideoFullscreen(on) {
@@ -277,6 +317,13 @@ class ViewManager {
   reloadActive() {
     const wc = this.getActiveWebContents();
     if (wc) wc.reload();
+  }
+
+  // Reload one service, if it has a live view — used when its ad-blocking setting changes.
+  reloadService(service) {
+    const view = this.views.get(this.key(service.id));
+    const wc = view && view.webContents;
+    if (wc && !wc.isDestroyed()) wc.reload();
   }
 
   // Reload every live service. Toggling the ad blocker only changes how *new* requests are

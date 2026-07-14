@@ -271,7 +271,118 @@ body {
   line-height: 15px;
 }
 
+/* Per-service blocked count, sitting between the label and the delete button. */
+.service .shield {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--muted-2);
+  min-width: 0;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: transparent;
+}
+.service .shield:not(:empty) {
+  background: var(--elevated-2);
+}
+/* Blocking deliberately off here, while it is on elsewhere. */
+.service .shield.off {
+  color: var(--danger);
+  background: transparent;
+  font-size: 12px;
+}
+/* The delete button appears on hover and takes the shield's place. */
+.service:hover .shield {
+  display: none;
+}
+
+/* ---- Right-click menu on a service ---- */
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 178px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--elevated) 0%, var(--surface) 100%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.context-title {
+  padding: 5px 8px 6px;
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-2);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-soft);
+}
+.context-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.context-item:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.context-item:disabled {
+  color: var(--muted-2);
+  cursor: default;
+}
+.context-item.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---- Filter-list age + manual update, under the ad blocker toggle ---- */
+.setting-extra {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: -2px;
+  padding: 0 9px 0 35px; /* line up under the checkbox's label, not the checkbox */
+}
+#filter-age {
+  font-size: 10.5px;
+  color: var(--muted-2);
+}
+#btn-refresh-filters {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+#btn-refresh-filters:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+#btn-refresh-filters:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ---- Settings (ad blocker toggle) ---- */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
 .setting {
   display: flex;
   align-items: flex-start;

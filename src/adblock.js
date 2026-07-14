@@ -128,13 +128,22 @@ async function fetchBraveRules() {
 class AdBlocker {
   constructor() {
     this.blocker = null;
-    this.enabled = false;
+    this.enabled = false; // the global switch
     this.loading = null; // in-flight engine load, so concurrent toggles share one download
     this.error = null;
-    this.blocked = 0;
+    this.blocked = 0; // every service's blocks added up
     this.braveRules = 0; // how many of Brave's experimental rules were merged in
-    this.sessions = new Set(); // every service session we know about
-    this.active = new Set(); // the subset the engine is currently attached to
+    this.lastUpdated = null; // when the filter engine on disk was last written
+    this.sessions = new Map(); // serviceId -> session
+    this.active = new Set(); // the sessions the engine is currently attached to
+    this.off = new Set(); // services excluded while the blocker is globally on
+    this.counts = new Map(); // serviceId -> blocked requests
+    this.owners = new Map(); // webContents id -> serviceId, to attribute each block
+  }
+
+  // A service is blocked when the global switch is on and it has not been excluded.
+  isOnFor(serviceId) {
+    return this.enabled && !this.off.has(serviceId);
   }
 
   // Fetch (or read from cache) the prebuilt engine. Resolves to null if it cannot be
@@ -151,8 +160,13 @@ class AdBlocker {
         read: fs.readFile,
         write: fs.writeFile,
       });
-      blocker.on('request-blocked', () => {
+      // Every session shares one engine, so a block only says which *webContents* made the
+      // request. Map that back to the service (see owners) to get a per-service count; a
+      // request from something we do not own still counts toward the total.
+      blocker.on('request-blocked', (request) => {
         this.blocked += 1;
+        const serviceId = this.owners.get(request.tabId);
+        if (serviceId) this.counts.set(serviceId, (this.counts.get(serviceId) || 0) + 1);
       });
 
       // Layer Brave's experimental rules over the base engine. Best-effort: they are a
@@ -171,6 +185,14 @@ class AdBlocker {
       // Applied last, and never over the network: an exception that failed to download would
       // mean a silently broken service, which is exactly what these exist to prevent.
       blocker.updateFromDiff({ added: UNBREAK_RULES });
+
+      // The engine file's mtime is when these rules were actually fetched — which is what
+      // the user wants to know when YouTube starts showing ads again.
+      try {
+        this.lastUpdated = (await fs.stat(file)).mtimeMs;
+      } catch {
+        this.lastUpdated = null;
+      }
 
       this.blocker = blocker;
       this.error = null;
@@ -245,18 +267,31 @@ class AdBlocker {
 
   // Called for every service session as its view is created, so a session opened while
   // blocking is on gets the engine immediately.
-  register(ses) {
-    this.sessions.add(ses);
-    if (this.enabled) this.attach(ses);
+  register(ses, serviceId) {
+    this.sessions.set(serviceId, ses);
+    if (this.isOnFor(serviceId)) this.attach(ses);
   }
 
-  forget(ses) {
-    this.detach(ses);
-    this.sessions.delete(ses);
+  // Which service a webContents belongs to, so its blocked requests can be counted against
+  // the right one. Views are recreated (remove/restore, reload), so ids are re-bound.
+  bindWebContents(webContentsId, serviceId) {
+    this.owners.set(webContentsId, serviceId);
   }
 
-  // Turn blocking on/off across every service session. Returns true if the requested
-  // state was actually reached — flipping it on with no engine and no network does not.
+  unbindWebContents(webContentsId) {
+    this.owners.delete(webContentsId);
+  }
+
+  // Bring every session in line with the current settings.
+  applyAll() {
+    for (const [serviceId, ses] of this.sessions) {
+      if (this.isOnFor(serviceId)) this.attach(ses);
+      else this.detach(ses);
+    }
+  }
+
+  // Turn blocking on/off globally. Returns true if the requested state was actually reached
+  // — flipping it on with no engine and no network does not.
   async setEnabled(on) {
     this.enabled = Boolean(on);
     if (!this.enabled) {
@@ -267,8 +302,48 @@ class AdBlocker {
       this.enabled = false;
       return false;
     }
-    for (const ses of this.sessions) this.attach(ses);
+    this.applyAll();
     return true;
+  }
+
+  // Exclude (or re-include) one service while the blocker stays on globally. This is the
+  // escape hatch for a service a filter rule breaks: switch it off there, not everywhere.
+  async setServiceEnabled(serviceId, on) {
+    if (on) this.off.delete(serviceId);
+    else this.off.add(serviceId);
+    if (this.enabled && !(await this.load())) return;
+    this.applyAll();
+  }
+
+  // Restore the excluded set from the saved config, before anything is attached.
+  setExcluded(serviceIds) {
+    this.off = new Set(Array.isArray(serviceIds) ? serviceIds : []);
+  }
+
+  // Pull fresh filter lists now rather than waiting out the weekly refresh — the fix for a
+  // site's new anti-adblock arrives as a list update, not as an app update. Drops the cached
+  // engine, rebuilds, and re-attaches. Leaves the old engine in place if the fetch fails, so
+  // "update" can never leave the user with less blocking than they started with.
+  async refresh() {
+    const previous = this.blocker;
+    try {
+      await fs.unlink(enginePath()).catch(() => {});
+      await fs.unlink(braveListPath()).catch(() => {});
+      this.blocker = null;
+      this.loading = null;
+      if (!(await this.load())) {
+        this.blocker = previous; // put the working engine back
+        return false;
+      }
+      // The old engine's listeners are gone with it, so re-attach every session to the new.
+      this.active.clear();
+      this.applyAll();
+      return true;
+    } catch (err) {
+      this.blocker = previous;
+      this.error = err.message;
+      return false;
+    }
   }
 
   status() {
@@ -278,6 +353,9 @@ class AdBlocker {
       error: this.error,
       blocked: this.blocked,
       braveRules: this.braveRules,
+      lastUpdated: this.lastUpdated,
+      excluded: [...this.off],
+      counts: Object.fromEntries(this.counts),
     };
   }
 }

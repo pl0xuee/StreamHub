@@ -14,13 +14,51 @@ function configPath() {
 
 // App settings, as opposed to the service list. Ad blocking ships off: it is experimental,
 // and an over-broad filter rule breaking playback should be something the user opts into.
+//
+// `adblockOff` lists the services the blocker is NOT applied to while it is globally on.
+// A deny-list rather than an allow-list, so that a service added later inherits the setting
+// instead of silently going unblocked.
 function defaultSettings() {
-  return { adblock: false };
+  return {
+    adblock: false,
+    adblockOff: [],
+    sidebarCollapsed: false,
+    minimizeToTray: false,
+  };
 }
 
 function cleanSettings(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
-  return { adblock: s.adblock === true };
+  return {
+    adblock: s.adblock === true,
+    adblockOff: Array.isArray(s.adblockOff) ? s.adblockOff.filter((x) => typeof x === 'string') : [],
+    sidebarCollapsed: s.sidebarCollapsed === true,
+    minimizeToTray: s.minimizeToTray === true,
+  };
+}
+
+// Where the window was last time. Position is allowed to be absent (let the WM place it),
+// but a size is always returned so the caller never has to special-case a first run.
+function defaultWindow() {
+  return { width: 1280, height: 800, maximized: false };
+}
+
+function cleanWindow(raw) {
+  const w = raw && typeof raw === 'object' ? raw : {};
+  const num = (v, min) => (Number.isFinite(v) && v >= min ? Math.round(v) : undefined);
+  const out = {
+    width: num(w.width, 940) || 1280,
+    height: num(w.height, 600) || 800,
+    maximized: w.maximized === true,
+  };
+  // Only carry a position if both halves are there — half a position is not a position.
+  const x = num(w.x, -32000);
+  const y = num(w.y, -32000);
+  if (x !== undefined && y !== undefined) {
+    out.x = x;
+    out.y = y;
+  }
+  return out;
 }
 
 function defaults() {
@@ -28,6 +66,8 @@ function defaults() {
     services: DEFAULT_SERVICES.map((s) => ({ ...s })),
     removed: [],
     settings: defaultSettings(),
+    window: defaultWindow(),
+    lastServiceId: null,
   };
 }
 
@@ -73,11 +113,13 @@ function load() {
     services: cleanList(raw && raw.services),
     removed: cleanList(raw && raw.removed),
     settings: cleanSettings(raw && raw.settings),
+    window: cleanWindow(raw && raw.window),
+    lastServiceId: typeof (raw && raw.lastServiceId) === 'string' ? raw.lastServiceId : null,
   };
   // An empty list means a corrupt or hand-emptied file: reset the catalog, but keep the
-  // settings the user chose — they are independent of which services are listed.
+  // settings and window the user chose — they are independent of which services are listed.
   if (cfg.services.length === 0 && cfg.removed.length === 0) {
-    return { ...defaults(), settings: cfg.settings };
+    return { ...defaults(), settings: cfg.settings, window: cfg.window };
   }
 
   const known = new Set([...cfg.services, ...cfg.removed].map((s) => s.id));
@@ -96,6 +138,8 @@ function save(cfg) {
           services: cfg.services,
           removed: cfg.removed,
           settings: cleanSettings(cfg.settings),
+          window: cleanWindow(cfg.window),
+          lastServiceId: typeof cfg.lastServiceId === 'string' ? cfg.lastServiceId : null,
         },
         null,
         2,

@@ -7,8 +7,23 @@ const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const adblockEl = document.getElementById('chk-adblock');
 const adblockSubEl = document.getElementById('adblock-sub');
+const adblockExtraEl = document.getElementById('adblock-extra');
+const filterAgeEl = document.getElementById('filter-age');
+const refreshBtn = document.getElementById('btn-refresh-filters');
+const trayEl = document.getElementById('chk-tray');
+const menuEl = document.getElementById('service-menu');
+const menuTitleEl = document.getElementById('menu-title');
+const menuAdblockEl = document.getElementById('menu-adblock');
+const menuSignoutEl = document.getElementById('menu-signout');
 
 let state = { services: [], removed: [], activeServiceId: null, sidebarCollapsed: false };
+let menuServiceId = null; // the service the context menu is currently open for
+
+// Is the blocker on for this service? Globally on, and not in the excluded list.
+function adblockOnFor(id) {
+  const ab = state.adblock;
+  return Boolean(ab && ab.enabled && !(ab.excluded || []).includes(id));
+}
 
 function initial(name) {
   return name.replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase() || '?';
@@ -29,6 +44,23 @@ function makeServiceEl(svc) {
   label.className = 'label';
   label.textContent = svc.name;
 
+  // How many requests the blocker has stopped on THIS service. Only shown once it has
+  // actually stopped something — a "0" on every row is noise, not information.
+  const counts = (state.adblock && state.adblock.counts) || {};
+  const blocked = counts[svc.id] || 0;
+  const shield = document.createElement('span');
+  shield.className = 'shield';
+  if (adblockOnFor(svc.id) && blocked > 0) {
+    shield.textContent = blocked > 999 ? `${Math.floor(blocked / 1000)}k` : String(blocked);
+    shield.title = `${blocked.toLocaleString()} requests blocked on ${svc.name}`;
+  } else if (state.adblock && state.adblock.enabled && !adblockOnFor(svc.id)) {
+    // Blocking is on everywhere else but deliberately off here — say so, or the user will
+    // wonder why this one service is full of ads.
+    shield.textContent = '⊘';
+    shield.classList.add('off');
+    shield.title = `Ad blocking is off for ${svc.name}`;
+  }
+
   const del = document.createElement('button');
   del.className = 'del';
   del.title = `Remove ${svc.name}`;
@@ -38,8 +70,12 @@ function makeServiceEl(svc) {
     window.shell.removeService(svc.id);
   });
 
-  li.append(icon, label, del);
+  li.append(icon, label, shield, del);
   li.addEventListener('click', () => window.shell.switchService(svc.id));
+  li.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openServiceMenu(svc, e.clientX, e.clientY);
+  });
 
   li.addEventListener('dragstart', () => {
     // Defer so the class lands after the drag image is captured.
@@ -76,6 +112,53 @@ listEl.addEventListener('dragover', (e) => {
   else listEl.insertBefore(dragging, after);
 });
 
+// ---- Per-service context menu (right-click a row) ----
+function closeServiceMenu() {
+  menuEl.hidden = true;
+  menuServiceId = null;
+}
+
+function openServiceMenu(svc, x, y) {
+  menuServiceId = svc.id;
+  menuTitleEl.textContent = svc.name;
+
+  const globallyOn = Boolean(state.adblock && state.adblock.enabled);
+  const onHere = adblockOnFor(svc.id);
+  menuAdblockEl.textContent = onHere ? 'Stop blocking ads here' : 'Block ads here';
+  // With the blocker off globally there is nothing to turn on for one service, so say why
+  // rather than offer a control that would do nothing.
+  menuAdblockEl.disabled = !globallyOn;
+  menuAdblockEl.title = globallyOn ? '' : 'Turn the ad blocker on first';
+
+  menuEl.hidden = false;
+  // Keep the menu on screen when the row is near the bottom edge.
+  const { width, height } = menuEl.getBoundingClientRect();
+  menuEl.style.left = `${Math.min(x, window.innerWidth - width - 6)}px`;
+  menuEl.style.top = `${Math.min(y, window.innerHeight - height - 6)}px`;
+}
+
+menuAdblockEl.addEventListener('click', async () => {
+  const id = menuServiceId;
+  if (!id) return;
+  const on = !adblockOnFor(id);
+  closeServiceMenu();
+  applyState({ ...state, adblock: await window.shell.setServiceAdblock(id, on) });
+});
+
+menuSignoutEl.addEventListener('click', () => {
+  const id = menuServiceId;
+  closeServiceMenu();
+  if (id) window.shell.clearServiceData(id); // the main process confirms before wiping
+});
+
+// Any click or Escape elsewhere dismisses the menu.
+window.addEventListener('click', closeServiceMenu);
+window.addEventListener('blur', closeServiceMenu);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeServiceMenu();
+});
+menuEl.addEventListener('click', (e) => e.stopPropagation());
+
 function renderServices() {
   listEl.innerHTML = '';
   for (const svc of state.services) listEl.appendChild(makeServiceEl(svc));
@@ -102,12 +185,25 @@ function renderAdblockCount(blocked) {
   );
 }
 
+// "3 days ago" — the useful question is how stale the rules are, not the exact timestamp.
+function ageText(ms) {
+  if (!ms) return 'Filters: unknown age';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  if (days <= 0) return 'Filters: updated today';
+  if (days === 1) return 'Filters: 1 day old';
+  return `Filters: ${days} days old`;
+}
+
 function renderAdblock(ab) {
   if (!ab) return;
   adblockEl.checked = ab.enabled;
   if (ab.error) setAdblockSub(`Filter list unavailable — ${ab.error}`, true);
   else if (ab.enabled) renderAdblockCount(ab.blocked);
   else setAdblockSub(ADBLOCK_SUB, false);
+
+  // The filter controls only mean anything once the engine is actually loaded.
+  adblockExtraEl.hidden = !ab.enabled || !ab.ready;
+  filterAgeEl.textContent = ageText(ab.lastUpdated);
 }
 
 // The button is the only place an update is announced, so it says which version is waiting
@@ -134,15 +230,18 @@ function applyState(next) {
   setCollapsed(state.sidebarCollapsed);
   renderAdblock(state.adblock);
   renderUpdateButton();
+  trayEl.checked = state.minimizeToTray === true;
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
 async function init() {
   applyState(await window.shell.getConfig());
 
-  // Auto-open the first service so the content area is never a blank panel.
-  if (!state.activeServiceId && state.services[0]) {
-    window.shell.switchService(state.services[0].id);
+  // Reopen whatever was being watched last, so the app comes back where it was left rather
+  // than always on the first service. Falls back to the first if that service is gone.
+  if (!state.activeServiceId && state.services.length) {
+    const last = state.services.find((s) => s.id === state.lastServiceId);
+    window.shell.switchService((last || state.services[0]).id);
   }
 
   document.getElementById('btn-removed').addEventListener('click', () => window.shell.openRemovedWindow());
@@ -184,6 +283,22 @@ async function init() {
   window.shell.onAdblockStats((blocked) => {
     if (adblockEl.checked) renderAdblockCount(blocked);
   });
+
+  // Pull fresh filter lists on demand. Rebuilding the engine reloads every open service, so
+  // report progress on the button rather than appearing to do nothing for a few seconds.
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true;
+    const label = refreshBtn.textContent;
+    refreshBtn.textContent = 'Updating…';
+    try {
+      renderAdblock(await window.shell.refreshFilters());
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = label;
+    }
+  });
+
+  trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
 
   document
     .getElementById('btn-collapse')

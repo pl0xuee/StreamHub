@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('shell', {
   // Resolves to the blocker's real state, which is not always the one that was asked for
   // (turning it on can fail if the filter engine cannot be fetched).
   setAdblock: (on) => ipcRenderer.invoke('set-adblock', on),
+  // Per-service: turn blocking off for one site without losing it everywhere else.
+  setServiceAdblock: (id, on) => ipcRenderer.invoke('set-service-adblock', id, on),
+  // Wipes one service's cookies/storage/cache. Confirmed in the main process first.
+  clearServiceData: (id) => ipcRenderer.invoke('clear-service-data', id),
+  refreshFilters: () => ipcRenderer.invoke('refresh-filters'),
+  setTray: (on) => ipcRenderer.invoke('set-tray', on),
   // Running count of blocked requests, pushed every couple of seconds while blocking is on.
   onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),
   // Download percentage while an update is being fetched; null when it finishes or fails.
