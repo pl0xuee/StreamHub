@@ -5,17 +5,12 @@ const {
   CHROME_MAJOR,
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
-  CHROME_PLATFORM,
-  CHROME_PLATFORM_VERSION,
 } = require('./services');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
-// presents. Every hint we spoof in JS (navigator.userAgentData, see service-preload.js)
-// is also rewritten here as a header, because Netflix (and others) compare the two: if
-// the JS says one platform/version/arch and the high-entropy headers say another, they
-// flag it as a spoofed browser (Netflix error M7111-1957-205064). Only headers Chromium
-// already decided to send are overwritten — the values below must stay in lock-step with
-// service-preload.js.
+// presents. Only headers Chromium already decided to send are overwritten — adding ones
+// it withheld (it omits them on insecure origins) would itself be an oddity. The JS-side
+// half of this lives in service-preload.js.
 function alignClientHints(ses) {
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = details.requestHeaders;
@@ -31,19 +26,7 @@ function alignClientHints(ses) {
           headers[name] = `"${CHROME_MAJOR}.0.0.0"`;
           break;
         case 'sec-ch-ua-platform':
-          headers[name] = `"${CHROME_PLATFORM}"`;
-          break;
-        case 'sec-ch-ua-platform-version':
-          headers[name] = `"${CHROME_PLATFORM_VERSION}"`;
-          break;
-        case 'sec-ch-ua-arch':
-          headers[name] = '"x86"';
-          break;
-        case 'sec-ch-ua-bitness':
-          headers[name] = '"64"';
-          break;
-        case 'sec-ch-ua-model':
-          headers[name] = '""';
+          headers[name] = '"Linux"';
           break;
         case 'sec-ch-ua-mobile':
           headers[name] = '?0';
@@ -154,7 +137,7 @@ class ViewManager {
         // untrusted remote sites stay isolated; they are still driven from the main
         // process via executeJavaScript.
         preload: path.join(__dirname, 'service-preload.js'),
-        additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`, `--lvs-platform=${CHROME_PLATFORM}`, `--lvs-platform-version=${CHROME_PLATFORM_VERSION}`],
+        additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
       },
     });
 
@@ -175,7 +158,7 @@ class ViewManager {
           webPreferences: {
             partition,
             preload: path.join(__dirname, 'service-preload.js'),
-            additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`, `--lvs-platform=${CHROME_PLATFORM}`, `--lvs-platform-version=${CHROME_PLATFORM_VERSION}`],
+            additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
             contextIsolation: true,
             nodeIntegration: false,
           },

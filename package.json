@@ -10,7 +10,6 @@
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
     "build": "electron-builder --linux AppImage",
-    "build:win": "electron-builder --win nsis",
     "build:pacman": "electron-builder --linux pacman"
   },
   "devDependencies": {
@@ -29,24 +28,12 @@
       "src/**/*",
       "assets/**/*"
     ],
-    "afterPack": "build/afterPack.cjs",
     "linux": {
       "target": [
         "AppImage"
       ],
       "category": "AudioVideo",
       "icon": "assets/icon.png"
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true
     }
   }
 }

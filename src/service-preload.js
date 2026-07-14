@@ -11,13 +11,9 @@
 // privileges are exposed to the page: nothing is bridged, only navigator is amended.
 const { webFrame } = require('electron');
 
-const flag = (name, fallback) => {
-  const hit = process.argv.find((a) => a.startsWith(`--lvs-${name}=`));
-  return hit ? hit.slice(`--lvs-${name}=`.length) : fallback;
-};
-const major = flag('chrome-major', '');
-const platform = flag('platform', 'Linux');
-const platformVersion = flag('platform-version', '6.1.0');
+const FLAG = '--lvs-chrome-major=';
+const arg = process.argv.find((a) => a.startsWith(FLAG));
+const major = arg ? arg.slice(FLAG.length) : '';
 
 if (major) {
   webFrame.executeJavaScript(`(() => {
@@ -27,14 +23,14 @@ if (major) {
       { brand: 'Google Chrome', version: '${major}' },
     ];
     const fullVersion = '${major}.0.0.0';
-    const low = { brands, mobile: false, platform: '${platform}' };
+    const low = { brands, mobile: false, platform: 'Linux' };
 
     const high = {
       architecture: 'x86',
       bitness: '64',
       fullVersionList: brands.map((b) => ({ brand: b.brand, version: fullVersion })),
       model: '',
-      platformVersion: '${platformVersion}',
+      platformVersion: '6.1.0',
       uaFullVersion: fullVersion,
       ...low,
     };
