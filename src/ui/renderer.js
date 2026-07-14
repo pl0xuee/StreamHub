@@ -103,14 +103,21 @@ async function init() {
   }
 
   document.getElementById('btn-removed').addEventListener('click', () => window.shell.openRemovedWindow());
-  document.getElementById('btn-update').addEventListener('click', (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    const prev = btn.textContent;
-    btn.textContent = 'Checking…';
+  const updateBtn = document.getElementById('btn-update');
+  const UPDATE_LABEL = updateBtn.textContent;
+
+  // Downloading the new build takes a while (the AppImage is ~120MB), so report progress
+  // on the button rather than leaving it sitting on "Checking…".
+  window.shell.onUpdateProgress((percent) => {
+    updateBtn.textContent = percent === null ? 'Checking…' : `Downloading ${percent}%`;
+  });
+
+  updateBtn.addEventListener('click', () => {
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Checking…';
     Promise.resolve(window.shell.checkForUpdates()).finally(() => {
-      btn.disabled = false;
-      btn.textContent = prev;
+      updateBtn.disabled = false;
+      updateBtn.textContent = UPDATE_LABEL;
     });
   });
   document

@@ -15,5 +15,7 @@ contextBridge.exposeInMainWorld('shell', {
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  // Download percentage while an update is being fetched; null when it finishes or fails.
+  onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
   onState: (cb) => ipcRenderer.on('state', (_e, state) => cb(state)),
 });

@@ -28,9 +28,11 @@ jobs:
       - name: Install dependencies (also downloads the castLabs Electron + Widevine binary)
         run: npm install
 
-      # `--publish never` keeps electron-builder from auto-publishing to GitHub (which
-      # would also upload its electron-updater metadata, latest*.yml, that this app
-      # doesn't use). The upload step below attaches only the AppImage.
+      # `--publish never` keeps electron-builder from auto-publishing to GitHub; the upload
+      # step below owns that, so the release notes stay ours. The build still writes the
+      # electron-updater metadata (latest-linux.yml + .blockmap) into dist/, and the app's
+      # in-app updater needs both published alongside the AppImage to find and fetch a new
+      # version — see the "check-for-updates" handler in src/main.js.
       - name: Build AppImage
         run: npm run build -- --publish never
 
@@ -94,4 +96,10 @@ jobs:
             ---
 
             ${{ steps.changelog.outputs.notes }}
-          files: dist/*.AppImage
+          # latest-linux.yml is what the in-app updater reads to discover a new version and
+          # verify its checksum; without it published, "Check for updates" can only fall back
+          # to the browser. (AppImage embeds its block map in the image, so there is no
+          # separate .blockmap file to attach.)
+          files: |
+            dist/*.AppImage
+            dist/latest-linux.yml

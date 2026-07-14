@@ -11,9 +11,16 @@ const {
   shell,
 } = require('electron');
 
+const { autoUpdater } = require('electron-updater');
+
 const configStore = require('./config');
 const { ViewManager } = require('./views');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
+
+// Updates are always user-initiated (the sidebar's "Check for updates" button), so never
+// download in the background — decide first, then fetch.
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
 
 const REPO = 'pl0xuee/StreamHub'; // for the update check
 // Read from package.json directly — app.getVersion() returns Electron's version when the
@@ -251,41 +258,126 @@ function isNewerVersion(latest, current) {
   return false;
 }
 
-// Check the latest GitHub release; if newer, offer to open the download page.
-ipcMain.handle('check-for-updates', async () => {
-  try {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'StreamHub' },
-    });
-    if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-    const data = await res.json();
-    const latest = String(data.tag_name || '').replace(/^v/, '');
-    const current = APP_VERSION;
-    if (latest && isNewerVersion(latest, current)) {
-      const r = await dialog.showMessageBox(baseWindow, {
-        type: 'info',
-        message: `Update available: v${latest}`,
-        detail: `You're on v${current}. Open the download page?`,
-        buttons: ['Download', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-      });
-      if (r.response === 0) {
-        shell.openExternal(data.html_url || `https://github.com/${REPO}/releases/latest`);
-      }
-      return { hasUpdate: true, latest, current };
+// ---- Updates ----
+// electron-updater can only swap the binary in place when we're running as the AppImage:
+// it replaces the file at $APPIMAGE, which the AppImage runtime sets. Started any other way
+// (`npm start`, an unpacked tree, a distro package), there is nothing to swap, so we fall
+// back to sending the user to the download page.
+function canSelfUpdate() {
+  return app.isPackaged && Boolean(process.env.APPIMAGE);
+}
+
+function openDownloadPage(url) {
+  shell.openExternal(url || `https://github.com/${REPO}/releases/latest`);
+}
+
+// Ask GitHub what the newest release is, without downloading anything. Used for the
+// fallback path, where we only need a version number and a page to send the user to.
+async function fetchLatestRelease() {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'StreamHub' },
+  });
+  if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
+  const data = await res.json();
+  return { version: String(data.tag_name || '').replace(/^v/, ''), url: data.html_url };
+}
+
+// Download the new AppImage in place, then restart into it. Progress goes to the sidebar
+// button so a 120MB download isn't a silently frozen UI.
+async function downloadAndInstall(info) {
+  const send = (channel, payload) => {
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      chromeView.webContents.send(channel, payload);
     }
-    dialog.showMessageBox(baseWindow, {
-      type: 'info',
-      message: "You're up to date",
-      detail: `StreamHub v${current} is the latest version.`,
-    });
-    return { hasUpdate: false, latest, current };
+  };
+
+  autoUpdater.on('download-progress', (p) => send('update-progress', Math.round(p.percent)));
+
+  try {
+    await autoUpdater.downloadUpdate();
   } catch (err) {
-    dialog.showErrorBox(
-      'Update check failed',
-      `Couldn't reach GitHub to check for updates.\n\n${err.message}`,
-    );
+    send('update-progress', null);
+    throw err;
+  }
+  send('update-progress', null);
+
+  const r = await dialog.showMessageBox(baseWindow, {
+    type: 'info',
+    message: `StreamHub v${info.version} is ready`,
+    detail: 'Restart now to finish updating?',
+    buttons: ['Restart now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  // isSilent: true — there is no installer to show on Linux; this just swaps the AppImage.
+  // Deferring is safe: the download is cached and applies on the next quit.
+  if (r.response === 0) setImmediate(() => autoUpdater.quitAndInstall(true, true));
+}
+
+// Check for a newer release and, when we can, install it in place rather than making the
+// user download it from a browser.
+ipcMain.handle('check-for-updates', async () => {
+  const current = APP_VERSION;
+  try {
+    if (!canSelfUpdate()) {
+      const latest = await fetchLatestRelease();
+      if (latest.version && isNewerVersion(latest.version, current)) {
+        const r = await dialog.showMessageBox(baseWindow, {
+          type: 'info',
+          message: `Update available: v${latest.version}`,
+          detail:
+            `You're on v${current}. StreamHub can only update itself when run as the ` +
+            'AppImage, so this build has to be downloaded manually.\n\nOpen the download page?',
+          buttons: ['Download', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (r.response === 0) openDownloadPage(latest.url);
+        return { hasUpdate: true, latest: latest.version, current, selfUpdate: false };
+      }
+      dialog.showMessageBox(baseWindow, {
+        type: 'info',
+        message: "You're up to date",
+        detail: `StreamHub v${current} is the latest version.`,
+      });
+      return { hasUpdate: false, latest: latest.version, current };
+    }
+
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version;
+    if (!latest || !isNewerVersion(latest, current)) {
+      dialog.showMessageBox(baseWindow, {
+        type: 'info',
+        message: "You're up to date",
+        detail: `StreamHub v${current} is the latest version.`,
+      });
+      return { hasUpdate: false, latest, current };
+    }
+
+    const r = await dialog.showMessageBox(baseWindow, {
+      type: 'info',
+      message: `Update available: v${latest}`,
+      detail: `You're on v${current}. Download and install it now?`,
+      buttons: ['Install', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (r.response !== 0) return { hasUpdate: true, latest, current, installing: false };
+
+    await downloadAndInstall(result.updateInfo);
+    return { hasUpdate: true, latest, current, installing: true };
+  } catch (err) {
+    // A failed self-update must not be a dead end (read-only AppImage path, no release
+    // metadata, flaky network) — offer the browser download instead.
+    const r = await dialog.showMessageBox(baseWindow, {
+      type: 'error',
+      message: 'Update failed',
+      detail: `${err.message}\n\nOpen the download page instead?`,
+      buttons: ['Open download page', 'Close'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (r.response === 0) openDownloadPage();
     return { error: err.message };
   }
 });

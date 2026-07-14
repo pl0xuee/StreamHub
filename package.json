@@ -34,6 +34,16 @@
       ],
       "category": "AudioVideo",
       "icon": "assets/icon.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "pl0xuee",
+        "repo": "StreamHub"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
