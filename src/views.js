@@ -5,6 +5,8 @@ const {
   CHROME_MAJOR,
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
+  CHROME_PLATFORM,
+  CHROME_PLATFORM_VERSION,
 } = require('./services');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
@@ -26,7 +28,7 @@ function alignClientHints(ses) {
           headers[name] = `"${CHROME_MAJOR}.0.0.0"`;
           break;
         case 'sec-ch-ua-platform':
-          headers[name] = '"Linux"';
+          headers[name] = `"${CHROME_PLATFORM}"`;
           break;
         case 'sec-ch-ua-mobile':
           headers[name] = '?0';
@@ -137,7 +139,7 @@ class ViewManager {
         // untrusted remote sites stay isolated; they are still driven from the main
         // process via executeJavaScript.
         preload: path.join(__dirname, 'service-preload.js'),
-        additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
+        additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`, `--lvs-platform=${CHROME_PLATFORM}`, `--lvs-platform-version=${CHROME_PLATFORM_VERSION}`],
       },
     });
 
@@ -158,7 +160,7 @@ class ViewManager {
           webPreferences: {
             partition,
             preload: path.join(__dirname, 'service-preload.js'),
-            additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
+            additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`, `--lvs-platform=${CHROME_PLATFORM}`, `--lvs-platform-version=${CHROME_PLATFORM_VERSION}`],
             contextIsolation: true,
             nodeIntegration: false,
           },

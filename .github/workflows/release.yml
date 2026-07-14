@@ -1,0 +1,65 @@
+name: Release
+
+# Build the Linux AppImage and the Windows installer, and attach them to the GitHub
+# release for the pushed tag. Trigger by pushing a version tag (e.g. `git tag v0.2.0 &&
+# git push origin v0.2.0`), or run manually from the Actions tab to test a build without
+# publishing (manual runs build but do not upload).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create the release and upload assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: build # -> dist/StreamHub-<ver>.AppImage
+          - os: windows-latest
+            script: build:win # -> dist/StreamHub Setup <ver>.exe
+    runs-on: ${{ matrix.os }}
+    env:
+      # Exposed so the "if" gate below can detect whether Widevine signing is configured.
+      EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies (also downloads the castLabs Electron + Widevine binary)
+        run: npm install
+
+      # Widevine VMP signing — Windows only, and only if the EVS_ACCOUNT_NAME secret is set.
+      # Add repo secrets EVS_ACCOUNT_NAME and EVS_PASSWD (from a free castlabs.com/evs
+      # account) to enable protected playback in the Windows build. Without them, the build
+      # still produces an installer, but DRM will not play on Windows.
+      - name: Set up castLabs EVS (Windows, Widevine signing)
+        if: runner.os == 'Windows' && env.EVS_ACCOUNT_NAME != ''
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+        run: |
+          python -m pip install --upgrade castlabs-evs
+          python -m castlabs_evs.account --no-ask reauth
+
+      - name: Build
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run ${{ matrix.script }}
+
+      - name: Attach installers to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.AppImage
+            dist/*.exe

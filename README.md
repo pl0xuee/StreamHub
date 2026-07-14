@@ -11,8 +11,12 @@ that hosts the official web players.
 
 ## Download
 
-Grab the latest `StreamHub-*.AppImage` from the [Releases](https://github.com/pl0xuee/StreamHub/releases)
-page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--limits-linux)).
+Grab the latest build from the [Releases](https://github.com/pl0xuee/StreamHub/releases) page:
+
+- **Linux** — `StreamHub-*.AppImage` (needs the **FUSE 2** runtime; see [Requirements](#requirements--limits)).
+- **Windows** — `StreamHub Setup *.exe` (an installer).
+
+Both are built automatically by CI on each tagged release (see [Building](#build)).
 
 ## How it works
 
@@ -27,21 +31,25 @@ page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--
 - The sidebar (the only part this app styles) switches services and can collapse to a
   narrow icon rail; the streaming sites keep their own look inside the content area.
 
-## Requirements & limits (Linux)
+## Requirements & limits
 
-- **Resolution caps at ~720p.** Netflix and most services require hardware DRM
-  (Widevine L1 + HDCP) for 1080p/4K, which Linux browsers don't have. This matches what
-  Chrome/Firefox deliver on Linux today — it is a platform limit, not an app bug.
-  (YouTube, Twitch and other non-DRM services can go higher via their own quality menus.)
-- **FUSE 2 is needed to run the AppImage** (`libfuse.so.2`), which many current distros
-  no longer ship by default:
+- **Resolution caps at ~720p** on the DRM services. Netflix and most services require
+  hardware DRM (Widevine L1 + HDCP) for 1080p/4K, which the Widevine software path
+  (Linux, and Chrome on Windows) doesn't provide — 1080p on those needs Edge/PlayReady.
+  It is a platform limit, not an app bug. (YouTube, Twitch and other non-DRM services can
+  go higher via their own quality menus.)
+- **Linux — FUSE 2 is needed to run the AppImage** (`libfuse.so.2`), which many current
+  distros no longer ship by default:
   - Arch/CachyOS: `sudo pacman -S fuse2`
   - Debian/Ubuntu: `sudo apt install libfuse2`
   - Fedora: `sudo dnf install fuse`
 
   Or run it without FUSE via `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub-*.AppImage`
   (unpacks to a temp dir on each launch).
-- **No offline downloads** — ECS does not support persistent Widevine licenses on Linux.
+- **Windows — the installer is unsigned**, so SmartScreen shows an "unknown publisher"
+  warning on first run (click *More info → Run anyway*). An Authenticode certificate would
+  remove it.
+- **No offline downloads** — ECS does not support persistent Widevine licenses.
 
 ## Features
 
@@ -66,11 +74,40 @@ npm start
 
 First launch downloads and verifies the Widevine component before the window opens.
 
-## Build (AppImage)
+## Build
+
+Build on the target OS (the castLabs Electron binary is platform-specific, so build Linux
+on Linux and Windows on Windows):
 
 ```bash
-npm run build          # -> dist/StreamHub-<version>.AppImage
+npm run build          # Linux   -> dist/StreamHub-<version>.AppImage
+npm run build:win      # Windows -> dist/StreamHub Setup <version>.exe
 ```
+
+### Automated releases (GitHub Actions)
+
+`.github/workflows/release.yml` builds **both** the Linux AppImage and the Windows
+installer and attaches them to the GitHub release. Push a version tag to trigger it:
+
+```bash
+npm version patch      # bumps package.json and creates a git tag
+git push --follow-tags # pushes the commit and the tag -> CI builds + publishes
+```
+
+(Run the workflow manually from the Actions tab to test a build without publishing.)
+
+### Windows + Widevine (VMP signing)
+
+For **protected playback to work in the packaged Windows build**, the app must be
+VMP-signed with a free [castLabs EVS](https://castlabs.com/evs/) account — electron-builder's
+repackaging invalidates the stock signature. Add two repository secrets and CI signs the
+Windows build automatically (`build/afterPack.cjs`):
+
+- `EVS_ACCOUNT_NAME`
+- `EVS_PASSWD`
+
+Without them the Windows installer still builds, but DRM won't play until it's signed.
+Linux needs no signing — the stock ECS signature works there.
 
 ## Adding or changing services
 

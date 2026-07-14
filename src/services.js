@@ -29,22 +29,53 @@ const DEFAULT_SERVICES = [
 // tell the same story — see the header rewrite and preload wired up in views.js.
 const CHROME_MAJOR = process.versions.chrome.split('.')[0];
 
-const CHROME_UA =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
-  `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+// The identity must match the OS the app is actually running on: presenting a Linux UA
+// from a Windows build (or vice-versa) is itself a mismatch bot checks flag. Everything
+// below is derived from `platform` so the same code ships a correct identity per OS.
+function chromeIdentity(platform) {
+  const win = platform === 'win32';
+  const mac = platform === 'darwin';
+  let osToken = 'X11; Linux x86_64';
+  let chPlatform = 'Linux';
+  let chPlatformVersion = '6.1.0';
+  if (win) {
+    osToken = 'Windows NT 10.0; Win64; x64';
+    chPlatform = 'Windows';
+    chPlatformVersion = '15.0.0'; // UA-CH reports Windows 11 as platformVersion 15.x
+  } else if (mac) {
+    osToken = 'Macintosh; Intel Mac OS X 10_15_7';
+    chPlatform = 'macOS';
+    chPlatformVersion = '14.0.0';
+  }
+  return {
+    ua:
+      `Mozilla/5.0 (${osToken}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+      `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`,
+    // Brand list Chrome sends; Electron's omits "Google Chrome", which gives the game away.
+    brands:
+      `"Not;A=Brand";v="8", "Chromium";v="${CHROME_MAJOR}", "Google Chrome";v="${CHROME_MAJOR}"`,
+    fullVersionList:
+      `"Not;A=Brand";v="8.0.0.0", "Chromium";v="${CHROME_MAJOR}.0.0.0", ` +
+      `"Google Chrome";v="${CHROME_MAJOR}.0.0.0"`,
+    platform: chPlatform,
+    platformVersion: chPlatformVersion,
+  };
+}
 
-// Brand list Chrome sends; Electron's omits "Google Chrome", which gives the game away.
-const CHROME_BRANDS =
-  `"Not;A=Brand";v="8", "Chromium";v="${CHROME_MAJOR}", "Google Chrome";v="${CHROME_MAJOR}"`;
-
-const CHROME_FULL_VERSION_LIST =
-  `"Not;A=Brand";v="8.0.0.0", "Chromium";v="${CHROME_MAJOR}.0.0.0", ` +
-  `"Google Chrome";v="${CHROME_MAJOR}.0.0.0"`;
+const IDENTITY = chromeIdentity(process.platform);
+const CHROME_UA = IDENTITY.ua;
+const CHROME_BRANDS = IDENTITY.brands;
+const CHROME_FULL_VERSION_LIST = IDENTITY.fullVersionList;
+const CHROME_PLATFORM = IDENTITY.platform;
+const CHROME_PLATFORM_VERSION = IDENTITY.platformVersion;
 
 module.exports = {
   DEFAULT_SERVICES,
+  chromeIdentity,
   CHROME_UA,
   CHROME_MAJOR,
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
+  CHROME_PLATFORM,
+  CHROME_PLATFORM_VERSION,
 };
