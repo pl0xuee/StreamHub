@@ -120,7 +120,7 @@ First launch downloads and verifies the Widevine component before the window ope
 ## Build (AppImage)
 
 ```bash
-npm run build          # -> dist/StreamHub-<version>.AppImage
+npm run build          # -> dist/StreamHub.AppImage
 ```
 
 ## Adding or changing services
