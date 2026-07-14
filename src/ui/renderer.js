@@ -91,6 +91,7 @@ function applyState(next) {
   renderServices();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
+  if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
 async function init() {
@@ -102,6 +103,16 @@ async function init() {
   }
 
   document.getElementById('btn-removed').addEventListener('click', () => window.shell.openRemovedWindow());
+  document.getElementById('btn-update').addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Checking…';
+    Promise.resolve(window.shell.checkForUpdates()).finally(() => {
+      btn.disabled = false;
+      btn.textContent = prev;
+    });
+  });
   document
     .getElementById('btn-collapse')
     .addEventListener('click', () => window.shell.toggleSidebar());

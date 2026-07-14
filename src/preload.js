@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld('shell', {
   togglePip: () => ipcRenderer.send('toggle-pip'),
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   onState: (cb) => ipcRenderer.on('state', (_e, state) => cb(state)),
 });

@@ -8,11 +8,18 @@ const {
   ipcMain,
   dialog,
   Menu,
+  shell,
 } = require('electron');
 
 const configStore = require('./config');
 const { ViewManager } = require('./views');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
+
+const REPO = 'pl0xuee/StreamHub'; // for the update check
+// Read from package.json directly — app.getVersion() returns Electron's version when the
+// app is started as a bare script rather than a packaged app / `electron .`.
+// eslint-disable-next-line global-require
+const APP_VERSION = require('../package.json').version;
 
 const SIDEBAR_WIDTH = 220;
 // Collapsed, the sidebar keeps a narrow rail rather than disappearing: the service view
@@ -49,6 +56,7 @@ function statePayload() {
     removed: config.removed,
     activeServiceId,
     sidebarCollapsed,
+    version: APP_VERSION,
   };
 }
 
@@ -231,6 +239,56 @@ ipcMain.on('toggle-fullscreen', () => {
 ipcMain.on('toggle-pip', () => viewManager.togglePip());
 ipcMain.on('reload-active', () => viewManager.reloadActive());
 ipcMain.on('go-back', () => viewManager.goBack());
+
+// Numeric version compare: is `latest` newer than `current`? (e.g. "0.2.0" > "0.1.0")
+function isNewerVersion(latest, current) {
+  const a = String(latest).split('.').map((n) => parseInt(n, 10) || 0);
+  const b = String(current).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if ((a[i] || 0) > (b[i] || 0)) return true;
+    if ((a[i] || 0) < (b[i] || 0)) return false;
+  }
+  return false;
+}
+
+// Check the latest GitHub release; if newer, offer to open the download page.
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'StreamHub' },
+    });
+    if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
+    const data = await res.json();
+    const latest = String(data.tag_name || '').replace(/^v/, '');
+    const current = APP_VERSION;
+    if (latest && isNewerVersion(latest, current)) {
+      const r = await dialog.showMessageBox(baseWindow, {
+        type: 'info',
+        message: `Update available: v${latest}`,
+        detail: `You're on v${current}. Open the download page?`,
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (r.response === 0) {
+        shell.openExternal(data.html_url || `https://github.com/${REPO}/releases/latest`);
+      }
+      return { hasUpdate: true, latest, current };
+    }
+    dialog.showMessageBox(baseWindow, {
+      type: 'info',
+      message: "You're up to date",
+      detail: `StreamHub v${current} is the latest version.`,
+    });
+    return { hasUpdate: false, latest, current };
+  } catch (err) {
+    dialog.showErrorBox(
+      'Update check failed',
+      `Couldn't reach GitHub to check for updates.\n\n${err.message}`,
+    );
+    return { error: err.message };
+  }
+});
 
 // ---- App lifecycle ----
 app.whenReady().then(async () => {
