@@ -15,6 +15,7 @@ const { autoUpdater } = require('electron-updater');
 
 const configStore = require('./config');
 const { ViewManager } = require('./views');
+const { adblocker } = require('./adblock');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 
 // Updates are always user-initiated (the sidebar's "Check for updates" button), so never
@@ -46,9 +47,10 @@ let baseWindow;
 let chromeView; // the app's own UI (sidebar), hosted in its own view
 let removedWindow = null; // separate window listing removed services
 let viewManager;
-let config = { services: [], removed: [] }; // the user's list, loaded from userData
+let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
 let sidebarCollapsed = false;
+let adblockStatsTimer = null;
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
@@ -64,6 +66,7 @@ function statePayload() {
     activeServiceId,
     sidebarCollapsed,
     version: APP_VERSION,
+    adblock: adblocker.status(),
   };
 }
 
@@ -79,6 +82,27 @@ function broadcast() {
 
 function persist() {
   configStore.save(config);
+}
+
+// The blocked-request count moves constantly, so it gets its own channel: pushing the full
+// state payload on every tick would re-render the whole service list (and cancel an
+// in-progress drag) several times a second for the sake of one number.
+function startAdblockStats() {
+  if (adblockStatsTimer) return;
+  let last = -1;
+  adblockStatsTimer = setInterval(() => {
+    const { blocked } = adblocker.status();
+    if (blocked === last) return;
+    last = blocked;
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      chromeView.webContents.send('adblock-stats', blocked);
+    }
+  }, 2000);
+}
+
+function stopAdblockStats() {
+  clearInterval(adblockStatsTimer);
+  adblockStatsTimer = null;
 }
 
 function switchService(serviceId) {
@@ -238,6 +262,22 @@ ipcMain.on('restore-service', (_e, serviceId) => {
 });
 
 ipcMain.on('open-removed-window', () => openRemovedWindow());
+
+// Toggle ad blocking across every service session. Turning it on for the first time has to
+// fetch the filter engine, which can fail (offline, upstream down) — setEnabled reports the
+// state it actually reached rather than the one that was asked for, so the checkbox can
+// snap back instead of lying.
+ipcMain.handle('set-adblock', async (_e, on) => {
+  const enabled = await adblocker.setEnabled(on);
+  config.settings.adblock = enabled;
+  persist();
+  if (enabled) startAdblockStats();
+  else stopAdblockStats();
+  // Blocking only affects requests made from now on, so re-fetch what is already rendered.
+  viewManager.reloadAll();
+  broadcast();
+  return adblocker.status();
+});
 
 ipcMain.on('toggle-fullscreen', () => {
   baseWindow.setFullScreen(!baseWindow.isFullScreen());
@@ -402,6 +442,17 @@ app.whenReady().then(async () => {
     );
   }
   config = configStore.load(); // the user's list, from their userData dir
+
+  // Bring the filter engine up *before* the first service view exists. Attaching it after
+  // the window opens would race the first page load, letting exactly the requests we mean
+  // to block through. Cached, this is a file read; on a first run it is a small download,
+  // and if it fails the app still opens — just without blocking.
+  if (config.settings.adblock) {
+    const enabled = await adblocker.setEnabled(true);
+    config.settings.adblock = enabled;
+    if (enabled) startAdblockStats();
+  }
+
   buildAppMenu();
   createWindow();
 });

@@ -50,12 +50,40 @@ page. It needs the **FUSE 2** runtime to run (see [Requirements](#requirements--
   "Removed" window), and click it there to add it back — all saved automatically
 - **Pause on switch**: leaving a service pauses its video so nothing plays in the
   background; returning resumes it (unless you'd paused it yourself)
+- **Experimental ad blocker** (off by default) — see [Ad blocking](#ad-blocking) below
 - Collapsible sidebar (icon rail) to give the video more width
 - Persistent, per-service logins (isolated sessions)
 - Popup-based sign-in ("Sign in with Google/Apple") works via real child windows
 - Fullscreen (F11 / the site's own button; sidebar auto-hides during video fullscreen)
 - Media keys (play/pause, and ±10s seek on next/prev) — only while the app is focused
 - Picture-in-picture / floating mini-player
+
+## Ad blocking
+
+The sidebar has an **Experimental ad blocker** toggle. It is **off by default**; the choice
+is saved with the rest of your settings.
+
+- It blocks **network requests** (ads, trackers) and applies **cosmetic filters** and
+  **scriptlets**, using the standard uBlock Origin / EasyList filter syntax — the same
+  rules an EasyList + EasyPrivacy setup gives you in a browser.
+- uBlock Origin Lite itself can't be installed here: it's a Manifest V3 extension built on
+  Chrome's `declarativeNetRequest`, which Electron doesn't implement. So the engine runs
+  natively in the main process instead ([`@ghostery/adblocker`](https://github.com/ghostery/adblocker)),
+  attached to each service's session.
+- The filter engine is downloaded on first enable and cached in your userData dir
+  (`adblock-engine.bin`), then refreshed weekly. With no network and no cache, the toggle
+  reports the failure and stays off rather than pretending to be on.
+- Toggling it reloads the open services, since blocking only affects new requests.
+
+**Caveats, honestly:** it's labelled experimental for a reason.
+
+- **Server-stitched ads still get through.** Where ads are muxed into the video stream
+  itself (Hulu's ad tier, Peacock free, some YouTube ads) there is no separate request to
+  block. This is the same limit every blocker hits, uBlock Origin Lite included.
+- **It may break a service.** An over-broad rule can take out a player or a sign-in flow.
+  If a service misbehaves, turn the toggle off and reload.
+- Blocking ads on an ad-supported tier may be against that service's terms of use. Your
+  call — the feature ships off.
 
 ## Run from source
 

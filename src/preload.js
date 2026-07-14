@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('shell', {
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  // Resolves to the blocker's real state, which is not always the one that was asked for
+  // (turning it on can fail if the filter engine cannot be fetched).
+  setAdblock: (on) => ipcRenderer.invoke('set-adblock', on),
+  // Running count of blocked requests, pushed every couple of seconds while blocking is on.
+  onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),
   // Download percentage while an update is being fetched; null when it finishes or fails.
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
   onState: (cb) => ipcRenderer.on('state', (_e, state) => cb(state)),

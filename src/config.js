@@ -12,8 +12,23 @@ function configPath() {
   return path.join(app.getPath('userData'), 'services.json');
 }
 
+// App settings, as opposed to the service list. Ad blocking ships off: it is experimental,
+// and an over-broad filter rule breaking playback should be something the user opts into.
+function defaultSettings() {
+  return { adblock: false };
+}
+
+function cleanSettings(raw) {
+  const s = raw && typeof raw === 'object' ? raw : {};
+  return { adblock: s.adblock === true };
+}
+
 function defaults() {
-  return { services: DEFAULT_SERVICES.map((s) => ({ ...s })), removed: [] };
+  return {
+    services: DEFAULT_SERVICES.map((s) => ({ ...s })),
+    removed: [],
+    settings: defaultSettings(),
+  };
 }
 
 // A service entry is only trusted if it has an id, a name, and an http(s) url.
@@ -57,8 +72,13 @@ function load() {
   const cfg = {
     services: cleanList(raw && raw.services),
     removed: cleanList(raw && raw.removed),
+    settings: cleanSettings(raw && raw.settings),
   };
-  if (cfg.services.length === 0 && cfg.removed.length === 0) return defaults();
+  // An empty list means a corrupt or hand-emptied file: reset the catalog, but keep the
+  // settings the user chose — they are independent of which services are listed.
+  if (cfg.services.length === 0 && cfg.removed.length === 0) {
+    return { ...defaults(), settings: cfg.settings };
+  }
 
   const known = new Set([...cfg.services, ...cfg.removed].map((s) => s.id));
   for (const d of DEFAULT_SERVICES) {
@@ -71,7 +91,15 @@ function save(cfg) {
   try {
     fs.writeFileSync(
       configPath(),
-      JSON.stringify({ services: cfg.services, removed: cfg.removed }, null, 2),
+      JSON.stringify(
+        {
+          services: cfg.services,
+          removed: cfg.removed,
+          settings: cleanSettings(cfg.settings),
+        },
+        null,
+        2,
+      ),
     );
   } catch (err) {
     // eslint-disable-next-line no-console

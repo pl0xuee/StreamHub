@@ -5,6 +5,8 @@
 
 const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
+const adblockEl = document.getElementById('chk-adblock');
+const adblockSubEl = document.getElementById('adblock-sub');
 
 let state = { services: [], removed: [], activeServiceId: null, sidebarCollapsed: false };
 
@@ -86,11 +88,34 @@ function setCollapsed(collapsed) {
   btn.setAttribute('aria-label', btn.title);
 }
 
+const ADBLOCK_SUB = 'Brave Experimental Adblock Rules';
+
+function setAdblockSub(text, isError) {
+  adblockSubEl.textContent = text;
+  adblockSubEl.classList.toggle('error', Boolean(isError));
+}
+
+function renderAdblockCount(blocked) {
+  setAdblockSub(
+    blocked > 0 ? `${blocked.toLocaleString()} requests blocked` : ADBLOCK_SUB,
+    false,
+  );
+}
+
+function renderAdblock(ab) {
+  if (!ab) return;
+  adblockEl.checked = ab.enabled;
+  if (ab.error) setAdblockSub(`Filter list unavailable — ${ab.error}`, true);
+  else if (ab.enabled) renderAdblockCount(ab.blocked);
+  else setAdblockSub(ADBLOCK_SUB, false);
+}
+
 function applyState(next) {
   state = next;
   renderServices();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
+  renderAdblock(state.adblock);
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
@@ -120,6 +145,24 @@ async function init() {
       updateBtn.textContent = UPDATE_LABEL;
     });
   });
+  // Toggling reloads every open service, and turning it on the first time may have to
+  // fetch the filter list — so disable the box until the main process reports back, and
+  // render whatever state it actually reached (which is "off" if the fetch failed).
+  adblockEl.addEventListener('change', async () => {
+    const wanted = adblockEl.checked;
+    adblockEl.disabled = true;
+    setAdblockSub(wanted ? 'Loading filter lists…' : ADBLOCK_SUB, false);
+    try {
+      renderAdblock(await window.shell.setAdblock(wanted));
+    } finally {
+      adblockEl.disabled = false;
+    }
+  });
+
+  window.shell.onAdblockStats((blocked) => {
+    if (adblockEl.checked) renderAdblockCount(blocked);
+  });
+
   document
     .getElementById('btn-collapse')
     .addEventListener('click', () => window.shell.toggleSidebar());

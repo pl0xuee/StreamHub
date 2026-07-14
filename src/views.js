@@ -6,6 +6,7 @@ const {
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
 } = require('./services');
+const { adblocker } = require('./adblock');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
 // presents. Only headers Chromium already decided to send are overwritten — adding ones
@@ -126,6 +127,10 @@ class ViewManager {
     const ses = session.fromPartition(partition);
     ses.setUserAgent(CHROME_UA);
     alignClientHints(ses);
+    // Every service has its own session, so the ad blocker has to be attached to each one.
+    // This is a no-op while blocking is off; flipping it on later reaches back through the
+    // sessions registered here.
+    adblocker.register(ses);
 
     const view = new WebContentsView({
       webPreferences: {
@@ -272,6 +277,16 @@ class ViewManager {
   reloadActive() {
     const wc = this.getActiveWebContents();
     if (wc) wc.reload();
+  }
+
+  // Reload every live service. Toggling the ad blocker only changes how *new* requests are
+  // handled, so already-rendered pages have to be re-fetched for it to take effect either
+  // way. Views are created lazily, so this only touches services actually visited.
+  reloadAll() {
+    for (const view of this.views.values()) {
+      const wc = view.webContents;
+      if (wc && !wc.isDestroyed()) wc.reload();
+    }
   }
 
   goBack() {
