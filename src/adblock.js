@@ -66,6 +66,12 @@ const UNBREAK_RULES = [
   '@@||netflix.com/log/',
   '@@||netflix.com/ichnaea/',
   '@@||logs.netflix.com^',
+  // 3. Twitch: the same no-fetch-if scriptlet, this time via Brave's list
+  //    (twitch.tv##+js(no-fetch-if, edge.ads.twitch.tv)). Patching window.fetch here sends
+  //    the player's module loader into infinite recursion — "Error loading module.
+  //    RangeError: Maximum call stack size exceeded" — and no video plays. Dropped narrowly,
+  //    so Twitch keeps its other ad-blocking scriptlet.
+  'twitch.tv#@#+js(no-fetch-if, edge.ads.twitch.tv)',
 ];
 
 function enginePath() {
