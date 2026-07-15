@@ -662,7 +662,10 @@ body.collapsed .service.active::before {
 body.collapsed .toolbar {
   flex-direction: column;
 }
+/* The blocked count is dropped with the label: in the rail there is no name beside it to
+   say what the number counts, so it reads as a stray digit crammed against the icon. */
 body.collapsed .service .del,
+body.collapsed .service .shield,
 body.collapsed .list-actions {
   display: none;
 }
