@@ -20,7 +20,11 @@ const { execFileSync } = require('child_process');
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 
 exports.default = async function afterPack(context) {
-  const exe = path.join(context.appOutDir, context.packager.executableName);
+  // The packaged executable's path. `executableName` is set on Linux ("streamhub") but comes
+  // back undefined on Windows, so fall back to the product filename and add the .exe there.
+  const base = context.packager.executableName || context.packager.appInfo.productFilename;
+  const ext = context.electronPlatformName === 'win32' ? '.exe' : '';
+  const exe = path.join(context.appOutDir, `${base}${ext}`);
 
   await flipFuses(exe, {
     version: FuseVersion.V1,
