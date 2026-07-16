@@ -68,7 +68,18 @@ function defaults() {
     settings: defaultSettings(),
     window: defaultWindow(),
     lastServiceId: null,
+    // Multi-view grid, remembered across launches like lastServiceId: whether grid mode was
+    // on, and which services (up to four) were tiled in it.
+    gridMode: false,
+    gridIds: [],
   };
+}
+
+// A remembered grid is at most four service ids, kept as strings; anything else is dropped.
+// main.js reconciles these against the current service list (a since-removed id just falls out).
+function cleanGridIds(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((x) => typeof x === 'string').slice(0, 4);
 }
 
 // A service entry is only trusted if it has an id, a name, and an http(s) url.
@@ -115,6 +126,8 @@ function load() {
     settings: cleanSettings(raw && raw.settings),
     window: cleanWindow(raw && raw.window),
     lastServiceId: typeof (raw && raw.lastServiceId) === 'string' ? raw.lastServiceId : null,
+    gridMode: (raw && raw.gridMode) === true,
+    gridIds: cleanGridIds(raw && raw.gridIds),
   };
   // An empty list means a corrupt or hand-emptied file: reset the catalog, but keep the
   // settings and window the user chose — they are independent of which services are listed.
@@ -140,6 +153,8 @@ function save(cfg) {
           settings: cleanSettings(cfg.settings),
           window: cleanWindow(cfg.window),
           lastServiceId: typeof cfg.lastServiceId === 'string' ? cfg.lastServiceId : null,
+          gridMode: cfg.gridMode === true,
+          gridIds: cleanGridIds(cfg.gridIds),
         },
         null,
         2,

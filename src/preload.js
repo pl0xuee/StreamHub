@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('shell', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   switchService: (id) => ipcRenderer.send('switch-service', id),
+  // Multi-view grid: toggle the mode, and (while on) add/remove a service from the grid.
+  toggleGrid: () => ipcRenderer.send('toggle-grid'),
+  toggleGridService: (id) => ipcRenderer.send('toggle-grid-service', id),
   // Service-list management (drag reorder, remove, restore).
   reorderServices: (orderedIds) => ipcRenderer.send('reorder-services', orderedIds),
   removeService: (id) => ipcRenderer.send('remove-service', id),

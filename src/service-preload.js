@@ -14,7 +14,14 @@
 // world (this preload runs in an isolated one) before any page script runs. No app
 // privileges are exposed to the page: nothing is bridged, only navigator is amended.
 const { webFrame } = require('electron');
-const { FIREFOX_UA, isGoogleAuthHost } = require('./services');
+const {
+  FIREFOX_UA,
+  CH_PLATFORM,
+  CH_PLATFORM_VERSION,
+  CH_ARCH,
+  CH_BITNESS,
+  isGoogleAuthHost,
+} = require('./services');
 
 const FLAG = '--lvs-chrome-major=';
 const arg = process.argv.find((a) => a.startsWith(FLAG));
@@ -48,14 +55,14 @@ if (isGoogleAuthHost(host)) {
       { brand: 'Google Chrome', version: '${major}' },
     ];
     const fullVersion = '${major}.0.0.0';
-    const low = { brands, mobile: false, platform: 'Linux' };
+    const low = { brands, mobile: false, platform: '${CH_PLATFORM}' };
 
     const high = {
-      architecture: 'x86',
-      bitness: '64',
+      architecture: '${CH_ARCH}',
+      bitness: '${CH_BITNESS}',
       fullVersionList: brands.map((b) => ({ brand: b.brand, version: fullVersion })),
       model: '',
-      platformVersion: '6.1.0',
+      platformVersion: '${CH_PLATFORM_VERSION}',
       uaFullVersion: fullVersion,
       ...low,
     };

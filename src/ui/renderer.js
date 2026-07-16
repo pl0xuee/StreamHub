@@ -6,13 +6,27 @@
 const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
+const gridBtn = document.getElementById('btn-grid');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
 const menuSignoutEl = document.getElementById('menu-signout');
 
-let state = { services: [], removed: [], activeServiceId: null, sidebarCollapsed: false };
+let state = {
+  services: [],
+  removed: [],
+  activeServiceId: null,
+  sidebarCollapsed: false,
+  gridMode: false,
+  gridIds: [],
+};
 let menuServiceId = null; // the service the context menu is currently open for
+
+// Which rows read as "on". In single mode that is the one active service; in grid mode it is
+// every service tiled in the grid.
+function isSelected(id) {
+  return state.gridMode ? (state.gridIds || []).includes(id) : id === state.activeServiceId;
+}
 
 // Is the blocker on for this service? Globally on, and not in the excluded list.
 function adblockOnFor(id) {
@@ -26,7 +40,7 @@ function initial(name) {
 
 function makeServiceEl(svc) {
   const li = document.createElement('li');
-  li.className = 'service' + (svc.id === state.activeServiceId ? ' active' : '');
+  li.className = 'service' + (isSelected(svc.id) ? ' active' : '');
   li.dataset.id = svc.id;
   li.draggable = true;
   // The label is dropped in the collapsed rail, which leaves only a coloured initial —
@@ -69,7 +83,23 @@ function makeServiceEl(svc) {
   });
 
   li.append(icon, label, shield, del);
-  li.addEventListener('click', () => window.shell.switchService(svc.id));
+
+  // In grid mode, a tiled service shows which pane it is (1–4) so the sidebar mirrors the
+  // on-screen layout, and clicking toggles it in/out of the grid rather than switching to it.
+  if (state.gridMode) {
+    const pos = (state.gridIds || []).indexOf(svc.id);
+    if (pos >= 0) {
+      const num = document.createElement('span');
+      num.className = 'grid-num';
+      num.textContent = String(pos + 1);
+      li.append(num);
+    }
+  }
+
+  li.addEventListener('click', () => {
+    if (state.gridMode) window.shell.toggleGridService(svc.id);
+    else window.shell.switchService(svc.id);
+  });
   li.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     openServiceMenu(svc, e.clientX, e.clientY);
@@ -182,12 +212,25 @@ function renderUpdateBadge() {
   document.body.classList.toggle('update-available', Boolean(version));
 }
 
+// Reflect grid mode on its toolbar button (pressed look) and on the body, which switches the
+// sidebar into "pick panes" mode — a hint line, and rows that read as add/remove targets.
+function renderGridToggle() {
+  const on = Boolean(state.gridMode);
+  gridBtn.classList.toggle('active', on);
+  gridBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  gridBtn.title = on
+    ? 'Grid view on — click services to add or remove (up to 4)'
+    : 'Grid view — watch up to 4 at once';
+  document.body.classList.toggle('grid-mode', on);
+}
+
 function applyState(next) {
   state = next;
   renderServices();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
   renderUpdateBadge();
+  renderGridToggle();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
@@ -195,8 +238,9 @@ async function init() {
   applyState(await window.shell.getConfig());
 
   // Reopen whatever was being watched last, so the app comes back where it was left rather
-  // than always on the first service. Falls back to the first if that service is gone.
-  if (!state.activeServiceId && state.services.length) {
+  // than always on the first service. Falls back to the first if that service is gone. Skipped
+  // when a grid was restored — the main process is already showing it.
+  if (!state.gridMode && !state.activeServiceId && state.services.length) {
     const last = state.services.find((s) => s.id === state.lastServiceId);
     window.shell.switchService((last || state.services[0]).id);
   }
@@ -209,6 +253,7 @@ async function init() {
     .addEventListener('click', () => window.shell.toggleSidebar());
   document.getElementById('btn-back').addEventListener('click', () => window.shell.back());
   document.getElementById('btn-reload').addEventListener('click', () => window.shell.reload());
+  gridBtn.addEventListener('click', () => window.shell.toggleGrid());
   document.getElementById('btn-pip').addEventListener('click', () => window.shell.togglePip());
   document
     .getElementById('btn-fullscreen')

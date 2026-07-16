@@ -6,6 +6,7 @@ const {
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
   FIREFOX_UA,
+  CH_PLATFORM,
   isGoogleAuthHost,
 } = require('./services');
 const { adblocker } = require('./adblock');
@@ -49,7 +50,7 @@ function alignClientHints(ses) {
           headers[name] = `"${CHROME_MAJOR}.0.0.0"`;
           break;
         case 'sec-ch-ua-platform':
-          headers[name] = '"Linux"';
+          headers[name] = `"${CH_PLATFORM}"`;
           break;
         case 'sec-ch-ua-mobile':
           headers[name] = '?0';
@@ -127,17 +128,60 @@ const RESUME_JS = `(() => {
   }
 })()`;
 
+// A thin dark gutter between grid panes, so tiled services read as separate rather than
+// bleeding into one another. The window's background colour shows through it.
+const GRID_GAP = 6;
+
+// Rectangles for tiling n views (1–4) inside the area (x, y, w, h), left-to-right, top-to-
+// bottom. Two columns once there is more than one pane; three panes put the odd one across
+// the full bottom row rather than leaving a hole. Integer pixels, since setBounds wants them.
+function gridRects(n, x, y, w, h, gap) {
+  const leftW = Math.floor((w - gap) / 2);
+  const rightW = w - gap - leftW; // absorbs the rounding remainder, so the panes meet exactly
+  const topH = Math.floor((h - gap) / 2);
+  const botH = h - gap - topH;
+  const x2 = x + leftW + gap;
+  const y2 = y + topH + gap;
+  switch (n) {
+    case 1:
+      return [{ x, y, width: w, height: h }];
+    case 2:
+      return [
+        { x, y, width: leftW, height: h },
+        { x: x2, y, width: rightW, height: h },
+      ];
+    case 3:
+      return [
+        { x, y, width: leftW, height: topH },
+        { x: x2, y, width: rightW, height: topH },
+        { x, y: y2, width: w, height: botH },
+      ];
+    default: // 4 (callers cap the grid at four)
+      return [
+        { x, y, width: leftW, height: topH },
+        { x: x2, y, width: rightW, height: topH },
+        { x, y: y2, width: leftW, height: botH },
+        { x: x2, y: y2, width: rightW, height: botH },
+      ];
+  }
+}
+
 /**
- * Owns one WebContentsView per service and manages which one is attached/visible in the
- * window. The app-chrome view (sidebar) sits underneath and is always visible on the
- * left; the active service view covers the area to its right.
+ * Owns one WebContentsView per service and manages which one(s) are attached/visible in the
+ * window. The app-chrome view (sidebar) sits underneath and is always visible on the left; the
+ * visible service view(s) cover the area to its right — one filling it in single mode, or up to
+ * four tiled in a grid. `active` is the primary pane that single-target controls (media keys,
+ * PiP, back/reload) act on.
  */
 class ViewManager {
   constructor(baseWindow, sidebarWidth) {
     this.win = baseWindow;
     this.sidebarWidth = sidebarWidth;
     this.views = new Map(); // serviceId -> WebContentsView
-    this.active = null;
+    this.active = null; // primary pane, for single-target controls (media keys, PiP, back)
+    this.visible = new Set(); // every view currently shown — one in single mode, up to four in a grid
+    this.grid = []; // ordered views when tiling more than one; empty in single mode
+    this.fullscreenView = null; // the pane a site took HTML-fullscreen, so it alone covers the window
     this.autoPaused = new Set(); // views we paused on switch-away, to resume on return
     this.videoFullscreen = false;
     this.bounds = { width: 0, height: 0 };
@@ -225,8 +269,8 @@ class ViewManager {
 
     // When a site enters/exits HTML5 fullscreen, let the service view own the whole
     // window (hiding the sidebar) and put the OS window into fullscreen too.
-    wc.on('enter-html-full-screen', () => this.setVideoFullscreen(true));
-    wc.on('leave-html-full-screen', () => this.setVideoFullscreen(false));
+    wc.on('enter-html-full-screen', () => this.setVideoFullscreen(true, view));
+    wc.on('leave-html-full-screen', () => this.setVideoFullscreen(false, view));
 
     // Blocked requests only identify the webContents that made them, so tie this one to its
     // service to be able to count them per service.
@@ -238,7 +282,9 @@ class ViewManager {
     // reason enough to keep the display on, which is the safe way round.
     wc.on('media-started-playing', () => {
       this.onMediaChange(view, true);
-      if (view !== this.active) this.enforcePaused(view);
+      // Only a view that is not on screen gets put back to sleep. A visible pane is meant to
+      // play — that includes every pane of a grid, not just the primary one.
+      if (!this.visible.has(view)) this.enforcePaused(view);
     });
     wc.on('media-paused', () => this.onMediaChange(view, false));
 
@@ -250,34 +296,68 @@ class ViewManager {
     return view;
   }
 
+  // Make exactly `views` visible, with `primary` as the active pane. Anything currently shown
+  // that is not in the new set is paused and hidden; anything entering is shown, brought to the
+  // top of the stack, and resumed if it was one we auto-paused earlier. This is the single point
+  // both single-view (one view) and grid (up to four) go through, so the two can never disagree
+  // about what is on screen.
+  setVisibleSet(views, primary) {
+    const next = new Set(views);
+    for (const v of this.visible) {
+      if (!next.has(v)) {
+        this.pauseView(v); // stop it playing in the background
+        v.setVisible(false);
+      }
+    }
+    for (const v of views) {
+      v.setVisible(true);
+      // Re-adding an existing child view moves it to the top of the stacking order, above the
+      // sidebar chrome; grid panes do not overlap, so their order among themselves is moot.
+      this.win.contentView.addChildView(v);
+      if (this.autoPaused.has(v)) {
+        this.autoPaused.delete(v);
+        this.resumeView(v);
+      }
+    }
+    this.visible = next;
+    this.grid = views.length > 1 ? views.slice() : [];
+    this.active = primary || views[0] || null;
+    // Leaving grid mode drops any lingering per-pane fullscreen so the single view lays out normally.
+    if (this.videoFullscreen && !next.has(this.fullscreenView)) {
+      this.videoFullscreen = false;
+      this.fullscreenView = null;
+    }
+    this.layout(this.bounds.width, this.bounds.height);
+  }
+
   show(service) {
     const view = this.ensureView(service);
-    if (this.active && this.active !== view) {
-      this.pauseView(this.active); // stop the outgoing service playing in the background
-      this.active.setVisible(false);
-    }
-    this.active = view;
-    view.setVisible(true);
-    // Re-adding an existing child view moves it to the top of the stacking order.
-    this.win.contentView.addChildView(view);
-    this.layout(this.bounds.width, this.bounds.height);
-    // Resume playback only if we were the ones who paused it on a previous switch-away.
-    if (this.autoPaused.has(view)) {
-      this.autoPaused.delete(view);
-      this.resumeView(view);
-    }
+    this.setVisibleSet([view], view);
     return view;
+  }
+
+  // Tile up to four services at once. All stay live (and, by design, audible); the primary pane
+  // — the first — is what single-target controls act on.
+  showGrid(services) {
+    const views = services.slice(0, 4).map((s) => this.ensureView(s));
+    this.setVisibleSet(views, views[0]);
   }
 
   layout(width, height) {
     this.bounds = { width, height };
-    if (!this.active || !width || !height) return;
-    if (this.videoFullscreen) {
-      this.active.setBounds({ x: 0, y: 0, width, height });
-    } else {
-      const x = this.sidebarWidth;
-      this.active.setBounds({ x, y: 0, width: Math.max(0, width - x), height });
+    if (!width || !height) return;
+    // A site in HTML fullscreen owns the whole window, sidebar included — even mid-grid, where
+    // its pane covers the others (which keep playing underneath).
+    if (this.videoFullscreen && this.fullscreenView) {
+      this.fullscreenView.setBounds({ x: 0, y: 0, width, height });
+      return;
     }
+    const x = this.sidebarWidth;
+    const areaW = Math.max(0, width - x);
+    const views = this.grid.length ? this.grid : this.active ? [this.active] : [];
+    if (!views.length) return;
+    const rects = gridRects(views.length, x, 0, areaW, height, GRID_GAP);
+    views.forEach((v, i) => v.setBounds(rects[i]));
   }
 
   setSidebarWidth(width) {
@@ -293,6 +373,12 @@ class ViewManager {
     const view = this.views.get(key);
     if (!view) return;
     if (this.active === view) this.active = null;
+    if (this.fullscreenView === view) {
+      this.fullscreenView = null;
+      this.videoFullscreen = false;
+    }
+    this.visible.delete(view);
+    this.grid = this.grid.filter((v) => v !== view);
     this.autoPaused.delete(view);
     // A destroyed view cannot report that it stopped playing, so drop it from the playing
     // set by hand or the display-sleep inhibitor would be held forever.
@@ -316,8 +402,14 @@ class ViewManager {
     }
   }
 
-  setVideoFullscreen(on) {
+  setVideoFullscreen(on, view) {
+    // Ignore a stale "leave" from a pane that is not the one currently filling the screen — in a
+    // grid, several panes can fire these, and only the one that took over should end it.
+    if (!on && this.fullscreenView && view && view !== this.fullscreenView) return;
     this.videoFullscreen = on;
+    this.fullscreenView = on ? view || this.active : null;
+    // Bring the fullscreen pane to the top so it covers its grid neighbours while it owns the window.
+    if (on && this.fullscreenView) this.win.contentView.addChildView(this.fullscreenView);
     if (this.win.setFullScreen) this.win.setFullScreen(on);
     this.layout(this.bounds.width, this.bounds.height);
   }

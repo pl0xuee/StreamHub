@@ -30,8 +30,23 @@ const DEFAULT_SERVICES = [
 // tell the same story — see the header rewrite and preload wired up in views.js.
 const CHROME_MAJOR = process.versions.chrome.split('.')[0];
 
+// Present the host OS honestly. On Windows the app really is Chromium-on-Windows, and — unlike
+// Linux — Windows has Widevine L1, so a Windows identity is also what lets the DRM services
+// offer their higher-quality tiers rather than the ~720p Linux ceiling. The UA string, the
+// Sec-CH-UA-Platform header (views.js) and navigator.userAgentData (service-preload.js) all
+// read from these, so the three never disagree about which platform this is.
+const IS_WIN = process.platform === 'win32';
+const UA_OS = IS_WIN ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
+// Sec-CH-UA-Platform / navigator.userAgentData.platform.
+const CH_PLATFORM = IS_WIN ? 'Windows' : 'Linux';
+// High-entropy platformVersion. UA-CH reports Windows 10/11 as "15.0.0" (they share NT 10.0);
+// Linux keeps a plausible kernel-ish value.
+const CH_PLATFORM_VERSION = IS_WIN ? '15.0.0' : '6.1.0';
+const CH_ARCH = 'x86';
+const CH_BITNESS = '64';
+
 const CHROME_UA =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  `Mozilla/5.0 (${UA_OS}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
   `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
 
 // Brand list Chrome sends; Electron's omits "Google Chrome", which gives the game away.
@@ -51,7 +66,7 @@ const CHROME_FULL_VERSION_LIST =
 // navigator.userAgentData, so those are stripped alongside the UA swap (see views.js and
 // service-preload.js); a Firefox UA carrying Chrome hints would be its own automation tell.
 const FIREFOX_UA =
-  'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0';
+  `Mozilla/5.0 (${UA_OS}; rv:140.0) Gecko/20100101 Firefox/140.0`;
 
 // Only the account/sign-in host wears the Firefox disguise, so it never touches playback.
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'accounts.youtube.com']);
@@ -67,5 +82,9 @@ module.exports = {
   CHROME_BRANDS,
   CHROME_FULL_VERSION_LIST,
   FIREFOX_UA,
+  CH_PLATFORM,
+  CH_PLATFORM_VERSION,
+  CH_ARCH,
+  CH_BITNESS,
   isGoogleAuthHost,
 };

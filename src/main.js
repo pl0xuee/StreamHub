@@ -74,6 +74,10 @@ let settingsWindow = null; // separate window holding the app's settings
 let viewManager;
 let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
+// Multi-view grid: whether it is on, and the ordered service ids tiled in it (up to four). In
+// grid mode `activeServiceId` tracks the primary pane (gridIds[0]) for single-target controls.
+let gridMode = false;
+let gridIds = [];
 let sidebarCollapsed = false;
 let adblockStatsTimer = null;
 let pendingUpdate = null; // version string of a newer release we already know about, else null
@@ -154,6 +158,8 @@ function statePayload() {
     updateAvailable: pendingUpdate,
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
+    gridMode,
+    gridIds,
   };
 }
 
@@ -186,6 +192,10 @@ function uiParent() {
 }
 
 function persist() {
+  // Fold the live grid state into the config on every save, so the grid is remembered across
+  // launches and no individual handler has to remember to copy it over.
+  config.gridMode = gridMode;
+  config.gridIds = gridIds;
   configStore.save(config);
 }
 
@@ -211,13 +221,48 @@ function stopAdblockStats() {
 function switchService(serviceId) {
   const service = config.services.find((s) => s.id === serviceId);
   if (!service) return;
+  // Picking a single service leaves grid mode: this is the way back to one view.
+  gridMode = false;
+  gridIds = [];
   activeServiceId = serviceId;
   // Reopen on this service next launch rather than always landing on the first one.
-  if (config.lastServiceId !== serviceId) {
-    config.lastServiceId = serviceId;
-    persist();
-  }
+  config.lastServiceId = serviceId;
+  persist();
   viewManager.show(service);
+  broadcast();
+}
+
+// The service objects currently tiled in the grid, in order, skipping any id that no longer
+// names a live service (e.g. one removed while gridded).
+function gridServices() {
+  return gridIds
+    .map((id) => config.services.find((s) => s.id === id))
+    .filter(Boolean);
+}
+
+// Turn grid mode on or off. Turning it on seeds the grid with the service that was showing;
+// turning it off collapses back to the grid's primary pane as the single view.
+function setGridMode(on) {
+  if (on) {
+    gridMode = true;
+    if (!gridIds.length) {
+      const seed = activeServiceId || (config.services[0] && config.services[0].id);
+      gridIds = seed ? [seed] : [];
+    }
+    activeServiceId = gridIds[0] || null;
+    if (gridServices().length) viewManager.showGrid(gridServices());
+  } else {
+    const primary = gridIds[0] || activeServiceId;
+    gridMode = false;
+    gridIds = [];
+    const service = config.services.find((s) => s.id === primary);
+    if (service) {
+      activeServiceId = service.id;
+      config.lastServiceId = service.id;
+      viewManager.show(service);
+    }
+  }
+  persist();
   broadcast();
 }
 
@@ -412,6 +457,28 @@ ipcMain.handle('get-config', () => statePayload());
 
 ipcMain.on('switch-service', (_e, serviceId) => switchService(serviceId));
 
+// Flip the multi-view grid on or off (the sidebar's grid button).
+ipcMain.on('toggle-grid', () => setGridMode(!gridMode));
+
+// While grid mode is on, clicking a sidebar service adds it to the grid, or removes it if it
+// is already there — capped at four panes, and never emptied below one (leave via the toggle).
+ipcMain.on('toggle-grid-service', (_e, serviceId) => {
+  if (!gridMode) return;
+  if (!config.services.some((s) => s.id === serviceId)) return;
+  const i = gridIds.indexOf(serviceId);
+  if (i >= 0) {
+    if (gridIds.length > 1) gridIds.splice(i, 1);
+    else return; // last pane: keep it; the grid toggle is how you leave grid mode
+  } else {
+    if (gridIds.length >= 4) return; // four is the most the layout tiles
+    gridIds.push(serviceId);
+  }
+  activeServiceId = gridIds[0] || null;
+  viewManager.showGrid(gridServices());
+  persist();
+  broadcast();
+});
+
 ipcMain.on('toggle-sidebar', () => {
   sidebarCollapsed = !sidebarCollapsed;
   // The service view starts where the sidebar ends, so collapsing widens the video.
@@ -446,9 +513,20 @@ ipcMain.on('remove-service', (_e, serviceId) => {
   const [service] = config.services.splice(idx, 1);
   if (!config.removed.some((s) => s.id === service.id)) config.removed.push(service);
   viewManager.destroyView(serviceId);
-  if (activeServiceId === serviceId) {
-    activeServiceId = null;
-    if (config.services[0]) switchService(config.services[0].id);
+
+  // Drop it from the grid if it was tiled there. A still-populated grid just re-tiles; an
+  // emptied one falls through to single-view handling below.
+  const wasGridded = gridIds.includes(serviceId);
+  gridIds = gridIds.filter((id) => id !== serviceId);
+  if (gridMode && gridIds.length) {
+    if (wasGridded) viewManager.showGrid(gridServices());
+    activeServiceId = gridIds[0];
+  } else {
+    gridMode = false;
+    if (activeServiceId === serviceId || wasGridded) {
+      activeServiceId = null;
+      if (config.services[0]) switchService(config.services[0].id);
+    }
   }
   persist();
   broadcast();
@@ -557,12 +635,16 @@ function isNewerVersion(latest, current) {
 }
 
 // ---- Updates ----
-// electron-updater can only swap the binary in place when we're running as the AppImage:
-// it replaces the file at $APPIMAGE, which the AppImage runtime sets. Started any other way
-// (`npm start`, an unpacked tree, a distro package), there is nothing to swap, so we fall
-// back to sending the user to the download page.
+// Whether electron-updater can install a new build in place, as opposed to only pointing the
+// user at the download page.
+//   * Windows: the packaged NSIS installer does the swap and relaunch itself.
+//   * Linux: only the AppImage build can replace itself — it overwrites the file at $APPIMAGE,
+//     which the AppImage runtime sets. Started any other way (`npm start`, an unpacked tree, a
+//     distro package), there is nothing to swap.
 function canSelfUpdate() {
-  return app.isPackaged && Boolean(process.env.APPIMAGE);
+  if (!app.isPackaged) return false;
+  if (process.platform === 'win32') return true;
+  return Boolean(process.env.APPIMAGE);
 }
 
 function openDownloadPage(url) {
@@ -660,8 +742,8 @@ function relaunchAfterExit(appImagePath) {
   child.unref();
 }
 
-// Download the new AppImage in place, then restart into it. Progress goes to the update
-// button so a 120MB download isn't a silently frozen UI.
+// Download the new build, then restart into it. Progress goes to the update button so a
+// 120MB download isn't a silently frozen UI.
 async function downloadAndInstall(info) {
   autoUpdater.on('download-progress', (p) =>
     sendToUi('update-progress', Math.round(p.percent)),
@@ -674,6 +756,25 @@ async function downloadAndInstall(info) {
     throw err;
   }
   sendToUi('update-progress', null);
+
+  // Windows: hand off to the NSIS installer, which swaps the files and relaunches the app
+  // itself, so none of the AppImage in-place / manual-relaunch handling below applies.
+  if (process.platform === 'win32') {
+    const r = await dialog.showMessageBox(uiParent(), {
+      type: 'info',
+      message: `StreamHub v${info.version} is ready`,
+      detail: 'Restart now to finish updating?',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    // "Later" is safe: the download is cached and autoInstallOnAppQuit applies it on the next
+    // real quit. isSilent: true runs the installer without its wizard; isForceRunAfter: true
+    // relaunches the app once it finishes.
+    if (r.response !== 0) return;
+    autoUpdater.quitAndInstall(true, true);
+    return;
+  }
 
   const renamed = appImageWillBeRenamed();
   const r = await dialog.showMessageBox(uiParent(), {
@@ -728,8 +829,8 @@ ipcMain.handle('check-for-updates', async () => {
           type: 'info',
           message: `Update available: v${latest.version}`,
           detail:
-            `You're on v${current}. StreamHub can only update itself when run as the ` +
-            'AppImage, so this build has to be downloaded manually.\n\nOpen the download page?',
+            `You're on v${current}. This copy of StreamHub can't update itself, so the new ` +
+            'build has to be downloaded manually.\n\nOpen the download page?',
           buttons: ['Download', 'Later'],
           defaultId: 0,
           cancelId: 1,
@@ -808,6 +909,8 @@ app.whenReady().then(async () => {
   }
   config = configStore.load(); // the user's list, from their userData dir
   sidebarCollapsed = config.settings.sidebarCollapsed === true;
+  gridMode = config.gridMode === true;
+  gridIds = Array.isArray(config.gridIds) ? config.gridIds.slice(0, 4) : [];
 
   // Restore the per-service exclusions before anything is attached, or a service the user
   // turned blocking off for would get the engine for the first page load and then lose it.
@@ -831,27 +934,46 @@ app.whenReady().then(async () => {
   // hardware media keys already work (see shortcuts.js); this is what makes the *panel*,
   // the lock screen and the media applet show and drive what is playing. Absent (not fatal)
   // where there is no session bus.
-  mpris = new Mpris({
-    playPause: () => viewManager.playPause(),
-    seek: (seconds) => {
-      const wc = viewManager.getActiveWebContents();
-      if (wc) {
-        wc.executeJavaScript(
-          `(() => { const v = document.querySelector('video'); if (v) v.currentTime += ${seconds}; })()`,
-        ).catch(() => {});
-      }
-    },
-    raise: () => showWindow(),
-    quit: () => {
-      quitting = true;
-      app.quit();
-    },
-  });
-  mpris.start();
+  //
+  // MPRIS is a Linux/D-Bus interface, so it only runs there. On Windows `mpris` stays null;
+  // onPlaybackChange already no-ops when it is, and the hardware media keys still work through
+  // shortcuts.js. (Windows' own SMTC overlay is a possible future addition, not wired here.)
+  if (process.platform === 'linux') {
+    mpris = new Mpris({
+      playPause: () => viewManager.playPause(),
+      seek: (seconds) => {
+        const wc = viewManager.getActiveWebContents();
+        if (wc) {
+          wc.executeJavaScript(
+            `(() => { const v = document.querySelector('video'); if (v) v.currentTime += ${seconds}; })()`,
+          ).catch(() => {});
+        }
+      },
+      raise: () => showWindow(),
+      quit: () => {
+        quitting = true;
+        app.quit();
+      },
+    });
+    mpris.start();
+  }
 
   // The sidebar starts collapsed if that is how it was left, so the service view has to
   // start at the rail's edge rather than the full sidebar's.
   if (sidebarCollapsed) viewManager.setSidebarWidth(SIDEBAR_RAIL_WIDTH);
+
+  // Restore a grid that was open at last quit. Reconcile the saved ids against the current
+  // list first (a service removed since could have fallen out); if nothing survives, drop back
+  // to single view and let the sidebar open the last-watched service as usual.
+  if (gridMode) {
+    gridIds = gridServices().map((s) => s.id);
+    if (gridIds.length) {
+      activeServiceId = gridIds[0];
+      viewManager.showGrid(gridServices());
+    } else {
+      gridMode = false;
+    }
+  }
 
   // Look for a new release in the background so the sidebar button can announce one instead
   // of the user having to think to go and ask. Deferred a little: startup is already busy
