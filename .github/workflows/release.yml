@@ -1,9 +1,9 @@
 name: Release
 
-# Build the Linux AppImage and attach it to the GitHub release for the pushed tag, with a
-# changelog generated from the commits since the previous tag. Trigger by pushing a version
-# tag (e.g. `git tag v0.3.0 && git push origin v0.3.0`), or run manually from the Actions
-# tab to test a build without publishing.
+# Build the Linux AppImage and the signed Windows installer, then attach both to the GitHub
+# release for the pushed tag, with a changelog generated from the commits since the previous
+# tag. Trigger by pushing a version tag (e.g. `git tag v0.4.0 && git push origin v0.4.0`), or
+# run manually from the Actions tab to test the builds without publishing.
 on:
   push:
     tags:
@@ -14,45 +14,100 @@ permissions:
   contents: write # needed to create the release and upload assets
 
 jobs:
+  # One build per OS. Each produces its installer plus the electron-updater metadata the in-app
+  # updater reads (latest-linux.yml / latest.yml + block map), and uploads them as workflow
+  # artifacts. fail-fast is off so a Windows problem never takes the Linux build down with it.
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            build: npm run build -- --publish never
+          - os: windows-latest
+            name: windows
+            build: npm run build:win -- --publish never
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags, so the changelog can diff against the last tag
 
       # node-version is the Node the *build* runs on. It is unrelated to the Node the actions
-      # themselves run on, which is what their major versions pin — those had to move off the
-      # retired Node 20 action runtime.
+      # themselves run on, which is what their major versions pin.
       - uses: actions/setup-node@v7
         with:
           node-version: 20
 
+      # Windows Widevine will not serve licenses in a packaged build unless the app is VMP-signed
+      # via castLabs' EVS — see build/afterPack.js, which runs the signing during the build.
+      # Install the signing tool and authenticate it here first. Credentials come from repo
+      # secrets; castlabs-evs reads them from these exact env var names.
+      - name: Set up VMP signing (Windows)
+        if: matrix.name == 'windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Authenticate castLabs EVS (Windows)
+        if: matrix.name == 'windows'
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+        run: |
+          python -m pip install --upgrade castlabs-evs
+          python -m castlabs_evs.account -n reauthenticate
+
       - name: Install dependencies (also downloads the castLabs Electron + Widevine binary)
         run: npm install
 
-      # `--publish never` keeps electron-builder from auto-publishing to GitHub; the upload
-      # step below owns that, so the release notes stay ours. The build still writes the
-      # electron-updater metadata (latest-linux.yml + .blockmap) into dist/, and the app's
-      # in-app updater needs both published alongside the AppImage to find and fetch a new
-      # version — see the "check-for-updates" handler in src/main.js.
-      - name: Build AppImage
-        run: npm run build -- --publish never
+      # `--publish never` keeps electron-builder from auto-publishing to GitHub; the `release`
+      # job owns that, so the release notes stay ours. The build still writes the electron-updater
+      # metadata into dist/, which the in-app updater needs published alongside the installer to
+      # find and fetch a new version — see the "check-for-updates" handler in src/main.js.
+      - name: Build
+        run: ${{ matrix.build }}
 
-      - name: Upload build for manual test runs
-        if: github.event_name == 'workflow_dispatch'
+      # Just the release assets — the installer(s) and update metadata — never the unpacked app
+      # directories electron-builder also leaves in dist/. if-no-files-found: warn, not error,
+      # because each OS only produces its own subset (no .exe on Linux, no .AppImage on Windows).
+      - name: Collect build assets
         uses: actions/upload-artifact@v7
         with:
-          name: StreamHub-AppImage
-          path: dist/*.AppImage
-          if-no-files-found: ignore
+          name: dist-${{ matrix.name }}
+          if-no-files-found: warn
           retention-days: 14
+          path: |
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
+
+  # Gather whatever built and publish it to one release, with a changelog. `if: always()` (paired
+  # with fail-fast: false above) is the resilience: if one OS fails to build, the other's assets
+  # still publish rather than the whole release being skipped. Runs only for a pushed tag; manual
+  # runs stop after `build`, leaving the artifacts to download and inspect.
+  release:
+    needs: build
+    if: always() && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the changelog diffs against the previous tag
+
+      - name: Download build assets
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: dist-*
+          merge-multiple: true # flatten dist-linux/ and dist-windows/ into one directory
 
       # Build the changelog from git commits since the previous tag. GitHub's own
       # generate_release_notes only lists merged PRs; this repo commits straight to main,
       # so we roll our own from `git log`.
       - name: Generate changelog
-        if: startsWith(github.ref, 'refs/tags/')
         id: changelog
         run: |
           CUR="${GITHUB_REF_NAME}"
@@ -80,29 +135,32 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Attach AppImage to the release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           body: |
-            ## Install (Linux)
+            ## Install
 
-            Download `StreamHub-*.AppImage`, then:
+            **Windows** — download `StreamHub-Setup-*.exe` and run it.
+
+            **Linux** — download `StreamHub.AppImage`, then:
             ```bash
-            chmod +x StreamHub-*.AppImage
-            ./StreamHub-*.AppImage        # needs FUSE 2 (see the README)
+            chmod +x StreamHub.AppImage
+            ./StreamHub.AppImage        # needs FUSE 2 (see the README)
             ```
 
-            Playback caps at ~720p on the DRM services (a Linux/Widevine limitation);
-            YouTube/Twitch and other non-DRM services can go higher.
+            Windows plays at full quality (Widevine L1). Linux caps at ~720p on the DRM services
+            (a Linux/Widevine limitation); YouTube/Twitch and other non-DRM services can go higher
+            on both.
 
             ---
 
             ${{ steps.changelog.outputs.notes }}
-          # latest-linux.yml is what the in-app updater reads to discover a new version and
-          # verify its checksum; without it published, "Check for updates" can only fall back
-          # to the browser. (AppImage embeds its block map in the image, so there is no
-          # separate .blockmap file to attach.)
+          # latest.yml / latest-linux.yml are what the in-app updater reads to discover a new
+          # version and verify its checksum. (The AppImage embeds its block map, so it has no
+          # separate .blockmap file; the Windows installer ships one.)
           files: |
-            dist/*.AppImage
-            dist/latest-linux.yml
+            artifacts/*.AppImage
+            artifacts/*.exe
+            artifacts/*.blockmap
+            artifacts/latest*.yml
