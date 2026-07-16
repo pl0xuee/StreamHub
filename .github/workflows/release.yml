@@ -57,7 +57,7 @@ jobs:
           EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
         run: |
           python -m pip install --upgrade castlabs-evs
-          python -m castlabs_evs.account -n reauthenticate
+          python -m castlabs_evs.account -n reauth
 
       - name: Install dependencies (also downloads the castLabs Electron + Widevine binary)
         run: npm install
