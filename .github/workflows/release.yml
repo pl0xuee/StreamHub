@@ -25,9 +25,14 @@ jobs:
           - os: ubuntu-latest
             name: linux
             build: npm run build -- --publish never
-          - os: windows-latest
-            name: windows
-            build: npm run build:win -- --publish never
+          # Windows is PARKED until castLabs approves the EVS account for production VMP signing.
+          # Everything works up to that gate (build, EVS auth, upload); castLabs currently returns
+          # "Binary signature denied" because real streaming services require a production signature
+          # the account is not yet entitled to. Re-enable by uncommenting these three lines once the
+          # account is approved — the Windows-specific steps below are already wired up.
+          # - os: windows-latest
+          #   name: windows
+          #   build: npm run build:win -- --publish never
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -139,19 +144,18 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: |
-            ## Install
+            ## Install (Linux)
 
-            **Windows** — download `StreamHub-Setup-*.exe` and run it.
-
-            **Linux** — download `StreamHub.AppImage`, then:
+            Download `StreamHub.AppImage`, then:
             ```bash
             chmod +x StreamHub.AppImage
             ./StreamHub.AppImage        # needs FUSE 2 (see the README)
             ```
 
-            Windows plays at full quality (Widevine L1). Linux caps at ~720p on the DRM services
-            (a Linux/Widevine limitation); YouTube/Twitch and other non-DRM services can go higher
-            on both.
+            Playback caps at ~720p on the DRM services (a Linux/Widevine limitation);
+            YouTube/Twitch and other non-DRM services can go higher.
+
+            _(A signed Windows build is on the way, pending castLabs production VMP signing.)_
 
             ---
 
