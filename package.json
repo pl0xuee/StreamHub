@@ -1,6 +1,6 @@
 {
   "name": "streamhub",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "A desktop wrapper that hosts the official streaming websites (Netflix, Prime Video, Disney+, Max, Hulu, YouTube) behind one unified UI. Playback stays on each service's own site using its own DRM.",
   "main": "src/main.js",
   "author": "StreamHub",
