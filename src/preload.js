@@ -4,9 +4,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('shell', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   switchService: (id) => ipcRenderer.send('switch-service', id),
-  // Multi-view grid: toggle the mode, and (while on) add/remove a service from the grid.
+  // Multi-view grid: toggle the mode, and (while on) add a pane for a service or close one by
+  // pane id. Adding is per click, so the same service can be tiled into several panes at once.
   toggleGrid: () => ipcRenderer.send('toggle-grid'),
-  toggleGridService: (id) => ipcRenderer.send('toggle-grid-service', id),
+  addGridPane: (serviceId) => ipcRenderer.send('add-grid-pane', serviceId),
+  removeGridPane: (paneId) => ipcRenderer.send('remove-grid-pane', paneId),
+  // How the panes are arranged: 'auto' (packed), 'rows' (stacked) or 'columns' (side by side).
+  setGridLayout: (layout) => ipcRenderer.send('set-grid-layout', layout),
   // Service-list management (drag reorder, remove, restore).
   reorderServices: (orderedIds) => ipcRenderer.send('reorder-services', orderedIds),
   removeService: (id) => ipcRenderer.send('remove-service', id),
@@ -15,7 +19,6 @@ contextBridge.exposeInMainWorld('shell', {
   openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
   toggleFullscreen: () => ipcRenderer.send('toggle-fullscreen'),
-  togglePip: () => ipcRenderer.send('toggle-pip'),
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

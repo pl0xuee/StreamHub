@@ -643,32 +643,45 @@ body.collapsed #btn-settings .gear {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
-/* Which pane (1–4) a service occupies in the grid, so the sidebar mirrors the on-screen tiling.
-   Sits at the row's right edge; the delete button takes its place on hover, as the shield does. */
+/* Which panes (1–4) a service occupies in the grid, so the sidebar mirrors the on-screen tiling.
+   One badge per pane — a service tiled twice shows two — so these are flex items in the row
+   rather than one absolutely-positioned bubble. Each is a button that closes its own pane. */
 .service .grid-num {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
+  flex-shrink: 0;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
+  border: none;
   border-radius: 8px;
   background: var(--accent);
   color: #08252f;
   font-size: 10px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 16px;
   text-align: center;
+  cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: background 0.14s ease, color 0.14s ease;
 }
-.service:hover .grid-num {
+/* Hovering a badge is the "close this pane" affordance, so it reads as a destructive target. */
+.service .grid-num:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+.service .grid-num:disabled {
+  cursor: default;
+}
+/* In grid mode the row's job is managing panes: the badges stay put (they have to be clickable,
+   so they cannot yield to hover like the shield does) and the remove-service × stands down —
+   along with the blocked count, which would otherwise fight for the same spot. */
+body.grid-mode .service .shield,
+body.grid-mode .service .del {
   display: none;
 }
-/* In grid mode the pane number is what matters on the right of the row, so stand the blocked
-   count down to avoid two things fighting for that spot. */
-body.grid-mode .service .shield {
-  display: none;
+/* A full grid has no room for another pane, so rows stop reading as add targets. */
+body.grid-full .service {
+  cursor: default;
 }
 
 /* One-line prompt shown only while picking grid panes. */
@@ -681,6 +694,44 @@ body.grid-mode .service .shield {
 }
 body.grid-mode .grid-hint {
   display: block;
+}
+
+/* Pane arrangement picker, shown with the hint while grid mode is on. A segmented row rather
+   than a cycling button, so which arrangements exist — and which is in use — is visible. */
+.grid-layout {
+  display: none;
+  gap: 4px;
+  margin: 0 2px 10px;
+}
+body.grid-mode .grid-layout {
+  display: flex;
+}
+.grid-layout button {
+  flex: 1;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--elevated);
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.grid-layout button:hover:not(:disabled) {
+  background: var(--elevated-2);
+  color: var(--text);
+}
+.grid-layout button.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+/* One pane has no arrangement to speak of; dim the row rather than removing it, so the sidebar
+   does not reflow every time a pane is added or closed. */
+.grid-layout button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* ---- Collapsed sidebar (icon rail) ---- */
@@ -715,6 +766,8 @@ body.collapsed .service .del,
 body.collapsed .service .shield,
 body.collapsed .service .grid-num,
 body.collapsed .grid-hint,
+/* The picker is a labelled row of three; it has no sensible form in a 56px rail. */
+body.collapsed .grid-layout,
 body.collapsed .list-actions {
   display: none;
 }

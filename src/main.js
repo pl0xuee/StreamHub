@@ -19,7 +19,7 @@ const {
 const { autoUpdater } = require('electron-updater');
 
 const configStore = require('./config');
-const { ViewManager } = require('./views');
+const { ViewManager, GRID_LAYOUTS } = require('./views');
 const { adblocker } = require('./adblock');
 const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
@@ -74,10 +74,30 @@ let settingsWindow = null; // separate window holding the app's settings
 let viewManager;
 let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
-// Multi-view grid: whether it is on, and the ordered service ids tiled in it (up to four). In
-// grid mode `activeServiceId` tracks the primary pane (gridIds[0]) for single-target controls.
+// Multi-view grid: whether it is on, and the ordered panes tiled in it (up to four). A pane is
+// `{ paneId, serviceId }` rather than a bare id, because one service may be tiled more than once
+// — two Twitch streams side by side, say — and each tile browses independently. In grid mode
+// `activeServiceId` tracks the primary pane (gridPanes[0]) for single-target controls.
 let gridMode = false;
-let gridIds = [];
+let gridPanes = [];
+let gridLayout = 'auto'; // how those panes are arranged — see GRID_LAYOUTS in views.js
+const MAX_GRID_PANES = 4; // the most the tiling layout in views.js lays out
+
+// A fresh pane id for a service, unique within the grid. Ids are derived from the service rather
+// than a running counter so they stay meaningful in the saved config, and stable across restarts.
+//
+// A service's first pane is deliberately given the bare service id, because views.js reads that
+// key as "the service's ordinary single-mode view" and hands the tile the page the user was
+// already on. Later panes get `~2`, `~3`… and views of their own. Note this is a property of the
+// *pane id*, not of the pane's position: closing the first of two Twitch tiles must leave the
+// second one showing exactly what it was, not promote it onto a different view.
+function newPaneId(serviceId) {
+  if (!gridPanes.some((p) => p.paneId === serviceId)) return serviceId;
+  for (let n = 2; ; n += 1) {
+    const id = `${serviceId}~${n}`;
+    if (!gridPanes.some((p) => p.paneId === id)) return id;
+  }
+}
 let sidebarCollapsed = false;
 let adblockStatsTimer = null;
 let pendingUpdate = null; // version string of a newer release we already know about, else null
@@ -159,7 +179,9 @@ function statePayload() {
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
     gridMode,
-    gridIds,
+    gridPanes,
+    gridLayout,
+    gridFull: gridPanes.length >= MAX_GRID_PANES,
   };
 }
 
@@ -195,7 +217,8 @@ function persist() {
   // Fold the live grid state into the config on every save, so the grid is remembered across
   // launches and no individual handler has to remember to copy it over.
   config.gridMode = gridMode;
-  config.gridIds = gridIds;
+  config.gridPanes = gridPanes;
+  config.gridLayout = gridLayout;
   configStore.save(config);
 }
 
@@ -223,7 +246,7 @@ function switchService(serviceId) {
   if (!service) return;
   // Picking a single service leaves grid mode: this is the way back to one view.
   gridMode = false;
-  gridIds = [];
+  gridPanes = [];
   activeServiceId = serviceId;
   // Reopen on this service next launch rather than always landing on the first one.
   config.lastServiceId = serviceId;
@@ -232,12 +255,25 @@ function switchService(serviceId) {
   broadcast();
 }
 
-// The service objects currently tiled in the grid, in order, skipping any id that no longer
-// names a live service (e.g. one removed while gridded).
-function gridServices() {
-  return gridIds
-    .map((id) => config.services.find((s) => s.id === id))
-    .filter(Boolean);
+// The panes currently tiled in the grid, in order, resolved to their service objects and
+// skipping any that no longer names a live service (e.g. one removed while gridded).
+function gridTiles() {
+  const out = [];
+  for (const pane of gridPanes) {
+    const service = config.services.find((s) => s.id === pane.serviceId);
+    if (!service) continue;
+    out.push({ paneId: pane.paneId, service });
+  }
+  return out;
+}
+
+// Drop panes whose service has gone away and re-point activeServiceId at the primary pane.
+// Returns the surviving tiles, so callers can hand them straight to the view manager.
+function reconcileGrid() {
+  const tiles = gridTiles();
+  gridPanes = tiles.map((t) => ({ paneId: t.paneId, serviceId: t.service.id }));
+  activeServiceId = gridPanes.length ? gridPanes[0].serviceId : null;
+  return tiles;
 }
 
 // Turn grid mode on or off. Turning it on seeds the grid with the service that was showing;
@@ -245,16 +281,16 @@ function gridServices() {
 function setGridMode(on) {
   if (on) {
     gridMode = true;
-    if (!gridIds.length) {
+    if (!gridPanes.length) {
       const seed = activeServiceId || (config.services[0] && config.services[0].id);
-      gridIds = seed ? [seed] : [];
+      if (seed) gridPanes = [{ paneId: newPaneId(seed), serviceId: seed }];
     }
-    activeServiceId = gridIds[0] || null;
-    if (gridServices().length) viewManager.showGrid(gridServices());
+    const tiles = reconcileGrid();
+    if (tiles.length) viewManager.showGrid(tiles);
   } else {
-    const primary = gridIds[0] || activeServiceId;
+    const primary = (gridPanes[0] && gridPanes[0].serviceId) || activeServiceId;
     gridMode = false;
-    gridIds = [];
+    gridPanes = [];
     const service = config.services.find((s) => s.id === primary);
     if (service) {
       activeServiceId = service.id;
@@ -460,21 +496,38 @@ ipcMain.on('switch-service', (_e, serviceId) => switchService(serviceId));
 // Flip the multi-view grid on or off (the sidebar's grid button).
 ipcMain.on('toggle-grid', () => setGridMode(!gridMode));
 
-// While grid mode is on, clicking a sidebar service adds it to the grid, or removes it if it
-// is already there — capped at four panes, and never emptied below one (leave via the toggle).
-ipcMain.on('toggle-grid-service', (_e, serviceId) => {
+// While grid mode is on, clicking a sidebar service adds a pane for it. Clicking one already in
+// the grid adds *another* pane rather than removing it, so a service can be tiled several times
+// over — two Twitch streams at once, say. Removal is per pane, below.
+ipcMain.on('add-grid-pane', (_e, serviceId) => {
   if (!gridMode) return;
   if (!config.services.some((s) => s.id === serviceId)) return;
-  const i = gridIds.indexOf(serviceId);
-  if (i >= 0) {
-    if (gridIds.length > 1) gridIds.splice(i, 1);
-    else return; // last pane: keep it; the grid toggle is how you leave grid mode
-  } else {
-    if (gridIds.length >= 4) return; // four is the most the layout tiles
-    gridIds.push(serviceId);
-  }
-  activeServiceId = gridIds[0] || null;
-  viewManager.showGrid(gridServices());
+  if (gridPanes.length >= MAX_GRID_PANES) return;
+  gridPanes.push({ paneId: newPaneId(serviceId), serviceId });
+  viewManager.showGrid(reconcileGrid());
+  persist();
+  broadcast();
+});
+
+// Close one pane, identified by pane id so that closing the first of two Twitch tiles leaves the
+// other one exactly as it was. The last pane is kept — the grid toggle is how you leave the mode,
+// and an empty grid would show nothing at all.
+// Rearrange the panes: packed, stacked one above another, or side by side. Only bounds change,
+// so the layout can be switched mid-stream without interrupting anything that is playing.
+ipcMain.on('set-grid-layout', (_e, layout) => {
+  if (!GRID_LAYOUTS.includes(layout)) return;
+  gridLayout = layout;
+  viewManager.setGridLayout(layout);
+  persist();
+  broadcast();
+});
+
+ipcMain.on('remove-grid-pane', (_e, paneId) => {
+  if (!gridMode || gridPanes.length <= 1) return;
+  const i = gridPanes.findIndex((p) => p.paneId === paneId);
+  if (i === -1) return;
+  gridPanes.splice(i, 1);
+  viewManager.showGrid(reconcileGrid());
   persist();
   broadcast();
 });
@@ -514,13 +567,13 @@ ipcMain.on('remove-service', (_e, serviceId) => {
   if (!config.removed.some((s) => s.id === service.id)) config.removed.push(service);
   viewManager.destroyView(serviceId);
 
-  // Drop it from the grid if it was tiled there. A still-populated grid just re-tiles; an
-  // emptied one falls through to single-view handling below.
-  const wasGridded = gridIds.includes(serviceId);
-  gridIds = gridIds.filter((id) => id !== serviceId);
-  if (gridMode && gridIds.length) {
-    if (wasGridded) viewManager.showGrid(gridServices());
-    activeServiceId = gridIds[0];
+  // Drop its panes from the grid if it was tiled there — possibly several of them. A still-
+  // populated grid just re-tiles; an emptied one falls through to single-view handling below.
+  const wasGridded = gridPanes.some((p) => p.serviceId === serviceId);
+  gridPanes = gridPanes.filter((p) => p.serviceId !== serviceId);
+  if (gridMode && gridPanes.length) {
+    const tiles = reconcileGrid();
+    if (wasGridded) viewManager.showGrid(tiles);
   } else {
     gridMode = false;
     if (activeServiceId === serviceId || wasGridded) {
@@ -619,7 +672,6 @@ ipcMain.on('toggle-fullscreen', () => {
   baseWindow.setFullScreen(!baseWindow.isFullScreen());
 });
 
-ipcMain.on('toggle-pip', () => viewManager.togglePip());
 ipcMain.on('reload-active', () => viewManager.reloadActive());
 ipcMain.on('go-back', () => viewManager.goBack());
 
@@ -910,7 +962,8 @@ app.whenReady().then(async () => {
   config = configStore.load(); // the user's list, from their userData dir
   sidebarCollapsed = config.settings.sidebarCollapsed === true;
   gridMode = config.gridMode === true;
-  gridIds = Array.isArray(config.gridIds) ? config.gridIds.slice(0, 4) : [];
+  gridPanes = Array.isArray(config.gridPanes) ? config.gridPanes.slice(0, MAX_GRID_PANES) : [];
+  gridLayout = GRID_LAYOUTS.includes(config.gridLayout) ? config.gridLayout : 'auto';
 
   // Restore the per-service exclusions before anything is attached, or a service the user
   // turned blocking off for would get the engine for the first page load and then lose it.
@@ -962,17 +1015,16 @@ app.whenReady().then(async () => {
   // start at the rail's edge rather than the full sidebar's.
   if (sidebarCollapsed) viewManager.setSidebarWidth(SIDEBAR_RAIL_WIDTH);
 
-  // Restore a grid that was open at last quit. Reconcile the saved ids against the current
+  // Restore a grid that was open at last quit. Reconcile the saved panes against the current
   // list first (a service removed since could have fallen out); if nothing survives, drop back
   // to single view and let the sidebar open the last-watched service as usual.
   if (gridMode) {
-    gridIds = gridServices().map((s) => s.id);
-    if (gridIds.length) {
-      activeServiceId = gridIds[0];
-      viewManager.showGrid(gridServices());
-    } else {
-      gridMode = false;
-    }
+    // Set the arrangement before tiling, or the restored grid would lay out packed for a frame
+    // and then jump into the layout the user actually chose.
+    viewManager.setGridLayout(gridLayout);
+    const tiles = reconcileGrid();
+    if (tiles.length) viewManager.showGrid(tiles);
+    else gridMode = false;
   }
 
   // Look for a new release in the background so the sidebar button can announce one instead

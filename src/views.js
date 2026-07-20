@@ -77,19 +77,6 @@ function isNavigable(url) {
   }
 }
 
-// JS injected into the active service to toggle picture-in-picture on its <video>.
-const PIP_JS = `(() => {
-  const vids = Array.from(document.querySelectorAll('video'));
-  const v = vids.find(x => !x.paused && x.readyState > 2) || vids.find(x => x.readyState > 2) || vids[0];
-  if (!v) return 'no-video';
-  if (document.pictureInPictureElement) { document.exitPictureInPicture(); return 'exit'; }
-  if (document.pictureInPictureEnabled && !v.disablePictureInPicture) {
-    v.requestPictureInPicture().catch(() => {});
-    return 'enter';
-  }
-  return 'unsupported';
-})()`;
-
 // JS injected to play/pause the currently visible <video>.
 const PLAYPAUSE_JS = `(() => {
   const vids = Array.from(document.querySelectorAll('video'));
@@ -104,8 +91,8 @@ const PLAYPAUSE_JS = `(() => {
 // marked, so RESUME_JS can later restart exactly those and leave alone anything the user
 // had already paused. Returns true if it actually paused something.
 //
-// A picture-in-picture video is deliberately left running: it is floating on the user's
-// desktop, in plain sight, which is the whole point of having put it there.
+// A video the site itself put into picture-in-picture is deliberately left running: it is
+// floating on the user's desktop, in plain sight, which is the point of having put it there.
 const PAUSE_ALL_JS = `(() => {
   let paused = false;
   for (const m of document.querySelectorAll('video, audio')) {
@@ -132,10 +119,46 @@ const RESUME_JS = `(() => {
 // bleeding into one another. The window's background colour shows through it.
 const GRID_GAP = 6;
 
+// How the panes are arranged. 'auto' packs them into a square-ish block; 'rows' stacks them all
+// vertically (two panes become one above the other, which suits two 16:9 videos far better than
+// two half-width columns); 'columns' lays them all out side by side.
+const GRID_LAYOUTS = ['auto', 'rows', 'columns'];
+
+// Split `total` pixels into n integer spans separated by `gap`. The last span absorbs the
+// rounding remainder, so the panes always meet the far edge exactly rather than leaving a
+// stray pixel of background showing.
+function splitSpans(total, n, gap) {
+  const avail = Math.max(0, total - gap * (n - 1));
+  const base = Math.floor(avail / n);
+  const spans = [];
+  for (let i = 0; i < n; i += 1) spans.push(i === n - 1 ? avail - base * (n - 1) : base);
+  return spans;
+}
+
+// Lay n panes out along one axis: stacked top-to-bottom ('rows') or left-to-right ('columns').
+function stripRects(n, x, y, w, h, gap, vertical) {
+  const spans = splitSpans(vertical ? h : w, n, gap);
+  const rects = [];
+  let offset = 0;
+  for (const span of spans) {
+    rects.push(
+      vertical
+        ? { x, y: y + offset, width: w, height: span }
+        : { x: x + offset, y, width: span, height: h },
+    );
+    offset += span + gap;
+  }
+  return rects;
+}
+
 // Rectangles for tiling n views (1–4) inside the area (x, y, w, h), left-to-right, top-to-
-// bottom. Two columns once there is more than one pane; three panes put the odd one across
-// the full bottom row rather than leaving a hole. Integer pixels, since setBounds wants them.
-function gridRects(n, x, y, w, h, gap) {
+// bottom. Under 'auto': two columns once there is more than one pane, and three panes put the
+// odd one across the full bottom row rather than leaving a hole. Integer pixels, since
+// setBounds wants them.
+function gridRects(n, x, y, w, h, gap, layout = 'auto') {
+  if (n === 1) return [{ x, y, width: w, height: h }];
+  if (layout === 'rows') return stripRects(n, x, y, w, h, gap, true);
+  if (layout === 'columns') return stripRects(n, x, y, w, h, gap, false);
   const leftW = Math.floor((w - gap) / 2);
   const rightW = w - gap - leftW; // absorbs the rounding remainder, so the panes meet exactly
   const topH = Math.floor((h - gap) / 2);
@@ -143,8 +166,6 @@ function gridRects(n, x, y, w, h, gap) {
   const x2 = x + leftW + gap;
   const y2 = y + topH + gap;
   switch (n) {
-    case 1:
-      return [{ x, y, width: w, height: h }];
     case 2:
       return [
         { x, y, width: leftW, height: h },
@@ -167,20 +188,27 @@ function gridRects(n, x, y, w, h, gap) {
 }
 
 /**
- * Owns one WebContentsView per service and manages which one(s) are attached/visible in the
+ * Owns one WebContentsView per *pane* and manages which one(s) are attached/visible in the
  * window. The app-chrome view (sidebar) sits underneath and is always visible on the left; the
  * visible service view(s) cover the area to its right — one filling it in single mode, or up to
  * four tiled in a grid. `active` is the primary pane that single-target controls (media keys,
- * PiP, back/reload) act on.
+ * back/reload) act on.
+ *
+ * A pane is not the same thing as a service: the grid may tile one service more than once (two
+ * Twitch streams, say), and each such tile needs its own WebContentsView browsing independently.
+ * So `views` is keyed by *view key* — the service id for the single-mode view, or a pane id for
+ * an extra grid tile — while the session partition is still derived from the service id alone.
+ * Every pane of a service therefore shares one cookie jar, and so one login.
  */
 class ViewManager {
   constructor(baseWindow, sidebarWidth) {
     this.win = baseWindow;
     this.sidebarWidth = sidebarWidth;
-    this.views = new Map(); // serviceId -> WebContentsView
-    this.active = null; // primary pane, for single-target controls (media keys, PiP, back)
+    this.views = new Map(); // viewKey -> WebContentsView
+    this.active = null; // primary pane, for single-target controls (media keys, back)
     this.visible = new Set(); // every view currently shown — one in single mode, up to four in a grid
     this.grid = []; // ordered views when tiling more than one; empty in single mode
+    this.gridLayout = 'auto'; // how those panes are arranged — see GRID_LAYOUTS
     this.fullscreenView = null; // the pane a site took HTML-fullscreen, so it alone covers the window
     this.autoPaused = new Set(); // views we paused on switch-away, to resume on return
     this.videoFullscreen = false;
@@ -207,12 +235,14 @@ class ViewManager {
     return `${serviceId}@default`;
   }
 
-  ensureView(service) {
-    const key = this.key(service.id);
-    const existing = this.views.get(key);
+  // `viewKey` names the pane: the plain service id for the single-mode view, or a pane id for an
+  // extra grid tile of the same service. The partition below is keyed off service.id regardless,
+  // so extra panes open already signed in and share the one login.
+  ensureView(service, viewKey = service.id) {
+    const existing = this.views.get(viewKey);
     if (existing) return existing;
 
-    const partition = `persist:${key}`;
+    const partition = `persist:${this.key(service.id)}`;
     // Set the spoofed UA at the session level so sub-resource requests match too.
     const ses = session.fromPartition(partition);
     ses.setUserAgent(CHROME_UA);
@@ -292,8 +322,18 @@ class ViewManager {
     this.win.contentView.addChildView(view);
     wc.loadURL(service.url);
 
-    this.views.set(key, view);
+    // Remember what this view is, so the service-wide operations below (destroy on removal,
+    // sign-out, reload-on-adblock-change) can find every pane belonging to one service.
+    view.__serviceId = service.id;
+    view.__viewKey = viewKey;
+    this.views.set(viewKey, view);
     return view;
+  }
+
+  // Every live view of one service — normally just the single-mode view, but more when the grid
+  // is tiling that service several times.
+  viewsForService(serviceId) {
+    return Array.from(this.views.values()).filter((v) => v.__serviceId === serviceId);
   }
 
   // Make exactly `views` visible, with `primary` as the active pane. Anything currently shown
@@ -320,6 +360,13 @@ class ViewManager {
       }
     }
     this.visible = next;
+    // An extra pane's view exists only to fill a grid tile, so once it is off screen — the tile
+    // was closed, or the grid was left entirely — nothing can ever bring it back, and it would
+    // otherwise sit there invisibly holding a stream open. Free it. A service's single-mode view
+    // is deliberately kept when hidden: switching back to it should stay instant, as it always has.
+    for (const v of this.views.values()) {
+      if (v.__viewKey !== v.__serviceId && !next.has(v)) this.destroyByKey(v.__viewKey);
+    }
     this.grid = views.length > 1 ? views.slice() : [];
     this.active = primary || views[0] || null;
     // Leaving grid mode drops any lingering per-pane fullscreen so the single view lays out normally.
@@ -336,10 +383,15 @@ class ViewManager {
     return view;
   }
 
-  // Tile up to four services at once. All stay live (and, by design, audible); the primary pane
-  // — the first — is what single-target controls act on.
-  showGrid(services) {
-    const views = services.slice(0, 4).map((s) => this.ensureView(s));
+  // Tile up to four panes at once, each `{ paneId, service }`. The same service may appear in
+  // more than one pane; each gets its own view (and so browses independently) while sharing the
+  // service's session. All panes stay live (and, by design, audible); the primary pane — the
+  // first — is what single-target controls act on.
+  showGrid(panes) {
+    // A pane id doubles as its view key. main.js gives a service's first pane the bare service
+    // id, so that tile reuses the single-mode view (and the page already loaded in it); extra
+    // tiles carry a suffixed id and so get views of their own.
+    const views = panes.slice(0, 4).map((p) => this.ensureView(p.service, p.paneId));
     this.setVisibleSet(views, views[0]);
   }
 
@@ -356,8 +408,15 @@ class ViewManager {
     const areaW = Math.max(0, width - x);
     const views = this.grid.length ? this.grid : this.active ? [this.active] : [];
     if (!views.length) return;
-    const rects = gridRects(views.length, x, 0, areaW, height, GRID_GAP);
+    const rects = gridRects(views.length, x, 0, areaW, height, GRID_GAP, this.gridLayout);
     views.forEach((v, i) => v.setBounds(rects[i]));
+  }
+
+  // Re-tile the existing panes in a different arrangement. Nothing is reloaded — only the bounds
+  // change — so switching layout mid-stream does not interrupt playback.
+  setGridLayout(layout) {
+    this.gridLayout = GRID_LAYOUTS.includes(layout) ? layout : 'auto';
+    this.layout(this.bounds.width, this.bounds.height);
   }
 
   setSidebarWidth(width) {
@@ -365,11 +424,15 @@ class ViewManager {
     this.layout(this.bounds.width, this.bounds.height);
   }
 
-  // Tear down a service's view when it is removed from the list. The persistent
-  // partition (its cookies/login) stays on disk, so re-adding the service later
-  // recreates the view already signed in.
+  // Tear down every view of a service when it is removed from the list — it may hold several
+  // grid panes, not just one. The persistent partition (its cookies/login) stays on disk, so
+  // re-adding the service later recreates the view already signed in.
   destroyView(serviceId) {
-    const key = this.key(serviceId);
+    for (const view of this.viewsForService(serviceId)) this.destroyByKey(view.__viewKey);
+  }
+
+  // Tear down one pane's view.
+  destroyByKey(key) {
     const view = this.views.get(key);
     if (!view) return;
     if (this.active === view) this.active = null;
@@ -396,9 +459,11 @@ class ViewManager {
     const ses = session.fromPartition(`persist:${this.key(service.id)}`);
     await ses.clearStorageData(); // cookies, localStorage, IndexedDB, service workers…
     await ses.clearCache();
-    const view = this.views.get(this.key(service.id));
-    if (view && !view.webContents.isDestroyed()) {
-      view.webContents.loadURL(service.url); // back to the front door, signed out
+    // Every pane of this service shared the cookie jar we just wiped, so every one of them has
+    // to go back to the front door — leaving a sibling pane on a signed-in page would be showing
+    // a session that no longer exists.
+    for (const view of this.viewsForService(service.id)) {
+      if (!view.webContents.isDestroyed()) view.webContents.loadURL(service.url);
     }
   }
 
@@ -463,11 +528,6 @@ class ViewManager {
     this.eachFrame(wc, PAUSE_ALL_JS).catch(() => {});
   }
 
-  togglePip() {
-    const wc = this.getActiveWebContents();
-    if (wc) wc.executeJavaScript(PIP_JS).catch(() => {});
-  }
-
   playPause() {
     const wc = this.getActiveWebContents();
     if (wc) wc.executeJavaScript(PLAYPAUSE_JS).catch(() => {});
@@ -478,11 +538,13 @@ class ViewManager {
     if (wc) wc.reload();
   }
 
-  // Reload one service, if it has a live view — used when its ad-blocking setting changes.
+  // Reload a service's live views — used when its ad-blocking setting changes, which applies to
+  // the whole session and so to every pane showing it.
   reloadService(service) {
-    const view = this.views.get(this.key(service.id));
-    const wc = view && view.webContents;
-    if (wc && !wc.isDestroyed()) wc.reload();
+    for (const view of this.viewsForService(service.id)) {
+      const wc = view.webContents;
+      if (wc && !wc.isDestroyed()) wc.reload();
+    }
   }
 
   // Reload every live service. Toggling the ad blocker only changes how *new* requests are
@@ -505,4 +567,4 @@ class ViewManager {
   }
 }
 
-module.exports = { ViewManager };
+module.exports = { ViewManager, GRID_LAYOUTS };

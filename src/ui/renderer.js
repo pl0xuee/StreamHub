@@ -7,6 +7,7 @@ const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
 const gridBtn = document.getElementById('btn-grid');
+const gridLayoutEl = document.getElementById('grid-layout');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
@@ -18,14 +19,24 @@ let state = {
   activeServiceId: null,
   sidebarCollapsed: false,
   gridMode: false,
-  gridIds: [],
+  gridPanes: [],
 };
 let menuServiceId = null; // the service the context menu is currently open for
 
+// The grid panes showing this service, as {paneId, position} — position being the pane's 1-based
+// place in the whole grid, which is what the on-screen tiling order is. A service can hold more
+// than one, so this returns a list rather than a single index.
+function panesFor(serviceId) {
+  const panes = state.gridPanes || [];
+  return panes
+    .map((p, i) => ({ paneId: p.paneId, serviceId: p.serviceId, position: i + 1 }))
+    .filter((p) => p.serviceId === serviceId);
+}
+
 // Which rows read as "on". In single mode that is the one active service; in grid mode it is
-// every service tiled in the grid.
+// every service holding at least one pane.
 function isSelected(id) {
-  return state.gridMode ? (state.gridIds || []).includes(id) : id === state.activeServiceId;
+  return state.gridMode ? panesFor(id).length > 0 : id === state.activeServiceId;
 }
 
 // Is the blocker on for this service? Globally on, and not in the excluded list.
@@ -84,20 +95,34 @@ function makeServiceEl(svc) {
 
   li.append(icon, label, shield, del);
 
-  // In grid mode, a tiled service shows which pane it is (1–4) so the sidebar mirrors the
-  // on-screen layout, and clicking toggles it in/out of the grid rather than switching to it.
+  // In grid mode a tiled service shows a numbered badge per pane it occupies, so the sidebar
+  // mirrors the on-screen layout even when one service holds several tiles. Clicking a badge
+  // closes that one pane; clicking the row itself adds another.
   if (state.gridMode) {
-    const pos = (state.gridIds || []).indexOf(svc.id);
-    if (pos >= 0) {
-      const num = document.createElement('span');
+    const panes = panesFor(svc.id);
+    const last = panes.length === (state.gridPanes || []).length && panes.length === 1;
+    for (const pane of panes) {
+      const num = document.createElement('button');
       num.className = 'grid-num';
-      num.textContent = String(pos + 1);
-      li.append(num);
+      num.textContent = String(pane.position);
+      // The sole remaining pane cannot be closed — an empty grid would show nothing, and the
+      // grid toggle is the way out of the mode. Say so rather than offering a dead button.
+      num.disabled = last;
+      num.title = last
+        ? 'The last pane — turn grid view off to leave it'
+        : `Close pane ${pane.position} (${svc.name})`;
+      num.addEventListener('click', (e) => {
+        e.stopPropagation(); // or the row's own handler would add a pane right back
+        window.shell.removeGridPane(pane.paneId);
+      });
+      // Before the delete button, so the badges sit where the shield does rather than past the
+      // row's right edge — they are flex items now, not absolutely positioned.
+      li.insertBefore(num, del);
     }
   }
 
   li.addEventListener('click', () => {
-    if (state.gridMode) window.shell.toggleGridService(svc.id);
+    if (state.gridMode) window.shell.addGridPane(svc.id);
     else window.shell.switchService(svc.id);
   });
   li.addEventListener('contextmenu', (e) => {
@@ -219,9 +244,27 @@ function renderGridToggle() {
   gridBtn.classList.toggle('active', on);
   gridBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
   gridBtn.title = on
-    ? 'Grid view on — click services to add or remove (up to 4)'
+    ? 'Grid view on — click a service to add a pane, a number to close one'
     : 'Grid view — watch up to 4 at once';
   document.body.classList.toggle('grid-mode', on);
+  // With four panes tiled there is nothing more to add, so the rows stop reading as add targets
+  // and the hint says why — better than clicks that silently do nothing.
+  const full = on && Boolean(state.gridFull);
+  document.body.classList.toggle('grid-full', full);
+  document.getElementById('grid-hint').textContent = full
+    ? 'Grid is full (4 panes). Click a number to close one.'
+    : 'Click a service to add a pane — the same one twice for two of it. Click a number to close.';
+
+  // Mark the arrangement in use. With a single pane there is nothing to arrange, so the choice
+  // is disabled rather than hidden — it keeps the sidebar from reflowing as panes come and go.
+  const only = (state.gridPanes || []).length < 2;
+  for (const btn of gridLayoutEl.querySelectorAll('button')) {
+    const chosen = btn.dataset.layout === (state.gridLayout || 'auto');
+    btn.classList.toggle('active', chosen);
+    btn.setAttribute('aria-pressed', chosen ? 'true' : 'false');
+    btn.disabled = only;
+  }
+  gridLayoutEl.title = only ? 'Add a second pane to choose an arrangement' : '';
 }
 
 function applyState(next) {
@@ -254,7 +297,10 @@ async function init() {
   document.getElementById('btn-back').addEventListener('click', () => window.shell.back());
   document.getElementById('btn-reload').addEventListener('click', () => window.shell.reload());
   gridBtn.addEventListener('click', () => window.shell.toggleGrid());
-  document.getElementById('btn-pip').addEventListener('click', () => window.shell.togglePip());
+  gridLayoutEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-layout]');
+    if (btn && !btn.disabled) window.shell.setGridLayout(btn.dataset.layout);
+  });
   document
     .getElementById('btn-fullscreen')
     .addEventListener('click', () => window.shell.toggleFullscreen());
