@@ -24,6 +24,22 @@ const { adblocker } = require('./adblock');
 const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 
+// Only one copy of the app may run at a time, and this has to be settled before anything else:
+// Chromium's on-disk session storage assumes a single process owns the profile. Two instances
+// sharing one userData dir fight over the cookie store, the quota database and the service-worker
+// state, and Chromium's recovery from that is to reset the storage it cannot open — which
+// presents as being signed out of every service at once, with the logins unrecoverable.
+//
+// So a second launch never opens a window. It hands its request to the instance already running,
+// which surfaces itself (it may be minimised, or hidden in the tray), and then exits. Asked for
+// the lock this early so a losing instance quits before it can touch the profile at all.
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showWindow());
+}
+
 // Updates are always user-initiated (the settings window's update button), so never
 // download in the background — decide first, then fetch.
 autoUpdater.autoDownload = false;
@@ -370,6 +386,9 @@ function createWindow() {
 // — a tray icon that does nothing is clutter.
 function showWindow() {
   if (!baseWindow || baseWindow.isDestroyed()) return;
+  // A minimised window ignores show()/focus() on some window managers, so lift it out of the
+  // taskbar first. This is the path a second launch takes to surface the running instance.
+  if (baseWindow.isMinimized()) baseWindow.restore();
   baseWindow.show();
   baseWindow.focus();
 }
@@ -942,6 +961,9 @@ ipcMain.handle('check-for-updates', async () => {
 
 // ---- App lifecycle ----
 app.whenReady().then(async () => {
+  // A losing instance has already called app.quit() above. Should it get here first anyway, stop
+  // before Widevine, the config and the service views — none of the profile may be touched.
+  if (!gotInstanceLock) return;
   // Download + verify the Widevine CDM bundled by castLabs ECS before any playback.
   // If it fails (offline, flaky network, castLabs outage) we must still open a window
   // and tell the user, rather than silently never creating one.
