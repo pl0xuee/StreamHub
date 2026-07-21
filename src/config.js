@@ -25,6 +25,10 @@ function defaultSettings() {
     adblockOff: [],
     sidebarCollapsed: false,
     minimizeToTray: false,
+    // Fade the sidebar down while something is playing, and bring it back on approach. On by
+    // default: it is the app's own idea of good manners, and the one control that undoes it is
+    // in Settings for anyone who disagrees.
+    dimWhilePlaying: true,
     // Per-site cosmetic tweaks, each switchable on its own — see enhance.js.
     enhance: defaultEnhance(),
   };
@@ -37,6 +41,8 @@ function cleanSettings(raw) {
     adblockOff: Array.isArray(s.adblockOff) ? s.adblockOff.filter((x) => typeof x === 'string') : [],
     sidebarCollapsed: s.sidebarCollapsed === true,
     minimizeToTray: s.minimizeToTray === true,
+    // Defaults on, so an absent key (a config written before this shipped) keeps the behaviour.
+    dimWhilePlaying: s.dimWhilePlaying !== false,
     enhance: cleanEnhance(s.enhance),
   };
 }

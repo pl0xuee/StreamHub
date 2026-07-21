@@ -121,6 +121,7 @@ let pendingUpdate = null; // version string of a newer release we already know a
 let tray = null;
 let quitting = false; // distinguishes a real quit from a close-to-tray
 let sleepBlockerId = null; // powerSaveBlocker id held while something is playing
+let mediaPlaying = false; // is any view playing right now — drives the sidebar's house lights
 let saveWindowTimer = null;
 let mpris = null; // Linux system media controls (KDE panel, lock screen)
 
@@ -151,6 +152,11 @@ function setPlaybackInhibitor(playing) {
 // surface it to the main process.
 async function onPlaybackChange(playing) {
   setPlaybackInhibitor(playing);
+  mediaPlaying = playing;
+  // Its own channel rather than the full state payload: a video starting or stopping must not
+  // re-render the sidebar's service list, which would cancel an in-progress drag. Same reasoning
+  // as the ad blocker's tally below.
+  sendToUi('playback', playing);
   if (!mpris) return;
 
   const service = config.services.find((s) => s.id === activeServiceId);
@@ -195,6 +201,9 @@ function statePayload() {
     updateAvailable: pendingUpdate,
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
+    dimWhilePlaying: config.settings.dimWhilePlaying !== false,
+    // Only the opening value — after this it is pushed on the 'playback' channel above.
+    playing: mediaPlaying,
     enhance: cleanEnhance(config.settings.enhance),
     gridMode,
     gridPanes,
@@ -329,7 +338,7 @@ function createWindow() {
     ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 940,
     minHeight: 600,
-    backgroundColor: '#0b0d10',
+    backgroundColor: '#080a10',
     title: 'StreamHub',
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -438,7 +447,7 @@ function openRemovedWindow() {
     height: 560,
     minWidth: 300,
     minHeight: 320,
-    backgroundColor: '#0b0d10',
+    backgroundColor: '#080a10',
     title: 'Removed services',
     autoHideMenuBar: true,
     parent: baseWindow || undefined,
@@ -468,7 +477,7 @@ function openSettingsWindow() {
     height: 580,
     minWidth: 380,
     minHeight: 420,
-    backgroundColor: '#0b0d10',
+    backgroundColor: '#080a10',
     title: 'Settings',
     autoHideMenuBar: true,
     parent: baseWindow || undefined,
@@ -711,6 +720,13 @@ ipcMain.handle('set-tray', (_e, on) => {
   applyTraySetting();
   broadcast();
   return config.settings.minimizeToTray;
+});
+
+ipcMain.handle('set-dim-while-playing', (_e, on) => {
+  config.settings.dimWhilePlaying = on === true;
+  persist();
+  broadcast();
+  return config.settings.dimWhilePlaying;
 });
 
 ipcMain.handle('set-enhance', (_e, key, on) => {

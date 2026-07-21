@@ -1,24 +1,54 @@
+/* StreamHub — "theater dark".
+ *
+ * The room has the lights down and one warm bulb in it. That gives the whole interface exactly
+ * two colour temperatures and no more: cool greys for everything at rest, and a single warm gold
+ * for anything that is *lit* — the active service, a hovered control, keyboard focus. Nothing
+ * else carries colour, with two deliberate exceptions: the services' own brand marks (the posters
+ * on the wall) and the exit-sign red, which is only ever used for leaving or removing.
+ *
+ * The chrome's job is to get out of the way of the picture, so it is flat: no metal gradients,
+ * no inset highlights, no bevels. Where something needs to stand out it is lit, not embossed.
+ */
+
 :root {
-  /* Dark gunmetal-grey palette — cool blue-grey with a metallic sheen. */
-  --bg: #0b0d10;
-  --sidebar-top: #171a1f;
-  --sidebar-bottom: #0e1014;
-  --surface: #13161a;
-  --elevated: #1c2027;
-  --elevated-2: #252a32;
-  --border: #282d35;
-  --border-soft: #1b1f25;
-  --text: #e4e7ea;
-  --muted: #8a919b;
-  --muted-2: #626871;
-  --accent: #63b3d6;
-  --accent-dim: #4d94b5;
-  --accent-soft: rgba(99, 179, 214, 0.14);
-  --danger: #c8323d;
+  /* Ink — the house with the lights down. */
+  --ink: #080a10;
+  --ink-2: #0b0e15;
+  --surface: #12151d;
+  --surface-2: #1a1e28;
+  --line: #222734;
+  --line-soft: #161a23;
+
+  /* Cool ambient: text and everything unlit. */
+  --text: #e9eaef;
+  --dim: #7d8698;
+  --dim-2: #545c6b;
+
+  /* The one warm light in the room. */
+  --bulb: #d9c188;
+  --bulb-hot: #f4e6c2;
+  --bulb-wash: rgba(217, 193, 136, 0.13);
+  --bulb-edge: rgba(217, 193, 136, 0.24);
+  --bulb-glow: rgba(217, 193, 136, 0.45);
+
+  /* Exit sign. Removing, signing out, closing a pane — nothing else. */
+  --exit: #b8434b;
+
   --sidebar-width: 220px;
-  --radius: 9px;
+  --radius: 8px;
   --radius-sm: 6px;
-  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* A condensed grotesk for the wordmark and section rules — marquee lettering is condensed,
+     spaced and set in caps, which is exactly what those two roles want. The body face carries
+     everything that is read rather than glanced at, and the mono face every numeral, so counts
+     and versions hold their column instead of jittering. */
+  --font-display: "Fira Sans Condensed", "Archivo Narrow", "Roboto Condensed",
+    "Liberation Sans Narrow", "Segoe UI", system-ui, sans-serif;
+  --font-body: Inter, "Adwaita Sans", "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Adwaita Mono", "JetBrains Mono", Hack, "DejaVu Sans Mono", "Liberation Mono",
+    Consolas, monospace;
+
+  font-family: var(--font-body);
 }
 
 * {
@@ -30,87 +60,121 @@
 html,
 body {
   height: 100%;
-  background: var(--bg);
+  background: var(--ink);
   color: var(--text);
   user-select: none;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Thin gunmetal scrollbars. */
 ::-webkit-scrollbar {
-  width: 9px;
+  width: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #282d35;
+  background: var(--line);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #353b45;
+  background: #2e3442;
   background-clip: padding-box;
 }
 
-/* Sidebar: brushed-metal vertical gradient with a lit right edge. */
+/* Keyboard focus is "lit", like every other active thing here. */
+:focus-visible {
+  outline: 1px solid var(--bulb);
+  outline-offset: 2px;
+}
+
+/* ---- Sidebar ---- */
 #sidebar {
   position: fixed;
   top: 0;
   left: 0;
   width: var(--sidebar-width);
   height: 100%;
-  background: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
-  border-right: 1px solid #05070a;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03), 2px 0 12px rgba(0, 0, 0, 0.45);
+  /* Flat ink with the faintest lift at the top, where the bulb would be. */
+  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 62%);
+  border-right: 1px solid #04050a;
   display: flex;
   flex-direction: column;
-  padding: 14px 12px;
-  gap: 12px;
+  padding: 16px 12px 14px;
+  gap: 14px;
+  transition: background 0.45s ease;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 4px 6px 14px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 2px 4px 14px;
+  /* A hairline of bulb-light under the wordmark: the marquee, and the only rule in the sidebar
+     that is warm rather than grey. */
+  border-bottom: 1px solid var(--line-soft);
+  box-shadow: 0 1px 0 rgba(217, 193, 136, 0.07);
 }
 .brand-text {
-  font-size: 14.5px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  background: linear-gradient(180deg, #ffffff 0%, #b9c0ca 130%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text);
+  transition: opacity 0.45s ease;
+}
+
+/* The on-air bulb. It is the one thing that stays lit when the house lights go down, so a dark
+   sidebar reads as "something is playing" rather than "the app has gone wrong". */
+.onair {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bulb);
+  box-shadow: 0 0 8px var(--bulb-glow);
+  animation: breathe 3.4s ease-in-out infinite;
+}
+.onair[hidden] {
+  display: none;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* Hamburger: collapses the sidebar to an icon rail and back. */
 #btn-collapse {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease;
+  transition: background 0.16s ease;
 }
 #btn-collapse:hover {
-  background: var(--elevated);
-  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.04);
 }
 .bars,
 .bars::before,
 .bars::after {
   display: block;
-  width: 16px;
-  height: 2px;
+  width: 15px;
+  height: 1.5px;
   border-radius: 2px;
-  background: var(--muted);
-  transition: background 0.14s ease;
+  background: var(--dim);
+  transition: background 0.16s ease;
 }
 .bars {
   position: relative;
@@ -130,338 +194,442 @@ body {
 #btn-collapse:hover .bars,
 #btn-collapse:hover .bars::before,
 #btn-collapse:hover .bars::after {
-  background: var(--text);
+  background: var(--bulb);
 }
 
+/* ---- Service list ---- */
 .services {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   flex: 1;
   overflow-y: auto;
-  /* overflow-y: auto forces overflow-x to compute to auto, so the scroll container clips
-     at its padding box. The padding must therefore be wide enough to hold the active
-     row's accent bar, which sits 12px to the left of the row; the negative margin cancels
-     it so the rows themselves stay put. */
-  margin: 0 -12px;
-  padding: 0 12px;
 }
 
+/* No card, no border — a row is a line of type with a light beside it. The left padding is what
+   holds that light, so the active marker sits inside the scroll container's padding box and the
+   list needs no negative-margin trick to keep it from being clipped. */
 .service {
   display: flex;
   align-items: center;
-  /* Tight, because the row has to hold an icon, the name, a blocked count and a delete
-     button inside 220px — a roomier gap is what was clipping "Prime Video" to "Prime …". */
+  /* Tight, because the row has to hold a mark, the name, a blocked count and a delete button
+     inside 220px — a roomier gap is what clips "Prime Video" to "Prime …". */
   gap: 9px;
-  padding: 7px 8px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  color: var(--muted);
+  padding: 8px 8px 8px 14px;
+  border-radius: var(--radius-sm);
+  color: var(--dim);
   cursor: pointer;
   position: relative;
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  transition: background 0.16s ease, color 0.16s ease;
 }
-.service:hover {
-  background: linear-gradient(180deg, var(--elevated) 0%, #181c22 100%);
-  color: var(--text);
-}
-.service.active {
-  background: linear-gradient(180deg, var(--elevated-2) 0%, var(--elevated) 100%);
-  color: var(--text);
-  border-color: #2e343d;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-/* Accent highlight bar on the active service, with a soft glow. */
-.service.active::before {
+/* The bulb marking the row that is showing. Drawn always, unlit until it is. */
+.service::before {
   content: "";
   position: absolute;
-  left: -12px;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-  box-shadow: 0 0 10px rgba(99, 179, 214, 0.6);
+  left: 4px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.service:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.028);
+}
+.service.active {
+  color: var(--text);
+  background: var(--bulb-wash);
+}
+.service.active::before {
+  background: var(--bulb);
+  box-shadow: 0 0 7px var(--bulb-glow);
 }
 
+/* The service's own mark is the poster on the wall: dimmed while the row is at rest and lit to
+   its true colour when it is active or aimed at. The colour is set inline from the service list,
+   so nothing here may paint over it — the dimming is a filter, not an overlay. */
 .service .icon {
-  width: 27px;
-  height: 27px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
+  border-radius: 7px;
+  font-family: var(--font-display);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: #fff;
-  flex-shrink: 0;
-  /* Metallic gloss + depth over the brand colour. */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.16));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 3px rgba(0, 0, 0, 0.4);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  /* Unlit means darker, not paler: desaturating a bright brand colour turns it milky, which
+     reads as "washed out" rather than "in shadow". Brightness alone keeps the mark recognisably
+     Netflix-red or Twitch-purple while it waits its turn. */
+  filter: brightness(0.58);
+  transition: filter 0.2s ease;
 }
+.service:hover .icon,
+.service.active .icon {
+  filter: none;
+}
+
 .service .label {
-  font-size: 13.5px;
-  font-weight: 500;
   flex: 1;
   min-width: 0;
+  font-size: 13.5px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Per-service delete button, revealed on hover. */
-.service .del {
-  flex-shrink: 0;
-  width: 21px;
-  height: 21px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted-2);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-.service:hover .del {
-  opacity: 1;
-}
-.service .del:hover {
-  background: var(--danger);
-  color: #fff;
-}
-.service.dragging {
-  opacity: 0.45;
-  background: var(--elevated);
-  border-color: var(--accent-dim);
-}
-
-/* Add-site / Removed buttons under the list. */
-.list-actions {
-  display: flex;
-  gap: 7px;
-}
-.list-actions button {
-  flex: 1;
-  background: transparent;
-  color: var(--muted);
-  border: 1px dashed #2c323b;
-  border-radius: var(--radius-sm);
-  padding: 8px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
-}
-.list-actions button:hover {
-  color: var(--text);
-  border-color: var(--accent-dim);
-  border-style: solid;
-  background: var(--accent-soft);
-}
-#removed-count {
-  display: inline-block;
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--elevated-2);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 15px;
-}
-
-/* Per-service blocked count. Deliberately quiet: it is a reassurance that the blocker is
-   working, not a number anyone reads closely, and the service's name matters more than it
-   does — so no pill, no background, and it gives up its own width before the label does. */
+/* Per-service blocked count. Deliberately quiet: it is a reassurance that the blocker is working,
+   not a number anyone reads closely, and the service's name matters more than it does — so no
+   pill, no background, and it gives up its own width before the label does. */
 .service .shield {
   flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  color: var(--muted-2);
-  opacity: 0.75;
+  color: var(--dim-2);
 }
 /* Blocking deliberately off here, while it is on elsewhere. */
 .service .shield.off {
-  color: var(--danger);
-  opacity: 1;
-  font-size: 12px;
+  color: var(--exit);
+  font-size: 11px;
 }
 /* The delete button appears on hover and takes the shield's place. */
 .service:hover .shield {
   display: none;
 }
 
-/* ---- Right-click menu on a service ---- */
-.context-menu {
-  position: fixed;
-  z-index: 50;
-  min-width: 178px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, var(--elevated) 0%, var(--surface) 100%);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
-}
-.context-title {
-  padding: 5px 8px 6px;
-  margin-bottom: 3px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted-2);
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border-soft);
-}
-.context-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 7px 8px;
+.service .del {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
+  color: var(--dim-2);
+  font-size: 15px;
+  line-height: 1;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
-.context-item:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--text);
+/* Revealed on focus as well as hover, or tabbing to it lands on a button nobody can see. */
+.service:hover .del,
+.service .del:focus-visible {
+  opacity: 1;
 }
-.context-item:disabled {
-  color: var(--muted-2);
-  cursor: default;
-}
-.context-item.danger:hover:not(:disabled) {
-  background: var(--danger);
+.service .del:hover {
+  background: var(--exit);
   color: #fff;
 }
+.service.dragging {
+  opacity: 0.4;
+  background: var(--surface);
+}
 
-/* ---- Filter-list age + manual update, under the ad blocker toggle ---- */
-.setting-extra {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: -2px;
-  padding: 0 4px 0 35px; /* line up under the checkbox's label, not the checkbox */
-}
-#filter-age {
-  font-size: 10.5px;
-  color: var(--muted-2);
-  white-space: nowrap; /* "Updated today" must not wrap beside the button */
-}
-#btn-refresh-filters {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
+/* Which panes a service occupies, so the list mirrors the tiling. One badge per pane — a service
+   tiled twice shows two — and each closes its own pane. */
+.service .grid-num {
+  flex-shrink: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border: 1px solid var(--bulb-edge);
   border-radius: 4px;
-  padding: 2px 7px;
-  font-size: 10.5px;
+  background: transparent;
+  color: var(--bulb);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 13px;
+  text-align: center;
   cursor: pointer;
-  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
 }
-#btn-refresh-filters:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--accent-dim);
-  background: var(--accent-soft);
+.service .grid-num:hover:not(:disabled) {
+  background: var(--exit);
+  border-color: var(--exit);
+  color: #fff;
 }
-#btn-refresh-filters:disabled {
-  opacity: 0.6;
+.service .grid-num:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* In grid mode the row's job is managing panes: the badges stay put (they have to be clickable,
+   so they cannot yield to hover the way the shield does) and the remove-service × stands down,
+   along with the blocked count, which would otherwise fight for the same spot. */
+body.grid-mode .service .shield,
+body.grid-mode .service .del {
+  display: none;
+}
+/* A full grid has no room for another pane, so rows stop reading as add targets. */
+body.grid-full .service {
   cursor: default;
 }
 
-/* ---- Settings controls (live in the settings window; see .settings-window below) ---- */
-.settings {
+/* ---- Grid panel: the panes, their arrangement, and how to use them ---- */
+/* A rule above it, because the service list scrolls under this panel: without one the last row
+   visible looks like the end of the list rather than the point where it is clipped. */
+.grid-panel {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.grid-panel[hidden] {
+  display: none;
 }
 
-.setting {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 7px 8px;
-  border: 1px solid var(--border-soft);
+/* The panes drawn as they are actually tiled on screen — the same arrangement gridRects() gives
+   the real views, at sidebar scale. A flat row of chips could say which pane came first but never
+   what the screen would look like; this says both, and dragging a tile moves the pane (and its
+   view, so nothing reloads and nothing playing is interrupted). */
+.grid-preview {
+  display: grid;
+  gap: 2px;
+  aspect-ratio: 16 / 10;
+  padding: 3px;
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, #171b21 0%, #12151a 100%);
-  cursor: pointer;
-  transition: border-color 0.14s ease, background 0.14s ease;
+  background: var(--ink-2);
 }
-.setting:hover {
-  border-color: var(--border);
+/* One pane fills the screen whatever the arrangement says, so this must come after — and beat —
+   nothing: no arrangement rule below matches a count of one. */
+.grid-preview[data-count="1"] {
+  grid-template: 1fr / 1fr;
 }
-.setting:focus-within {
-  border-color: var(--accent-dim);
+/* Packed: two columns once there is more than one pane, and three panes put the odd one across
+   the full bottom row rather than leaving a hole. Mirrors gridRects() in views.js. */
+.grid-preview[data-layout="auto"][data-count="2"] {
+  grid-template: 1fr / 1fr 1fr;
+}
+.grid-preview[data-layout="auto"][data-count="3"],
+.grid-preview[data-layout="auto"][data-count="4"] {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+.grid-preview[data-layout="auto"][data-count="3"] .pane-tile:nth-child(3) {
+  grid-column: span 2;
+}
+/* Stacked. */
+.grid-preview[data-layout="rows"][data-count="2"] {
+  grid-template: 1fr 1fr / 1fr;
+}
+.grid-preview[data-layout="rows"][data-count="3"] {
+  grid-template: 1fr 1fr 1fr / 1fr;
+}
+.grid-preview[data-layout="rows"][data-count="4"] {
+  grid-template: 1fr 1fr 1fr 1fr / 1fr;
+}
+/* Side by side. */
+.grid-preview[data-layout="columns"][data-count="2"] {
+  grid-template: 1fr / 1fr 1fr;
+}
+.grid-preview[data-layout="columns"][data-count="3"] {
+  grid-template: 1fr / 1fr 1fr 1fr;
+}
+.grid-preview[data-layout="columns"][data-count="4"] {
+  grid-template: 1fr / 1fr 1fr 1fr 1fr;
 }
 
-/* Square accent checkbox, in the style of the app's other controls. */
-.setting input[type="checkbox"] {
-  appearance: none;
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
-  border: 1px solid #3a414b;
-  border-radius: 4px;
-  background: var(--surface);
-  cursor: pointer;
+.pane-tile {
+  position: relative;
   display: grid;
   place-items: center;
-  transition: background 0.14s ease, border-color 0.14s ease;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  cursor: grab;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
 }
-.setting input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+.pane-tile:hover {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--bulb-edge);
 }
-/* The tick: a rotated corner, drawn only once checked. */
-.setting input[type="checkbox"]:checked::after {
-  content: "";
-  width: 4px;
-  height: 8px;
-  margin-top: -2px;
-  border: solid #0b0d10;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+.pane-tile:active {
+  cursor: grabbing;
 }
-.setting input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.pane-tile.dragging {
+  opacity: 0.4;
 }
-.setting input[type="checkbox"]:disabled {
-  opacity: 0.5;
+/* The same coloured initial the service row uses, so a tile is identifiable at a glance without
+   room for the name. */
+.pane-tile-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  filter: brightness(0.8);
+}
+.pane-tile-num {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim-2);
+}
+/* Closing a pane from the tile itself is the obvious gesture once the arrangement is on screen;
+   the numbered badges in the list do the same thing from the other direction. */
+.pane-close {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--dim-2);
+  font-size: 12px;
+  line-height: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.pane-tile:hover .pane-close,
+.pane-close:focus-visible {
+  opacity: 1;
+}
+.pane-close:hover {
+  background: var(--exit);
+  color: #fff;
+}
+/* The sole remaining pane cannot be closed — an empty grid would show nothing, and the grid
+   toggle is the way out of the mode. */
+.pane-close[hidden] {
+  display: none;
+}
+
+/* Arrangement picker. A segmented row rather than a cycling button, so which arrangements exist —
+   and which is in use — is visible without clicking through them. */
+.grid-layout {
+  display: flex;
+  gap: 3px;
+}
+.grid-layout button {
+  flex: 1;
+  height: 24px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--dim-2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+.grid-layout button:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+.grid-layout button.active {
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
+}
+/* One pane has no arrangement to speak of; dim the row rather than removing it, so the sidebar
+   does not reflow every time a pane is added or closed. */
+.grid-layout button:disabled {
+  opacity: 0.35;
   cursor: default;
 }
 
-.setting-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.setting-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.25;
-}
-.setting-sub {
-  font-size: 11.5px;
-  color: var(--muted-2);
-  line-height: 1.35;
-}
-.setting-sub.error {
-  color: var(--danger);
+.grid-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dim-2);
 }
 
+/* ---- Removed-services button ---- */
+.list-actions {
+  display: flex;
+  gap: 7px;
+}
+.list-actions button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--dim-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 6px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.list-actions button:hover {
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
+}
+#removed-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--dim-2);
+}
+
+/* ---- Footer: navigation, version, settings ---- */
 .sidebar-footer {
-  border-top: 1px solid var(--border-soft);
-  padding-top: 11px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+}
+.toolbar button {
+  flex: 1;
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 9px 0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+.toolbar button:hover {
+  color: var(--bulb);
+  background: rgba(255, 255, 255, 0.035);
+}
+.toolbar button:active {
+  background: rgba(0, 0, 0, 0.35);
+}
+/* Grid-view toggle while it is on: lit, so the mode is obvious at a glance. */
+.toolbar button.active {
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
 }
 
 .app-meta {
@@ -469,126 +637,249 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  margin-top: 9px;
+  margin-top: 10px;
 }
 #app-version {
-  font-size: 11px;
-  color: var(--muted-2);
-  letter-spacing: 0.02em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim-2);
 }
+
 /* The settings window's update button, and the sidebar's gear that leads to it. */
 #btn-update,
 #btn-settings {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
+  color: var(--dim);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  padding: 5px 9px;
+  padding: 5px 10px;
+  font-family: var(--font-display);
   font-size: 11px;
   font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 #btn-update:hover,
 #btn-settings:hover {
-  color: var(--text);
-  border-color: var(--accent-dim);
-  background: var(--accent-soft);
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
 }
 #btn-update:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
 }
 #btn-settings .gear {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
+  transition: transform 0.3s ease;
 }
 /* The gear turns as it is aimed at — the one bit of movement the footer gets. */
 #btn-settings:hover .gear {
   transform: rotate(45deg);
 }
-#btn-settings .gear {
-  transition: transform 0.25s ease;
+
+/* ---- House lights ---- */
+/* While something is playing the chrome is not what anyone is looking at, so it goes down to
+   almost nothing and comes back up the moment it is reached for. Only the on-air bulb stays lit,
+   which is what keeps a dark sidebar readable as "playing" rather than "broken".
+   Nothing moves and nothing resizes: the service views keep the exact bounds they had, so the
+   page being watched never reflows. */
+#sidebar .services,
+#sidebar .grid-panel,
+#sidebar .list-actions,
+#sidebar .sidebar-footer,
+#sidebar .brand-text,
+#sidebar #btn-collapse {
+  transition: opacity 0.5s ease;
+}
+#sidebar .brand {
+  transition: border-color 0.5s ease, box-shadow 0.5s ease;
+}
+body.lights-down #sidebar {
+  background: var(--ink);
+}
+/* The marquee's own rule goes with everything else, or it is left drawing a bright line across
+   an otherwise dark panel — the one thing still at full strength, and the last thing that should
+   be. Only the on-air bulb stays lit. */
+body.lights-down #sidebar .brand {
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+body.lights-down #sidebar .services,
+body.lights-down #sidebar .grid-panel,
+body.lights-down #sidebar .list-actions,
+body.lights-down #sidebar .sidebar-footer,
+body.lights-down #sidebar #btn-collapse {
+  opacity: 0.12;
+}
+body.lights-down #sidebar .brand-text {
+  opacity: 0.4;
+}
+
+/* Bringing them back up. Reaching for the sidebar with the pointer, tabbing into it, or opening a
+   service's menu (which puts the pointer outside the sidebar, so hover alone would not hold) all
+   count as wanting the chrome back. These must come after the rules above: same specificity, so
+   source order is what decides. */
+body.lights-down #sidebar:hover .services,
+body.lights-down #sidebar:hover .grid-panel,
+body.lights-down #sidebar:hover .list-actions,
+body.lights-down #sidebar:hover .sidebar-footer,
+body.lights-down #sidebar:hover #btn-collapse,
+body.lights-down #sidebar:hover .brand-text,
+body.lights-down #sidebar:focus-within .services,
+body.lights-down #sidebar:focus-within .grid-panel,
+body.lights-down #sidebar:focus-within .list-actions,
+body.lights-down #sidebar:focus-within .sidebar-footer,
+body.lights-down #sidebar:focus-within #btn-collapse,
+body.lights-down #sidebar:focus-within .brand-text,
+body.menu-open.lights-down #sidebar .services,
+body.menu-open.lights-down #sidebar .grid-panel,
+body.menu-open.lights-down #sidebar .list-actions,
+body.menu-open.lights-down #sidebar .sidebar-footer,
+body.menu-open.lights-down #sidebar #btn-collapse,
+body.menu-open.lights-down #sidebar .brand-text {
+  opacity: 1;
+}
+body.lights-down #sidebar:hover,
+body.lights-down #sidebar:focus-within,
+body.menu-open.lights-down #sidebar {
+  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 62%);
+}
+body.lights-down #sidebar:hover .brand,
+body.lights-down #sidebar:focus-within .brand,
+body.menu-open.lights-down #sidebar .brand {
+  border-bottom-color: var(--line-soft);
+  box-shadow: 0 1px 0 rgba(217, 193, 136, 0.07);
 }
 
 /* ---- An update is waiting ---- */
-/* A slow accent pulse: enough to catch the eye on a glance at the sidebar, not so much that
-   it nags at someone who is trying to watch something. */
+/* A slow pulse of bulb-light: enough to catch the eye on a glance at the sidebar, not so much
+   that it nags at someone who is trying to watch something. */
 @keyframes update-pulse {
   0%,
   100% {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 0 rgba(99, 179, 214, 0);
+    border-color: var(--bulb-edge);
+    box-shadow: 0 0 0 rgba(217, 193, 136, 0);
   }
   50% {
-    border-color: var(--accent);
-    box-shadow: 0 0 9px rgba(99, 179, 214, 0.55);
+    border-color: var(--bulb);
+    box-shadow: 0 0 9px rgba(217, 193, 136, 0.4);
   }
 }
 
 #btn-update.has-update,
 #btn-settings.has-update {
-  color: var(--text);
-  border-color: var(--accent-dim);
-  background: var(--accent-soft);
-  animation: update-pulse 1.9s ease-in-out infinite;
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
+  animation: update-pulse 2.4s ease-in-out infinite;
 }
 #btn-update.has-update:hover,
 #btn-settings.has-update:hover {
   animation-play-state: paused; /* settle once it is being aimed at */
-  border-color: var(--accent);
+  border-color: var(--bulb);
 }
 
-/* The update itself is installed from the settings window, so the sidebar's gear only has to
-   say that one is waiting. */
+/* The update itself is installed from the settings window, so the sidebar's gear only has to say
+   that one is waiting. */
 #btn-settings.has-update .btn-label::after {
   content: "";
   display: inline-block;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   margin-left: 5px;
   vertical-align: middle;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(99, 179, 214, 0.8);
+  background: var(--bulb);
+  box-shadow: 0 0 6px var(--bulb-glow);
 }
 
-/* Collapsed to the rail, the button is hidden — so put an accent dot on the version instead,
-   which is the only part of the footer still on screen. */
+/* Collapsed to the rail the gear has no label, so put the mark on the version instead — the only
+   part of the footer still carrying text. */
 body.collapsed.update-available #app-version {
-  color: var(--accent);
+  color: var(--bulb);
 }
 body.collapsed.update-available #app-version::after {
   content: "";
   display: inline-block;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   margin-left: 4px;
   vertical-align: middle;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(99, 179, 214, 0.8);
-  animation: update-pulse 1.9s ease-in-out infinite;
+  background: var(--bulb);
+  box-shadow: 0 0 6px var(--bulb-glow);
+  animation: update-pulse 2.4s ease-in-out infinite;
 }
 
-/* Respect a reduced-motion preference: still clearly marked, just not moving. */
+/* Respect a reduced-motion preference. The house lights still go down — that is a state, not an
+   animation — but they change instantly rather than fading, and nothing pulses or turns. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
   #btn-update.has-update,
   #btn-settings.has-update,
   body.collapsed.update-available #app-version::after {
-    animation: none;
-    border-color: var(--accent);
+    border-color: var(--bulb);
   }
   #btn-settings:hover .gear {
     transform: none;
   }
+  .onair {
+    opacity: 1;
+  }
 }
-/* In the collapsed rail there is no room beside the version, so the gear drops its label and
-   sits under it — and the update dot moves to the version (above), which is the only part of
-   the footer still carrying text. */
+
+/* ---- Collapsed sidebar (icon rail) ---- */
+body.collapsed {
+  --sidebar-width: 56px;
+}
+body.collapsed #sidebar {
+  padding: 16px 8px 14px;
+}
+body.collapsed .brand {
+  justify-content: center;
+  padding: 2px 0 14px;
+}
+body.collapsed .brand-text,
+body.collapsed .service .label {
+  display: none;
+}
+body.collapsed .service {
+  justify-content: center;
+  padding: 8px 0;
+  gap: 0;
+}
+body.collapsed .service::before {
+  left: 1px;
+}
+body.collapsed .toolbar {
+  flex-direction: column;
+}
+/* The blocked count goes with the label: in the rail there is no name beside it to say what the
+   number counts, so it reads as a stray digit crammed against the mark. The grid panel and the
+   removed button have no sensible form in 56px either — the preview needs a readable aspect and
+   the picker is a labelled row of three. */
+body.collapsed .service .del,
+body.collapsed .service .shield,
+body.collapsed .service .grid-num,
+body.collapsed .grid-panel,
+body.collapsed .list-actions {
+  display: none;
+}
+/* No room beside the version in the rail, so the gear drops its label and sits under it. */
 body.collapsed .app-meta {
   flex-direction: column;
   gap: 8px;
@@ -602,272 +893,225 @@ body.collapsed #btn-settings .btn-label {
   display: none;
 }
 body.collapsed #btn-settings .gear {
-  font-size: 15px;
+  font-size: 14px;
+}
+/* The on-air bulb survives the rail — it is the smallest thing here and the one worth keeping. */
+body.collapsed .onair {
+  position: absolute;
+  top: 12px;
+  right: 10px;
 }
 
-.toolbar {
-  display: flex;
-  gap: 6px;
-}
-.toolbar button {
-  flex: 1;
-  background: linear-gradient(180deg, #1c2027 0%, #15181d 100%);
-  color: var(--muted);
-  border: 1px solid var(--border);
+/* ---- Right-click menu on a service ---- */
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 8px 0;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
 }
-.toolbar button:hover {
-  color: var(--text);
-  background: linear-gradient(180deg, #242a32 0%, #1b1f26 100%);
-  border-color: #353b45;
+.context-title {
+  padding: 6px 8px 7px;
+  margin-bottom: 3px;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--dim-2);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line-soft);
 }
-.toolbar button:active {
-  background: #0e1014;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-.toolbar button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* Grid-view toggle while it is on: a lit, pressed look so the mode is obvious at a glance. */
-.toolbar button.active {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-soft);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
-}
-
-/* Which panes (1–4) a service occupies in the grid, so the sidebar mirrors the on-screen tiling.
-   One badge per pane — a service tiled twice shows two — so these are flex items in the row
-   rather than one absolutely-positioned bubble. Each is a button that closes its own pane. */
-.service .grid-num {
-  flex-shrink: 0;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+.context-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
   border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #08252f;
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 16px;
-  text-align: center;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12.5px;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-  transition: background 0.14s ease, color 0.14s ease;
 }
-/* Hovering a badge is the "close this pane" affordance, so it reads as a destructive target. */
-.service .grid-num:hover:not(:disabled) {
-  background: var(--danger);
+.context-item:hover:not(:disabled) {
+  background: var(--bulb-wash);
+  color: var(--bulb-hot);
+}
+.context-item:disabled {
+  color: var(--dim-2);
+  cursor: default;
+}
+.context-item.danger:hover:not(:disabled) {
+  background: var(--exit);
   color: #fff;
 }
-.service .grid-num:disabled {
-  cursor: default;
-}
-/* In grid mode the row's job is managing panes: the badges stay put (they have to be clickable,
-   so they cannot yield to hover like the shield does) and the remove-service × stands down —
-   along with the blocked count, which would otherwise fight for the same spot. */
-body.grid-mode .service .shield,
-body.grid-mode .service .del {
-  display: none;
-}
-/* A full grid has no room for another pane, so rows stop reading as add targets. */
-body.grid-full .service {
-  cursor: default;
-}
 
-/* One-line prompt shown only while picking grid panes. */
-.grid-hint {
-  display: none;
-  margin: 2px 2px 8px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--muted-2);
-}
-body.grid-mode .grid-hint {
-  display: block;
-}
-
-/* The tiles in on-screen order, dragged to move a pane. A row of chips rather than a second
-   list of names: it sits directly above the arrangement picker, and together they read as
-   "which tile goes where" and "how the tiles are laid out". */
-.grid-panes {
-  display: flex;
-  gap: 4px;
-  margin: 0 2px 8px;
-  padding: 0;
-  list-style: none;
-}
-.grid-panes[hidden] {
-  display: none;
-}
-.grid-pane {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--elevated);
-  cursor: grab;
-  transition: background 0.14s ease, border-color 0.14s ease;
-}
-.grid-pane:hover {
-  background: var(--elevated-2);
-  border-color: var(--accent-dim);
-}
-.grid-pane:active {
-  cursor: grabbing;
-}
-.grid-pane.dragging {
-  opacity: 0.45;
-  border-color: var(--accent-dim);
-}
-.grid-pane-num {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-/* The same coloured initial the service row uses, so a chip is identifiable at a glance without
-   room for the name. */
-.grid-pane-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  color: #08252f;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 16px;
-  text-align: center;
-}
-
-/* Pane arrangement picker, shown with the hint while grid mode is on. A segmented row rather
-   than a cycling button, so which arrangements exist — and which is in use — is visible. */
-.grid-layout {
-  display: none;
-  gap: 4px;
-  margin: 0 2px 10px;
-}
-body.grid-mode .grid-layout {
-  display: flex;
-}
-.grid-layout button {
-  flex: 1;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--elevated);
-  color: var(--muted-2);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
-}
-.grid-layout button:hover:not(:disabled) {
-  background: var(--elevated-2);
-  color: var(--text);
-}
-.grid-layout button.active {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-soft);
-}
-/* One pane has no arrangement to speak of; dim the row rather than removing it, so the sidebar
-   does not reflow every time a pane is added or closed. */
-.grid-layout button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-/* ---- Collapsed sidebar (icon rail) ---- */
-body.collapsed {
-  --sidebar-width: 56px;
-}
-body.collapsed #sidebar {
-  padding: 14px 8px;
-}
-body.collapsed .brand {
-  justify-content: center;
-  padding: 4px 0 14px;
-}
-body.collapsed .brand-text,
-body.collapsed .service .label {
-  display: none;
-}
-body.collapsed .service {
-  justify-content: center;
-  padding: 7px 0;
-  gap: 0;
-}
-body.collapsed .service.active::before {
-  left: -8px;
-}
-body.collapsed .toolbar {
-  flex-direction: column;
-}
-/* The blocked count is dropped with the label: in the rail there is no name beside it to
-   say what the number counts, so it reads as a stray digit crammed against the icon. */
-body.collapsed .service .del,
-body.collapsed .service .shield,
-body.collapsed .service .grid-num,
-body.collapsed .grid-hint,
-/* The picker is a labelled row of three; it has no sensible form in a 56px rail. Nor does the
-   pane strip, which needs room for four chips side by side. */
-body.collapsed .grid-layout,
-body.collapsed .grid-panes,
-body.collapsed .list-actions {
-  display: none;
-}
-
-/* ---- Settings window ---- */
-/* Settings get their own window rather than a panel in the main one: the sidebar is 220px
-   wide and the active service's view covers everything to its right, so there is nowhere in
-   the main window to put a panel that isn't the sidebar itself. */
-body.settings-window {
-  padding: 18px;
+/* ---- Secondary windows (settings, removed services) ---- */
+/* These get windows of their own rather than panels in the main one: the sidebar is 220px wide
+   and the active service's view covers everything to its right, so there is nowhere in the main
+   window to put a panel that isn't the sidebar itself. */
+body.settings-window,
+body.removed-window {
+  padding: 22px 20px;
   overflow-y: auto;
-  background: linear-gradient(180deg, #121519 0%, var(--bg) 100%);
+  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 40%);
 }
-.settings-header h1 {
-  font-size: 15px;
-  font-weight: 700;
+
+.settings-header h1,
+.removed-header h1 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
-.settings-header p {
+.settings-header p,
+.removed-header p {
   font-size: 12px;
-  color: var(--muted);
-  margin: 5px 0 18px;
+  color: var(--dim);
+  margin: 7px 0 20px;
 }
+
 .settings-section {
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 .settings-section h2 {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted-2);
-  letter-spacing: 0.04em;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--dim-2);
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  margin-bottom: 9px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line-soft);
 }
 .section-note {
-  margin-top: 8px;
-  padding: 0 2px;
+  margin-top: 9px;
   font-size: 11px;
-  line-height: 1.45;
-  color: var(--muted-2);
+  line-height: 1.5;
+  color: var(--dim-2);
 }
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.setting:hover {
+  background: var(--surface-2);
+}
+.setting:focus-within {
+  border-color: var(--bulb-edge);
+}
+
+/* The checkbox is a small lamp: dark when off, lit when on. */
+.setting input[type="checkbox"] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid #39404e;
+  border-radius: 4px;
+  background: var(--ink);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.setting input[type="checkbox"]:checked {
+  background: var(--bulb);
+  border-color: var(--bulb);
+  box-shadow: 0 0 8px rgba(217, 193, 136, 0.3);
+}
+.setting input[type="checkbox"]:checked::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid var(--ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.setting input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.setting-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+}
+.setting-sub {
+  font-size: 11.5px;
+  color: var(--dim-2);
+  line-height: 1.4;
+}
+.setting-sub.error {
+  color: var(--exit);
+}
+
+/* Filter-list age and manual update, under the ad blocker toggle. */
+.setting-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 0 36px; /* line up under the toggle's label, not the toggle */
+}
+#filter-age {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim-2);
+  white-space: nowrap; /* "Updated today" must not wrap beside the button */
+}
+#btn-refresh-filters {
+  background: transparent;
+  color: var(--dim-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+#btn-refresh-filters:hover:not(:disabled) {
+  color: var(--bulb);
+  border-color: var(--bulb-edge);
+  background: var(--bulb-wash);
+}
+#btn-refresh-filters:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* The update row is a .setting without a checkbox: the same card, with the button where the
    toggle would be. */
 .update-row {
@@ -876,44 +1120,37 @@ body.settings-window {
   gap: 12px;
   cursor: default;
 }
+.update-row:hover {
+  background: var(--surface);
+}
 .settings-window #btn-update {
   flex-shrink: 0;
 }
 
-/* ---- Removed-services window ---- */
-body.removed-window {
-  padding: 18px;
-  overflow-y: auto;
-  background: linear-gradient(180deg, #121519 0%, var(--bg) 100%);
-}
-.removed-header h1 {
-  font-size: 15px;
-  font-weight: 700;
-}
-.removed-header p {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 5px 0 16px;
-}
+/* ---- Removed services ---- */
 .removed-window .service.restorable {
-  border: 1px solid var(--border-soft);
-  background: linear-gradient(180deg, #171b21 0%, #12151a 100%);
-  margin-bottom: 7px;
-  transition: border-color 0.14s ease, background 0.14s ease;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  transition: background 0.16s ease;
 }
 .removed-window .service.restorable:hover {
-  border-color: var(--accent-dim);
+  background: var(--surface-2);
   color: var(--text);
 }
 .removed-window .service .restore-plus {
   flex-shrink: 0;
-  font-size: 19px;
-  color: var(--accent);
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--dim-2);
+  transition: color 0.16s ease;
+}
+.removed-window .service.restorable:hover .restore-plus {
+  color: var(--bulb);
 }
 .empty {
-  color: var(--muted-2);
-  font-size: 13px;
+  color: var(--dim-2);
+  font-size: 12.5px;
   text-align: center;
-  margin-top: 44px;
+  margin-top: 48px;
 }

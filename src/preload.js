@@ -35,9 +35,14 @@ contextBridge.exposeInMainWorld('shell', {
   // Per-site cosmetic enhancements (see enhance.js), one key at a time.
   setEnhance: (key, on) => ipcRenderer.invoke('set-enhance', key, on),
   setTray: (on) => ipcRenderer.invoke('set-tray', on),
+  // Whether the sidebar fades down while something is playing.
+  setDimWhilePlaying: (on) => ipcRenderer.invoke('set-dim-while-playing', on),
   // Running count of blocked requests, pushed every couple of seconds while blocking is on.
   onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),
   // Download percentage while an update is being fetched; null when it finishes or fails.
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
+  // Whether anything is playing. Its own channel rather than the state payload, so the sidebar
+  // can dim and lift without re-rendering the service list mid-drag.
+  onPlayback: (cb) => ipcRenderer.on('playback', (_e, playing) => cb(playing)),
   onState: (cb) => ipcRenderer.on('state', (_e, state) => cb(state)),
 });

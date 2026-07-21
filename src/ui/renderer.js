@@ -7,8 +7,10 @@ const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
 const gridBtn = document.getElementById('btn-grid');
+const gridPanelEl = document.getElementById('grid-panel');
 const gridLayoutEl = document.getElementById('grid-layout');
-const gridPanesEl = document.getElementById('grid-panes');
+const gridPreviewEl = document.getElementById('grid-preview');
+const onairEl = document.getElementById('onair');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
@@ -23,6 +25,10 @@ let state = {
   gridPanes: [],
 };
 let menuServiceId = null; // the service the context menu is currently open for
+// Whether a service is playing right now. It arrives on its own channel rather than in the state
+// payload (see 'playback' in main.js) so that starting or stopping a video does not re-render the
+// service list — which would cancel an in-progress drag.
+let playing = false;
 
 // The grid panes showing this service, as {paneId, position} — position being the pane's 1-based
 // place in the whole grid, which is what the on-screen tiling order is. A service can hold more
@@ -166,80 +172,133 @@ listEl.addEventListener('dragover', (e) => {
   else listEl.insertBefore(dragging, after);
 });
 
-// ---- Grid pane strip (drag a tile to move it) ----
+// ---- Grid preview (the panes as they are actually tiled) ----
 //
-// The tiles in the order they are laid out on screen. This is the only place that order can be
-// edited: the numbered badges on the service rows say where a pane is and close it, but a service
-// holding two panes has no way to say "swap those two" from its own row.
+// The panes drawn in the arrangement they really have on screen — the CSS mirrors gridRects() in
+// views.js, so what this shows is what the window looks like. A flat strip of chips could say
+// which pane came first but never what the screen would look like; this says both.
 //
-// Dragging moves the *pane*, which keeps its own view, so the page a tile is showing travels with
-// it — nothing reloads and nothing playing is interrupted.
-function renderGridPanes() {
+// It is also the only place the tiling order can be edited: the numbered badges on the service
+// rows say where a pane is and close it, but a service holding two panes has no way to say "swap
+// those two" from its own row. Dragging moves the *pane*, which keeps its own view, so the page a
+// tile is showing travels with it — nothing reloads and nothing playing is interrupted.
+function renderGridPreview() {
   const panes = state.gridPanes || [];
-  // With one pane there is no order to arrange. Hidden rather than disabled, unlike the layout
-  // picker, because an empty strip is not self-explanatory the way three greyed buttons are.
-  gridPanesEl.hidden = !state.gridMode || panes.length < 2;
-  gridPanesEl.replaceChildren();
-  if (gridPanesEl.hidden) return;
+  gridPanelEl.hidden = !state.gridMode;
+  if (gridPanelEl.hidden) return;
+
+  gridPreviewEl.dataset.layout = state.gridLayout || 'auto';
+  gridPreviewEl.replaceChildren();
 
   panes.forEach((pane, i) => {
     const svc = state.services.find((s) => s.id === pane.serviceId);
     if (!svc) return; // a pane whose service has gone; the main process drops it on next reconcile
-    const li = document.createElement('li');
-    li.className = 'grid-pane';
-    li.dataset.paneId = pane.paneId;
-    li.draggable = true;
-    li.title = `Pane ${i + 1}: ${svc.name} — drag to move it`;
-
-    const dot = document.createElement('span');
-    dot.className = 'grid-pane-dot';
-    dot.style.background = svc.color;
-    dot.textContent = initial(svc.name);
+    const tile = document.createElement('div');
+    tile.className = 'pane-tile';
+    tile.dataset.paneId = pane.paneId;
+    tile.draggable = true;
+    tile.title = `Pane ${i + 1}: ${svc.name} — drag to move it`;
 
     const num = document.createElement('span');
-    num.className = 'grid-pane-num';
+    num.className = 'pane-tile-num';
     num.textContent = String(i + 1);
 
-    li.append(num, dot);
-    li.addEventListener('dragstart', () => {
-      // Defer so the class lands after the drag image is captured.
-      requestAnimationFrame(() => li.classList.add('dragging'));
+    const mark = document.createElement('span');
+    mark.className = 'pane-tile-mark';
+    mark.style.background = svc.color;
+    mark.textContent = initial(svc.name);
+
+    // The last pane cannot be closed — an empty grid would show nothing, and the grid toggle is
+    // the way out of the mode. Drop the button rather than offering a dead one.
+    const close = document.createElement('button');
+    close.className = 'pane-close';
+    close.textContent = '×';
+    close.title = `Close pane ${i + 1} (${svc.name})`;
+    close.hidden = panes.length < 2;
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.shell.removeGridPane(pane.paneId);
     });
-    li.addEventListener('dragend', () => {
-      li.classList.remove('dragging');
-      const ids = Array.from(gridPanesEl.children).map((c) => c.dataset.paneId);
+
+    tile.append(num, mark, close);
+    tile.addEventListener('dragstart', () => {
+      // Defer so the class lands after the drag image is captured.
+      requestAnimationFrame(() => tile.classList.add('dragging'));
+    });
+    tile.addEventListener('dragend', () => {
+      tile.classList.remove('dragging');
+      // Commit whatever order the DOM ended up in.
+      const ids = Array.from(gridPreviewEl.children).map((c) => c.dataset.paneId);
       window.shell.reorderGridPanes(ids);
     });
-    gridPanesEl.appendChild(li);
+    gridPreviewEl.appendChild(tile);
   });
+
+  // The arrangement is drawn from this and the layout above, so the preview re-tiles itself the
+  // moment either changes. Taken from what actually rendered rather than from the pane count: a
+  // pane whose service has gone is skipped, and a template expecting a tile that is not there
+  // would lay out around a hole.
+  gridPreviewEl.dataset.count = String(gridPreviewEl.children.length);
 }
 
-// During a drag, the chip the pointer is currently left of. The strip is a row, so this splits on
-// x where the service list splits on y.
-function afterPane(x) {
-  const items = Array.from(gridPanesEl.querySelectorAll('.grid-pane:not(.dragging)'));
-  let closest = { offset: -Infinity, el: null };
-  for (const el of items) {
+// The tiles in reading order, grouped into rows by their top edge. The preview is a real two-
+// dimensional arrangement, so finding an insertion point needs both axes — unlike the service
+// list, which is a single column and splits on y alone.
+function tileRows() {
+  const rows = [];
+  for (const el of gridPreviewEl.querySelectorAll('.pane-tile:not(.dragging)')) {
     const box = el.getBoundingClientRect();
-    const offset = x - box.left - box.width / 2;
-    if (offset < 0 && offset > closest.offset) closest = { offset, el };
+    const row = rows.find((r) => Math.abs(r.top - box.top) < 4);
+    if (row) row.items.push({ el, box });
+    else rows.push({ top: box.top, items: [{ el, box }] });
   }
-  return closest.el;
+  return rows;
 }
 
-gridPanesEl.addEventListener('dragover', (e) => {
+// During a drag, the tile the dragged one should be inserted before (null = put it last).
+function afterTile(x, y) {
+  const rows = tileRows();
+  if (!rows.length) return null;
+  // Which axis decides "before" has to come from the arrangement, not from the tiles left on
+  // screen: dragging one of two side-by-side tiles leaves a single tile behind, which looks
+  // exactly like a one-tall stack and would then be split on the wrong axis. Only 'rows' stacks
+  // vertically — 'columns' is always a strip, and 'auto' is two columns or a block.
+  if ((state.gridLayout || 'auto') === 'rows') {
+    for (const { items } of rows) {
+      const { el, box } = items[0];
+      if (y < box.top + box.height / 2) return el;
+    }
+    return null;
+  }
+  for (let i = 0; i < rows.length; i += 1) {
+    const { items } = rows[i];
+    if (y > items[items.length - 1].box.bottom) continue; // the pointer is below this row entirely
+    for (const { el, box } of items) {
+      if (x < box.left + box.width / 2) return el;
+    }
+    // Past the last tile in this row: the next row's first tile is the insertion point.
+    const next = rows[i + 1];
+    return next ? next.items[0].el : null;
+  }
+  return null;
+}
+
+gridPreviewEl.addEventListener('dragover', (e) => {
   e.preventDefault();
-  const dragging = gridPanesEl.querySelector('.dragging');
+  const dragging = gridPreviewEl.querySelector('.dragging');
   if (!dragging) return;
-  const after = afterPane(e.clientX);
-  if (after == null) gridPanesEl.appendChild(dragging);
-  else gridPanesEl.insertBefore(dragging, after);
+  const after = afterTile(e.clientX, e.clientY);
+  if (after == null) gridPreviewEl.appendChild(dragging);
+  else gridPreviewEl.insertBefore(dragging, after);
 });
 
 // ---- Per-service context menu (right-click a row) ----
 function closeServiceMenu() {
   menuEl.hidden = true;
   menuServiceId = null;
+  // The menu sits outside the sidebar, so while it is open the pointer is not hovering the
+  // sidebar and the house lights would go down under it. See .menu-open in styles.css.
+  document.body.classList.remove('menu-open');
 }
 
 function openServiceMenu(svc, x, y) {
@@ -255,6 +314,7 @@ function openServiceMenu(svc, x, y) {
   menuAdblockEl.title = globallyOn ? '' : 'Turn the ad blocker on first';
 
   menuEl.hidden = false;
+  document.body.classList.add('menu-open');
   // Keep the menu on screen when the row is near the bottom edge.
   const { width, height } = menuEl.getBoundingClientRect();
   menuEl.style.left = `${Math.min(x, window.innerWidth - width - 6)}px`;
@@ -323,8 +383,8 @@ function renderGridToggle() {
   const full = on && Boolean(state.gridFull);
   document.body.classList.toggle('grid-full', full);
   document.getElementById('grid-hint').textContent = full
-    ? 'Grid is full (4 panes). Click a number to close one.'
-    : 'Click a service to add a pane — the same one twice for two of it. Click a number to close.';
+    ? 'All four panes are in use. Close one to add another.'
+    : 'Click a service to add a pane. Drag a tile to move it.';
 
   // Mark the arrangement in use. With a single pane there is nothing to arrange, so the choice
   // is disabled rather than hidden — it keeps the sidebar from reflowing as panes come and go.
@@ -338,6 +398,18 @@ function renderGridToggle() {
   gridLayoutEl.title = only ? 'Add a second pane to choose an arrangement' : '';
 }
 
+// The house lights. While something is playing the chrome is not what anyone is looking at, so it
+// goes down to almost nothing and comes back the moment it is reached for (styles.css does the
+// reaching, via :hover and :focus-within). Only the on-air bulb stays lit — which is what keeps a
+// dark sidebar readable as "playing" rather than "broken".
+//
+// Nothing here resizes anything: the service views keep the bounds they had, so the page being
+// watched never reflows. It is opacity and nothing else.
+function renderLights() {
+  onairEl.hidden = !playing;
+  document.body.classList.toggle('lights-down', playing && state.dimWhilePlaying !== false);
+}
+
 function applyState(next) {
   state = next;
   renderServices();
@@ -345,12 +417,16 @@ function applyState(next) {
   setCollapsed(state.sidebarCollapsed);
   renderUpdateBadge();
   renderGridToggle();
-  renderGridPanes();
+  renderGridPreview();
+  renderLights();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
 async function init() {
-  applyState(await window.shell.getConfig());
+  // Not `initial` — that name is already the icon-letter helper above.
+  const boot = await window.shell.getConfig();
+  playing = Boolean(boot.playing);
+  applyState(boot);
 
   // Reopen whatever was being watched last, so the app comes back where it was left rather
   // than always on the first service. Falls back to the first if that service is gone. Skipped
@@ -376,6 +452,13 @@ async function init() {
   document
     .getElementById('btn-fullscreen')
     .addEventListener('click', () => window.shell.toggleFullscreen());
+
+  // Playback rides its own channel rather than the state payload, so the sidebar can dim and lift
+  // without re-rendering the service list under an in-progress drag.
+  window.shell.onPlayback((on) => {
+    playing = on;
+    renderLights();
+  });
 
   window.shell.onState((next) => applyState(next));
 }

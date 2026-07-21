@@ -16,22 +16,34 @@
           <span class="bars"></span>
         </button>
         <span class="brand-text">StreamHub</span>
+        <!-- Lit while something is playing. When the house lights go down (see .lights-down in
+             styles.css) this is the only thing left on, so a dark sidebar reads as "playing"
+             rather than "stopped working". -->
+        <span id="onair" class="onair" title="Playing" hidden></span>
       </div>
 
       <ul id="service-list" class="services"></ul>
 
-      <p id="grid-hint" class="grid-hint">Click a service to add a pane — the same one twice for two of it. Click a number to close.</p>
+      <!-- Grid controls: the panes as they are actually tiled, how they are arranged, and a line
+           saying how to work them. Shown only in grid mode. -->
+      <section id="grid-panel" class="grid-panel" hidden>
+        <div
+          id="grid-preview"
+          class="grid-preview"
+          role="group"
+          aria-label="Panes — drag a tile to move it"
+        ></div>
 
-      <!-- The tiles in their on-screen order, draggable to move a pane. Shown only once there
-           are two of them to put in an order. -->
-      <ol id="grid-panes" class="grid-panes" aria-label="Grid panes — drag to move" hidden></ol>
+        <div id="grid-layout" class="grid-layout" role="group" aria-label="Pane arrangement">
+          <button data-layout="auto" title="Packed — fill the space evenly">▦</button>
+          <button data-layout="rows" title="Stacked — one above another">▤</button>
+          <button data-layout="columns" title="Side by side — one next to another">▥</button>
+        </div>
 
-      <!-- How the panes are arranged. Shown only in grid mode, alongside the hint above. -->
-      <div id="grid-layout" class="grid-layout" role="group" aria-label="Grid layout">
-        <button data-layout="auto" title="Packed — fill the space evenly">▦</button>
-        <button data-layout="rows" title="Stacked — one above another">▤</button>
-        <button data-layout="columns" title="Side by side — one next to another">▥</button>
-      </div>
+        <p id="grid-hint" class="grid-hint">
+          Click a service to add a pane. Drag a tile to move it.
+        </p>
+      </section>
 
       <div class="list-actions">
         <button id="btn-removed" title="Show removed services">Removed <span id="removed-count">0</span></button>

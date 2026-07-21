@@ -8,6 +8,7 @@ const adblockExtraEl = document.getElementById('adblock-extra');
 const filterAgeEl = document.getElementById('filter-age');
 const refreshBtn = document.getElementById('btn-refresh-filters');
 const theaterEl = document.getElementById('chk-theater');
+const dimEl = document.getElementById('chk-dim');
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -67,6 +68,7 @@ function applyState(next) {
   state = next;
   renderAdblock(state.adblock);
   theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
+  dimEl.checked = state.dimWhilePlaying !== false;
   trayEl.checked = state.minimizeToTray === true;
   renderUpdate();
 }
@@ -109,6 +111,9 @@ async function init() {
   // Applied in place by the service preload, so there is nothing to wait for and no reload to
   // sit through — unlike the ad blocker above.
   theaterEl.addEventListener('change', () => window.shell.setEnhance('theater', theaterEl.checked));
+
+  // Applied by the sidebar the moment the state broadcast lands, so there is nothing to wait for.
+  dimEl.addEventListener('change', () => window.shell.setDimWhilePlaying(dimEl.checked));
 
   trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
 
