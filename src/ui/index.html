@@ -22,6 +22,10 @@
 
       <p id="grid-hint" class="grid-hint">Click a service to add a pane — the same one twice for two of it. Click a number to close.</p>
 
+      <!-- The tiles in their on-screen order, draggable to move a pane. Shown only once there
+           are two of them to put in an order. -->
+      <ol id="grid-panes" class="grid-panes" aria-label="Grid panes — drag to move" hidden></ol>
+
       <!-- How the panes are arranged. Shown only in grid mode, alongside the hint above. -->
       <div id="grid-layout" class="grid-layout" role="group" aria-label="Grid layout">
         <button data-layout="auto" title="Packed — fill the space evenly">▦</button>

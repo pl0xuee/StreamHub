@@ -543,6 +543,30 @@ ipcMain.on('set-grid-layout', (_e, layout) => {
   broadcast();
 });
 
+// Move panes around the grid. The sidebar sends the pane ids in their new tiling order after a
+// drag. Reordering panes rather than services is what makes a tile carry its page with it: each
+// pane keeps its own view, so nothing reloads and nothing playing is interrupted — only the
+// bounds each view is given change, exactly as with the layout picker.
+ipcMain.on('reorder-grid-panes', (_e, orderedIds) => {
+  if (!gridMode || !Array.isArray(orderedIds)) return;
+  const byId = new Map(gridPanes.map((p) => [p.paneId, p]));
+  const next = [];
+  for (const id of orderedIds) {
+    const pane = byId.get(id);
+    if (!pane) continue; // unknown or already taken — a stale id, or the same one listed twice
+    next.push(pane);
+    byId.delete(id);
+  }
+  // Anything the sidebar did not name — a pane that appeared between the drag starting and
+  // ending — keeps its place at the end rather than being dropped on the floor.
+  for (const pane of byId.values()) next.push(pane);
+  if (next.every((p, i) => p === gridPanes[i])) return; // a drag that put everything back
+  gridPanes = next;
+  viewManager.showGrid(reconcileGrid());
+  persist();
+  broadcast();
+});
+
 ipcMain.on('remove-grid-pane', (_e, paneId) => {
   if (!gridMode || gridPanes.length <= 1) return;
   const i = gridPanes.findIndex((p) => p.paneId === paneId);

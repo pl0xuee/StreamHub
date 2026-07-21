@@ -696,6 +696,62 @@ body.grid-mode .grid-hint {
   display: block;
 }
 
+/* The tiles in on-screen order, dragged to move a pane. A row of chips rather than a second
+   list of names: it sits directly above the arrangement picker, and together they read as
+   "which tile goes where" and "how the tiles are laid out". */
+.grid-panes {
+  display: flex;
+  gap: 4px;
+  margin: 0 2px 8px;
+  padding: 0;
+  list-style: none;
+}
+.grid-panes[hidden] {
+  display: none;
+}
+.grid-pane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--elevated);
+  cursor: grab;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.grid-pane:hover {
+  background: var(--elevated-2);
+  border-color: var(--accent-dim);
+}
+.grid-pane:active {
+  cursor: grabbing;
+}
+.grid-pane.dragging {
+  opacity: 0.45;
+  border-color: var(--accent-dim);
+}
+.grid-pane-num {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The same coloured initial the service row uses, so a chip is identifiable at a glance without
+   room for the name. */
+.grid-pane-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: #08252f;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
 /* Pane arrangement picker, shown with the hint while grid mode is on. A segmented row rather
    than a cycling button, so which arrangements exist — and which is in use — is visible. */
 .grid-layout {
@@ -766,8 +822,10 @@ body.collapsed .service .del,
 body.collapsed .service .shield,
 body.collapsed .service .grid-num,
 body.collapsed .grid-hint,
-/* The picker is a labelled row of three; it has no sensible form in a 56px rail. */
+/* The picker is a labelled row of three; it has no sensible form in a 56px rail. Nor does the
+   pane strip, which needs room for four chips side by side. */
 body.collapsed .grid-layout,
+body.collapsed .grid-panes,
 body.collapsed .list-actions {
   display: none;
 }

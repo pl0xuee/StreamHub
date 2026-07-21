@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('shell', {
   toggleGrid: () => ipcRenderer.send('toggle-grid'),
   addGridPane: (serviceId) => ipcRenderer.send('add-grid-pane', serviceId),
   removeGridPane: (paneId) => ipcRenderer.send('remove-grid-pane', paneId),
+  // Move panes around the grid: the pane ids in their new tiling order.
+  reorderGridPanes: (paneIds) => ipcRenderer.send('reorder-grid-panes', paneIds),
   // How the panes are arranged: 'auto' (packed), 'rows' (stacked) or 'columns' (side by side).
   setGridLayout: (layout) => ipcRenderer.send('set-grid-layout', layout),
   // Service-list management (drag reorder, remove, restore).

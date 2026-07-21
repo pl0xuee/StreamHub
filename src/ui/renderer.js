@@ -8,6 +8,7 @@ const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
 const gridBtn = document.getElementById('btn-grid');
 const gridLayoutEl = document.getElementById('grid-layout');
+const gridPanesEl = document.getElementById('grid-panes');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
@@ -165,6 +166,76 @@ listEl.addEventListener('dragover', (e) => {
   else listEl.insertBefore(dragging, after);
 });
 
+// ---- Grid pane strip (drag a tile to move it) ----
+//
+// The tiles in the order they are laid out on screen. This is the only place that order can be
+// edited: the numbered badges on the service rows say where a pane is and close it, but a service
+// holding two panes has no way to say "swap those two" from its own row.
+//
+// Dragging moves the *pane*, which keeps its own view, so the page a tile is showing travels with
+// it — nothing reloads and nothing playing is interrupted.
+function renderGridPanes() {
+  const panes = state.gridPanes || [];
+  // With one pane there is no order to arrange. Hidden rather than disabled, unlike the layout
+  // picker, because an empty strip is not self-explanatory the way three greyed buttons are.
+  gridPanesEl.hidden = !state.gridMode || panes.length < 2;
+  gridPanesEl.replaceChildren();
+  if (gridPanesEl.hidden) return;
+
+  panes.forEach((pane, i) => {
+    const svc = state.services.find((s) => s.id === pane.serviceId);
+    if (!svc) return; // a pane whose service has gone; the main process drops it on next reconcile
+    const li = document.createElement('li');
+    li.className = 'grid-pane';
+    li.dataset.paneId = pane.paneId;
+    li.draggable = true;
+    li.title = `Pane ${i + 1}: ${svc.name} — drag to move it`;
+
+    const dot = document.createElement('span');
+    dot.className = 'grid-pane-dot';
+    dot.style.background = svc.color;
+    dot.textContent = initial(svc.name);
+
+    const num = document.createElement('span');
+    num.className = 'grid-pane-num';
+    num.textContent = String(i + 1);
+
+    li.append(num, dot);
+    li.addEventListener('dragstart', () => {
+      // Defer so the class lands after the drag image is captured.
+      requestAnimationFrame(() => li.classList.add('dragging'));
+    });
+    li.addEventListener('dragend', () => {
+      li.classList.remove('dragging');
+      const ids = Array.from(gridPanesEl.children).map((c) => c.dataset.paneId);
+      window.shell.reorderGridPanes(ids);
+    });
+    gridPanesEl.appendChild(li);
+  });
+}
+
+// During a drag, the chip the pointer is currently left of. The strip is a row, so this splits on
+// x where the service list splits on y.
+function afterPane(x) {
+  const items = Array.from(gridPanesEl.querySelectorAll('.grid-pane:not(.dragging)'));
+  let closest = { offset: -Infinity, el: null };
+  for (const el of items) {
+    const box = el.getBoundingClientRect();
+    const offset = x - box.left - box.width / 2;
+    if (offset < 0 && offset > closest.offset) closest = { offset, el };
+  }
+  return closest.el;
+}
+
+gridPanesEl.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  const dragging = gridPanesEl.querySelector('.dragging');
+  if (!dragging) return;
+  const after = afterPane(e.clientX);
+  if (after == null) gridPanesEl.appendChild(dragging);
+  else gridPanesEl.insertBefore(dragging, after);
+});
+
 // ---- Per-service context menu (right-click a row) ----
 function closeServiceMenu() {
   menuEl.hidden = true;
@@ -274,6 +345,7 @@ function applyState(next) {
   setCollapsed(state.sidebarCollapsed);
   renderUpdateBadge();
   renderGridToggle();
+  renderGridPanes();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
 }
 
