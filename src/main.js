@@ -21,6 +21,7 @@ const { autoUpdater } = require('electron-updater');
 const configStore = require('./config');
 const { ViewManager, GRID_LAYOUTS } = require('./views');
 const { adblocker } = require('./adblock');
+const { cleanEnhance } = require('./enhance');
 const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 
@@ -194,6 +195,7 @@ function statePayload() {
     updateAvailable: pendingUpdate,
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
+    enhance: cleanEnhance(config.settings.enhance),
     gridMode,
     gridPanes,
     gridLayout,
@@ -687,6 +689,16 @@ ipcMain.handle('set-tray', (_e, on) => {
   return config.settings.minimizeToTray;
 });
 
+ipcMain.handle('set-enhance', (_e, key, on) => {
+  // Round-trip through cleanEnhance so an unknown key from the UI cannot write itself into the
+  // saved settings, and the stored object always has exactly the keys this build knows about.
+  config.settings.enhance = cleanEnhance({ ...config.settings.enhance, [key]: on === true });
+  persist();
+  viewManager.setEnhance(config.settings.enhance);
+  broadcast();
+  return config.settings.enhance;
+});
+
 ipcMain.on('toggle-fullscreen', () => {
   baseWindow.setFullScreen(!baseWindow.isFullScreen());
 });
@@ -1003,6 +1015,9 @@ app.whenReady().then(async () => {
 
   buildAppMenu();
   createWindow();
+  // The view manager is built by createWindow, so its copy of the enhancement settings is seeded
+  // here rather than at load. Injection happens per document load, which is still ahead.
+  viewManager.setEnhance(cleanEnhance(config.settings.enhance));
   applyTraySetting();
 
   // System media controls. Electron gives us none on Linux, so serve MPRIS ourselves — the

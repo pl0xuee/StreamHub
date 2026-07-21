@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('shell', {
   // Wipes one service's cookies/storage/cache. Confirmed in the main process first.
   clearServiceData: (id) => ipcRenderer.invoke('clear-service-data', id),
   refreshFilters: () => ipcRenderer.invoke('refresh-filters'),
+  // Per-site cosmetic enhancements (see enhance.js), one key at a time.
+  setEnhance: (key, on) => ipcRenderer.invoke('set-enhance', key, on),
   setTray: (on) => ipcRenderer.invoke('set-tray', on),
   // Running count of blocked requests, pushed every couple of seconds while blocking is on.
   onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),

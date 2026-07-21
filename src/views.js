@@ -11,6 +11,8 @@ const {
   identityArg,
 } = require('./services');
 const { adblocker } = require('./adblock');
+const { isYouTubeHost } = require('./enhance');
+const { controllerJs } = require('./enhance-youtube');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
 // presents. Only headers Chromium already decided to send are overwritten — adding ones
@@ -215,7 +217,31 @@ class ViewManager {
     this.videoFullscreen = false;
     this.bounds = { width: 0, height: 0 };
     this.playing = new Set(); // views with media playing, for the screen-sleep inhibitor
+    this.enhance = {}; // per-site cosmetic tweaks, from the user's settings (see enhance.js)
     this.onPlaybackChange = () => {}; // set by main.js
+  }
+
+  // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
+  // controller is how it is reconfigured, so this is safe to call on every document load and on
+  // every settings change alike — see enhance-youtube.js.
+  applyEnhancements(view) {
+    const wc = view && view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    let host = '';
+    try {
+      host = new URL(wc.getURL()).hostname;
+    } catch {
+      return; // about:blank and the like, before the first real navigation
+    }
+    if (!isYouTubeHost(host)) return;
+    wc.executeJavaScript(controllerJs(this.enhance)).catch(() => {});
+  }
+
+  // The user changed the enhancement settings. The controller applies and unapplies them in
+  // place, so nothing is reloaded — ticking a box mid-video is not a reason to interrupt it.
+  setEnhance(settings) {
+    this.enhance = settings || {};
+    for (const view of this.views.values()) this.applyEnhancements(view);
   }
 
   // Track which views are playing and tell main.js when that set becomes empty or non-empty,
@@ -318,6 +344,10 @@ class ViewManager {
       if (!this.visible.has(view)) this.enforcePaused(view);
     });
     wc.on('media-paused', () => this.onMediaChange(view, false));
+
+    // Per document load, since the injected controller lives in the page and goes with it. It
+    // survives the site's own in-page navigations, which is what YouTube does between videos.
+    wc.on('dom-ready', () => this.applyEnhancements(view));
 
     view.setVisible(false);
     this.win.contentView.addChildView(view);

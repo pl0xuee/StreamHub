@@ -7,6 +7,7 @@ const adblockSubEl = document.getElementById('adblock-sub');
 const adblockExtraEl = document.getElementById('adblock-extra');
 const filterAgeEl = document.getElementById('filter-age');
 const refreshBtn = document.getElementById('btn-refresh-filters');
+const theaterEl = document.getElementById('chk-theater');
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -65,6 +66,7 @@ function renderUpdate() {
 function applyState(next) {
   state = next;
   renderAdblock(state.adblock);
+  theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
   trayEl.checked = state.minimizeToTray === true;
   renderUpdate();
 }
@@ -103,6 +105,10 @@ async function init() {
       refreshBtn.textContent = label;
     }
   });
+
+  // Applied in place by the service preload, so there is nothing to wait for and no reload to
+  // sit through — unlike the ad blocker above.
+  theaterEl.addEventListener('change', () => window.shell.setEnhance('theater', theaterEl.checked));
 
   trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
 

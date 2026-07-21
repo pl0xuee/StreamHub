@@ -41,9 +41,13 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   Google/Apple") works. Right-click a service to sign out and wipe its data.
 - **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen drive playback.
   Media keys work while the app is focused.
+- **Full-window theater mode on YouTube** — the player fills the window and the top bar hides
+  until you reach for it. Scroll down as usual for the description and comments. On by default;
+  the switch is in Settings.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
-- **Settings** (sidebar gear, or `Ctrl+,`) — ad blocker, tray behaviour, updates.
+- **Settings** (sidebar gear, or `Ctrl+,`) — ad blocker, YouTube theater mode, tray behaviour,
+  updates.
 - **Optional tray icon** — closing the window keeps a stream running.
 
 ## Updating

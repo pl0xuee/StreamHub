@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const { DEFAULT_SERVICES } = require('./services');
+const { defaultEnhance, cleanEnhance } = require('./enhance');
 
 function configPath() {
   return path.join(app.getPath('userData'), 'services.json');
@@ -24,6 +25,8 @@ function defaultSettings() {
     adblockOff: [],
     sidebarCollapsed: false,
     minimizeToTray: false,
+    // Per-site cosmetic tweaks, each switchable on its own — see enhance.js.
+    enhance: defaultEnhance(),
   };
 }
 
@@ -34,6 +37,7 @@ function cleanSettings(raw) {
     adblockOff: Array.isArray(s.adblockOff) ? s.adblockOff.filter((x) => typeof x === 'string') : [],
     sidebarCollapsed: s.sidebarCollapsed === true,
     minimizeToTray: s.minimizeToTray === true,
+    enhance: cleanEnhance(s.enhance),
   };
 }
 
