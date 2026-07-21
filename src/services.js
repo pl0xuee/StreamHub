@@ -75,8 +75,28 @@ function isGoogleAuthHost(hostname) {
   return GOOGLE_AUTH_HOSTS.has(hostname);
 }
 
+// Everything service-preload.js needs to patch the JS-visible identity, as a command-line
+// argument for it to parse.
+//
+// It is handed over this way rather than imported because service views are sandboxed — worth
+// keeping for sites we do not control — and a sandboxed preload cannot `require` a local module.
+// The constants above stay the single source of truth for the UA string, the Sec-CH-* headers
+// (views.js) and navigator.userAgentData alike, so the three cannot drift apart.
+function identityArg() {
+  return `--streamhub-identity=${JSON.stringify({
+    chromeMajor: CHROME_MAJOR,
+    firefoxUa: FIREFOX_UA,
+    chPlatform: CH_PLATFORM,
+    chPlatformVersion: CH_PLATFORM_VERSION,
+    chArch: CH_ARCH,
+    chBitness: CH_BITNESS,
+    authHosts: Array.from(GOOGLE_AUTH_HOSTS),
+  })}`;
+}
+
 module.exports = {
   DEFAULT_SERVICES,
+  identityArg,
   CHROME_UA,
   CHROME_MAJOR,
   CHROME_BRANDS,

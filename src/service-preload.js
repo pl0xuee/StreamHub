@@ -13,19 +13,24 @@
 // The patch is applied via webFrame.executeJavaScript so it lands in the page's own
 // world (this preload runs in an isolated one) before any page script runs. No app
 // privileges are exposed to the page: nothing is bridged, only navigator is amended.
+//
+// IMPORTANT: service views are sandboxed, which is worth keeping for sites we do not control.
+// A sandboxed preload cannot `require` a local module, so everything this file needs is handed
+// to it by views.js through additionalArguments rather than imported from services.js. Adding a
+// `require('./…')` here would throw before any of the below runs — silently, since the failure
+// is reported to the page's console and not the app's — and the view would go back to
+// advertising itself as Electron.
 const { webFrame } = require('electron');
-const {
-  FIREFOX_UA,
-  CH_PLATFORM,
-  CH_PLATFORM_VERSION,
-  CH_ARCH,
-  CH_BITNESS,
-  isGoogleAuthHost,
-} = require('./services');
 
-const FLAG = '--lvs-chrome-major=';
+const FLAG = '--streamhub-identity=';
 const arg = process.argv.find((a) => a.startsWith(FLAG));
-const major = arg ? arg.slice(FLAG.length) : '';
+
+let identity = null;
+try {
+  identity = arg ? JSON.parse(arg.slice(FLAG.length)) : null;
+} catch {
+  // Malformed payload: leave the identity alone rather than patching in half of one.
+}
 
 let host = '';
 try {
@@ -34,54 +39,59 @@ try {
   // location unavailable this early on some about:/blank docs; treat as non-auth.
 }
 
-if (isGoogleAuthHost(host)) {
-  // Firefox: real UA string, no Client Hints API, empty vendor. Overriding the getters in
-  // the page's own world means Google's "secure browser" check reads Firefox, not Chromium.
-  webFrame.executeJavaScript(`(() => {
-    const def = (name, value) => Object.defineProperty(Navigator.prototype, name, {
-      get: () => value,
-      configurable: true,
-      enumerable: true,
-    });
-    def('userAgent', ${JSON.stringify(FIREFOX_UA)});
-    def('userAgentData', undefined);
-    def('vendor', '');
-  })()`);
-} else if (major) {
-  webFrame.executeJavaScript(`(() => {
-    const brands = [
-      { brand: 'Not;A=Brand', version: '8' },
-      { brand: 'Chromium', version: '${major}' },
-      { brand: 'Google Chrome', version: '${major}' },
-    ];
-    const fullVersion = '${major}.0.0.0';
-    const low = { brands, mobile: false, platform: '${CH_PLATFORM}' };
+if (identity) {
+  const isAuthHost = (identity.authHosts || []).includes(host);
 
-    const high = {
-      architecture: '${CH_ARCH}',
-      bitness: '${CH_BITNESS}',
-      fullVersionList: brands.map((b) => ({ brand: b.brand, version: fullVersion })),
-      model: '',
-      platformVersion: '${CH_PLATFORM_VERSION}',
-      uaFullVersion: fullVersion,
-      ...low,
-    };
+  if (isAuthHost) {
+    // Firefox: real UA string, no Client Hints API, empty vendor. Overriding the getters in
+    // the page's own world means Google's "secure browser" check reads Firefox, not Chromium.
+    webFrame.executeJavaScript(`(() => {
+      const def = (name, value) => Object.defineProperty(Navigator.prototype, name, {
+        get: () => value,
+        configurable: true,
+        enumerable: true,
+      });
+      def('userAgent', ${JSON.stringify(identity.firefoxUa)});
+      def('userAgentData', undefined);
+      def('vendor', '');
+    })()`);
+  } else {
+    webFrame.executeJavaScript(`(() => {
+      const major = ${JSON.stringify(String(identity.chromeMajor))};
+      const brands = [
+        { brand: 'Not;A=Brand', version: '8' },
+        { brand: 'Chromium', version: major },
+        { brand: 'Google Chrome', version: major },
+      ];
+      const fullVersion = major + '.0.0.0';
+      const low = { brands, mobile: false, platform: ${JSON.stringify(identity.chPlatform)} };
 
-    const data = {
-      ...low,
-      toJSON: () => ({ ...low }),
-      getHighEntropyValues: (hints) => Promise.resolve(
-        (hints || []).reduce((out, h) => {
-          if (h in high) out[h] = high[h];
-          return out;
-        }, { ...low }),
-      ),
-    };
+      const high = {
+        architecture: ${JSON.stringify(identity.chArch)},
+        bitness: ${JSON.stringify(identity.chBitness)},
+        fullVersionList: brands.map((b) => ({ brand: b.brand, version: fullVersion })),
+        model: '',
+        platformVersion: ${JSON.stringify(identity.chPlatformVersion)},
+        uaFullVersion: fullVersion,
+        ...low,
+      };
 
-    Object.defineProperty(Navigator.prototype, 'userAgentData', {
-      get: () => data,
-      configurable: true,
-      enumerable: true,
-    });
-  })()`);
+      const data = {
+        ...low,
+        toJSON: () => ({ ...low }),
+        getHighEntropyValues: (hints) => Promise.resolve(
+          (hints || []).reduce((out, h) => {
+            if (h in high) out[h] = high[h];
+            return out;
+          }, { ...low }),
+        ),
+      };
+
+      Object.defineProperty(Navigator.prototype, 'userAgentData', {
+        get: () => data,
+        configurable: true,
+        enumerable: true,
+      });
+    })()`);
+  }
 }

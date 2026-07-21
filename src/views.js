@@ -8,6 +8,7 @@ const {
   FIREFOX_UA,
   CH_PLATFORM,
   isGoogleAuthHost,
+  identityArg,
 } = require('./services');
 const { adblocker } = require('./adblock');
 
@@ -262,7 +263,7 @@ class ViewManager {
         // untrusted remote sites stay isolated; they are still driven from the main
         // process via executeJavaScript.
         preload: path.join(__dirname, 'service-preload.js'),
-        additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
+        additionalArguments: [identityArg()],
       },
     });
 
@@ -283,7 +284,7 @@ class ViewManager {
           webPreferences: {
             partition,
             preload: path.join(__dirname, 'service-preload.js'),
-            additionalArguments: [`--lvs-chrome-major=${CHROME_MAJOR}`],
+            additionalArguments: [identityArg()],
             contextIsolation: true,
             nodeIntegration: false,
           },
