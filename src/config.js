@@ -25,6 +25,10 @@ function defaultSettings() {
     adblockOff: [],
     sidebarCollapsed: false,
     minimizeToTray: false,
+    // The sidebar floats over the video as tinted glass. Off docks it beside the video instead,
+    // the way it used to sit: some people would rather have nothing at all over the picture, and
+    // it is also the way out if a compositor will not composite one view over another.
+    glassSidebar: true,
     // Fade the sidebar down while something is playing, and bring it back on approach. On by
     // default: it is the app's own idea of good manners, and the one control that undoes it is
     // in Settings for anyone who disagrees.
@@ -41,6 +45,7 @@ function cleanSettings(raw) {
     adblockOff: Array.isArray(s.adblockOff) ? s.adblockOff.filter((x) => typeof x === 'string') : [],
     sidebarCollapsed: s.sidebarCollapsed === true,
     minimizeToTray: s.minimizeToTray === true,
+    glassSidebar: s.glassSidebar !== false,
     // Defaults on, so an absent key (a config written before this shipped) keeps the behaviour.
     dimWhilePlaying: s.dimWhilePlaying !== false,
     enhance: cleanEnhance(s.enhance),

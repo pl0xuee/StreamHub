@@ -67,6 +67,22 @@ const SIDEBAR_WIDTH = 220;
 // to click to bring it back.
 const SIDEBAR_RAIL_WIDTH = 56;
 
+// How wide a slice of the window the chrome view occupies, by name.
+//
+// This exists because a native view swallows mouse events across its whole rectangle whatever CSS
+// does with transparency: a full-window transparent chrome would eat every click meant for the
+// video. So the chrome is never wider than the part of it that is actually meant to be clickable —
+// a hover strip while it is stowed, the rail or the sidebar while it is out, and the whole window
+// only while something (a sheet, the palette, a context menu) genuinely needs to be over the
+// picture. The renderer asks for a region by name; this is the only place bounds are set.
+const CHROME_REGIONS = { peek: 8, rail: SIDEBAR_RAIL_WIDTH, sidebar: SIDEBAR_WIDTH, full: null };
+let chromeRegion = 'sidebar';
+
+function chromeRegionWidth(windowWidth) {
+  const width = CHROME_REGIONS[chromeRegion];
+  return width === null || width === undefined ? windowWidth : width;
+}
+
 // NOTE: cookies — i.e. the logins — live in <userData>/Partitions/<service>@default/Cookies.
 // They are encrypted through the OS secret store (kwallet/gnome-libsecret on Linux), which is
 // switched on by the EnableCookieEncryption fuse flipped at package time — see
@@ -127,7 +143,7 @@ let mpris = null; // Linux system media controls (KDE panel, lock screen)
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
-  chromeView.setBounds({ x: 0, y: 0, width, height });
+  chromeView.setBounds({ x: 0, y: 0, width: chromeRegionWidth(width), height });
   viewManager.layout(width, height);
 }
 
@@ -201,6 +217,7 @@ function statePayload() {
     updateAvailable: pendingUpdate,
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
+    glassSidebar: config.settings.glassSidebar !== false,
     dimWhilePlaying: config.settings.dimWhilePlaying !== false,
     // Only the opening value — after this it is pushed on the 'playback' channel above.
     playing: mediaPlaying,
@@ -338,7 +355,7 @@ function createWindow() {
     ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 940,
     minHeight: 600,
-    backgroundColor: '#080a10',
+    backgroundColor: '#0d1015',
     title: 'StreamHub',
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -353,11 +370,26 @@ function createWindow() {
     },
   });
   baseWindow.contentView.addChildView(chromeView);
+  // Transparent so the picture shows through the chrome. The page sets its own background to
+  // `transparent` too — both halves are needed, or Chromium paints the view's base colour first.
+  chromeView.setBackgroundColor('#00000000');
   chromeView.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
 
   viewManager = new ViewManager(baseWindow, SIDEBAR_WIDTH);
   // Playing/stopping drives both the display-sleep inhibitor and the system media controls.
   viewManager.onPlaybackChange = onPlaybackChange;
+  viewManager.glass = config.settings.glassSidebar !== false;
+  // Raising a service view puts it above the chrome; this puts the chrome back on top.
+  viewManager.onStackChange = () => {
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      baseWindow.contentView.addChildView(chromeView);
+    }
+  };
+  // A site in fullscreen owns the window outright — a strip of sidebar floating over it would be
+  // the one thing left on screen that isn't the film.
+  viewManager.onFullscreenChange = (on) => {
+    if (chromeView && !chromeView.webContents.isDestroyed()) chromeView.setVisible(!on);
+  };
 
   layout();
   baseWindow.on('resize', layout);
@@ -586,9 +618,20 @@ ipcMain.on('remove-grid-pane', (_e, paneId) => {
   broadcast();
 });
 
+// The renderer knows what the chrome is showing; main.js knows what that costs in mouse events.
+// See CHROME_REGIONS.
+ipcMain.on('set-chrome-region', (_e, region) => {
+  if (!Object.prototype.hasOwnProperty.call(CHROME_REGIONS, region)) return;
+  if (region === chromeRegion) return;
+  chromeRegion = region;
+  layout();
+});
+
 ipcMain.on('toggle-sidebar', () => {
   sidebarCollapsed = !sidebarCollapsed;
-  // The service view starts where the sidebar ends, so collapsing widens the video.
+  // Docked, the service view starts where the sidebar ends, so collapsing widens the picture. On
+  // glass the picture is already full width and only the chrome's own region changes — which the
+  // renderer asks for once it has re-rendered.
   viewManager.setSidebarWidth(sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
   config.settings.sidebarCollapsed = sidebarCollapsed;
   persist();

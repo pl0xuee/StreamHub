@@ -25,6 +25,7 @@ let state = {
   gridPanes: [],
 };
 let menuServiceId = null; // the service the context menu is currently open for
+let menuWanted = null; // where that menu was asked for, so it can be re-placed when the view resizes
 // Whether a service is playing right now. It arrives on its own channel rather than in the state
 // payload (see 'playback' in main.js) so that starting or stopping a video does not re-render the
 // service list — which would cancel an in-progress drag.
@@ -296,9 +297,11 @@ gridPreviewEl.addEventListener('dragover', (e) => {
 function closeServiceMenu() {
   menuEl.hidden = true;
   menuServiceId = null;
+  menuWanted = null;
   // The menu sits outside the sidebar, so while it is open the pointer is not hovering the
   // sidebar and the house lights would go down under it. See .menu-open in styles.css.
   document.body.classList.remove('menu-open');
+  syncChromeRegion();
 }
 
 function openServiceMenu(svc, x, y) {
@@ -315,11 +318,24 @@ function openServiceMenu(svc, x, y) {
 
   menuEl.hidden = false;
   document.body.classList.add('menu-open');
-  // Keep the menu on screen when the row is near the bottom edge.
-  const { width, height } = menuEl.getBoundingClientRect();
-  menuEl.style.left = `${Math.min(x, window.innerWidth - width - 6)}px`;
-  menuEl.style.top = `${Math.min(y, window.innerHeight - height - 6)}px`;
+  menuWanted = { x, y };
+  // The chrome is only as wide as the sidebar until it is asked for more, so the menu needs the
+  // whole window before it can be placed — a menu wider than the sidebar would otherwise be
+  // clamped into it. The request lands a frame or two later, hence the reposition on resize.
+  syncChromeRegion();
+  positionMenu();
 }
+
+// Keep the menu on screen when the row is near an edge. Re-run whenever the chrome view's own
+// width changes, since that is what `window.innerWidth` is measuring.
+function positionMenu() {
+  if (!menuWanted) return;
+  const { width, height } = menuEl.getBoundingClientRect();
+  menuEl.style.left = `${Math.min(menuWanted.x, window.innerWidth - width - 6)}px`;
+  menuEl.style.top = `${Math.min(menuWanted.y, window.innerHeight - height - 6)}px`;
+}
+
+window.addEventListener('resize', positionMenu);
 
 menuAdblockEl.addEventListener('click', async () => {
   const id = menuServiceId;
@@ -410,6 +426,18 @@ function renderLights() {
   document.body.classList.toggle('lights-down', playing && state.dimWhilePlaying !== false);
 }
 
+// Which slice of the window the chrome needs right now. Anything that has to be drawn over the
+// picture — a sheet, the palette, a right-click menu — needs the whole window; otherwise the chrome
+// is only as wide as the sidebar it is showing. See CHROME_REGIONS in main.js.
+function chromeRegion() {
+  if (!menuEl.hidden) return 'full';
+  return state.sidebarCollapsed ? 'rail' : 'sidebar';
+}
+
+function syncChromeRegion() {
+  window.shell.setChromeRegion(chromeRegion());
+}
+
 function applyState(next) {
   state = next;
   renderServices();
@@ -420,6 +448,7 @@ function applyState(next) {
   renderGridPreview();
   renderLights();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
+  syncChromeRegion();
 }
 
 async function init() {

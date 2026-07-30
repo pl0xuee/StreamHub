@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('shell', {
   openRemovedWindow: () => ipcRenderer.send('open-removed-window'),
   openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
+  // Which slice of the window the chrome view occupies: 'peek' | 'rail' | 'sidebar' | 'full'.
+  // A native view eats mouse events across its whole rect, so the chrome is only ever as wide as
+  // the part of it that is meant to be clickable.
+  setChromeRegion: (region) => ipcRenderer.send('set-chrome-region', region),
   toggleFullscreen: () => ipcRenderer.send('toggle-fullscreen'),
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),

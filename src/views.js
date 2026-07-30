@@ -219,6 +219,12 @@ class ViewManager {
     this.playing = new Set(); // views with media playing, for the screen-sleep inhibitor
     this.enhance = {}; // per-site cosmetic tweaks, from the user's settings (see enhance.js)
     this.onPlaybackChange = () => {}; // set by main.js
+    this.glass = true; // service views run the full window width, with the chrome floating over them
+    // main.js owns the view stack: it re-raises the chrome after we raise a service view, and hides
+    // it entirely while a site is in fullscreen. ViewManager does not know what the chrome is, only
+    // that something has to be told.
+    this.onStackChange = () => {};
+    this.onFullscreenChange = () => {};
   }
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
@@ -406,6 +412,8 @@ class ViewManager {
       this.fullscreenView = null;
     }
     this.layout(this.bounds.width, this.bounds.height);
+    // Raising a service view put it above the chrome; put the chrome back on top.
+    this.onStackChange();
   }
 
   show(service) {
@@ -435,7 +443,9 @@ class ViewManager {
       this.fullscreenView.setBounds({ x: 0, y: 0, width, height });
       return;
     }
-    const x = this.sidebarWidth;
+    // With glass on, the picture runs the full width of the window and the chrome floats over its
+    // left edge. Docked, it starts where the sidebar ends, as it always did.
+    const x = this.glass ? 0 : this.sidebarWidth;
     const areaW = Math.max(0, width - x);
     const views = this.grid.length ? this.grid : this.active ? [this.active] : [];
     if (!views.length) return;
@@ -503,11 +513,13 @@ class ViewManager {
     // grid, several panes can fire these, and only the one that took over should end it.
     if (!on && this.fullscreenView && view && view !== this.fullscreenView) return;
     this.videoFullscreen = on;
+    this.onFullscreenChange(on);
     this.fullscreenView = on ? view || this.active : null;
     // Bring the fullscreen pane to the top so it covers its grid neighbours while it owns the window.
     if (on && this.fullscreenView) this.win.contentView.addChildView(this.fullscreenView);
     if (this.win.setFullScreen) this.win.setFullScreen(on);
     this.layout(this.bounds.width, this.bounds.height);
+    if (!on) this.onStackChange();
   }
 
   getActiveWebContents() {
