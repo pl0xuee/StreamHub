@@ -122,6 +122,33 @@ const RESUME_JS = `(() => {
 // bleeding into one another. The window's background colour shows through it.
 const GRID_GAP = 6;
 
+// The sites draw Chromium's default scrollbar: a wide pale stripe down the edge of every pane, and
+// the one piece of furniture in the window that never matched the app. This is the chrome's own
+// treatment from styles.css, injected into the pages so all of them agree — same steel, same 6px.
+//
+// Cosmetic and nothing else: it changes no layout the site depends on, and it goes in through
+// insertCSS rather than the enhancement controller because it applies to every service rather than
+// to one site's structure. These sites are all dark-themed, which is what steel-on-transparent is
+// picked against.
+const SCROLLBAR_CSS = `
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(143, 163, 184, 0.3);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 163, 184, 0.55);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: #8fa3b8;
+  background-clip: padding-box;
+}
+`;
+
 // How the panes are arranged. 'auto' packs them into a square-ish block; 'rows' stacks them all
 // vertically (two panes become one above the other, which suits two 16:9 videos far better than
 // two half-width columns); 'columns' lays them all out side by side.
@@ -363,8 +390,12 @@ class ViewManager {
     wc.on('media-paused', () => this.onMediaChange(view, false));
 
     // Per document load, since the injected controller lives in the page and goes with it. It
-    // survives the site's own in-page navigations, which is what YouTube does between videos.
-    wc.on('dom-ready', () => this.applyEnhancements(view));
+    // survives the site's own in-page navigations, which is what YouTube does between videos. The
+    // scrollbar styling rides along for the same reason — a new document draws its own.
+    wc.on('dom-ready', () => {
+      wc.insertCSS(SCROLLBAR_CSS).catch(() => {});
+      this.applyEnhancements(view);
+    });
 
     view.setVisible(false);
     this.win.contentView.addChildView(view);

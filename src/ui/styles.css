@@ -95,17 +95,33 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Scrollbars. Steel, like everything else here that is drawn rather than lit — the plain white
+   they were is the one neutral the rest of the interface does not use.
+   Narrow, because of where they turn up: a 220px sidebar and a sheet, both of which are already
+   tight on line length, and neither of which wants a grey stripe down its edge. The transparent
+   border is what insets the thumb; background-clip keeps the paint inside it, so the gutter stays
+   clear and the track needs no colour of its own. */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--edge-strong);
-  border: 2px solid transparent;
+  background: rgba(143, 163, 184, 0.24);
+  border: 1px solid transparent;
   background-clip: padding-box;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(143, 163, 184, 0.5);
+  background-clip: padding-box;
+}
+/* Lit while it is being dragged — the same "active is steel" rule the rest of the app follows. */
+::-webkit-scrollbar-thumb:active {
+  background: var(--steel);
   background-clip: padding-box;
 }
 
