@@ -403,18 +403,47 @@ body.grid-full .service {
   cursor: default;
 }
 
-/* ---- Grid panel: the panes, their arrangement, and how to use them ---- */
-/* A rule above it, because the service list scrolls under this panel: without one the last row
-   visible looks like the end of the list rather than the point where it is clipped. */
-.grid-panel {
+/* ---- Grid HUD: the panes, their arrangement, and how to use them ---- */
+/* A view of its own, parked at the top of the window — the one band of a video player that is never
+   controls. These three controls used to be crammed into the 220px sidebar with the service list
+   paying for all of them; now the sidebar is just the list.
+   Like the sidebar's hover strip, the view is only ever as big as the HUD is drawn, so it is a nub
+   until the pointer arrives on it. */
+.hud-window {
+  background: transparent;
+}
+.hud {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--edge);
+  align-items: center;
 }
-.grid-panel[hidden] {
+.hud-nub {
+  width: 48px;
+  height: 8px;
+  border: 1px solid var(--edge);
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+  background: var(--gun-raised);
+  cursor: pointer;
+}
+.hud-body {
   display: none;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--edge-strong);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--gun-raised);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+/* Expanded, the nub has done its job and would only be a notch above the panel. */
+body.expanded .hud-nub {
+  display: none;
+}
+body.expanded .hud-body {
+  display: flex;
 }
 
 /* The panes drawn as they are actually tiled on screen — the same arrangement gridRects() gives
@@ -861,13 +890,12 @@ body.collapsed .toolbar {
   flex-direction: column;
 }
 /* The blocked count goes with the label: in the rail there is no name beside it to say what the
-   number counts, so it reads as a stray digit crammed against the mark. The grid panel and the
-   removed button have no sensible form in 56px either — the preview needs a readable aspect and
-   the picker is a labelled row of three. */
+   number counts, so it reads as a stray digit crammed against the mark. The removed button has no
+   sensible form in 56px either — it is a word and a tally. The grid controls are unaffected, being
+   in the HUD rather than in here. */
 body.collapsed .service .del,
 body.collapsed .service .shield,
 body.collapsed .service .grid-num,
-body.collapsed .grid-panel,
 body.collapsed .list-actions {
   display: none;
 }

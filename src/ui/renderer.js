@@ -7,9 +7,6 @@ const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
 const gridBtn = document.getElementById('btn-grid');
-const gridPanelEl = document.getElementById('grid-panel');
-const gridLayoutEl = document.getElementById('grid-layout');
-const gridPreviewEl = document.getElementById('grid-preview');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
@@ -182,126 +179,6 @@ listEl.addEventListener('dragover', (e) => {
   else listEl.insertBefore(dragging, after);
 });
 
-// ---- Grid preview (the panes as they are actually tiled) ----
-//
-// The panes drawn in the arrangement they really have on screen — the CSS mirrors gridRects() in
-// views.js, so what this shows is what the window looks like. A flat strip of chips could say
-// which pane came first but never what the screen would look like; this says both.
-//
-// It is also the only place the tiling order can be edited: the numbered badges on the service
-// rows say where a pane is and close it, but a service holding two panes has no way to say "swap
-// those two" from its own row. Dragging moves the *pane*, which keeps its own view, so the page a
-// tile is showing travels with it — nothing reloads and nothing playing is interrupted.
-function renderGridPreview() {
-  const panes = state.gridPanes || [];
-  gridPanelEl.hidden = !state.gridMode;
-  if (gridPanelEl.hidden) return;
-
-  gridPreviewEl.dataset.layout = state.gridLayout || 'auto';
-  gridPreviewEl.replaceChildren();
-
-  panes.forEach((pane, i) => {
-    const svc = state.services.find((s) => s.id === pane.serviceId);
-    if (!svc) return; // a pane whose service has gone; the main process drops it on next reconcile
-    const tile = document.createElement('div');
-    tile.className = 'pane-tile';
-    tile.dataset.paneId = pane.paneId;
-    tile.draggable = true;
-    tile.title = `Pane ${i + 1}: ${svc.name} — drag to move it`;
-
-    const num = document.createElement('span');
-    num.className = 'pane-tile-num';
-    num.textContent = String(i + 1);
-
-    const mark = document.createElement('span');
-    mark.className = 'pane-tile-mark';
-    mark.style.background = svc.color;
-    mark.textContent = initial(svc.name);
-
-    // The last pane cannot be closed — an empty grid would show nothing, and the grid toggle is
-    // the way out of the mode. Drop the button rather than offering a dead one.
-    const close = document.createElement('button');
-    close.className = 'pane-close';
-    close.textContent = '×';
-    close.title = `Close pane ${i + 1} (${svc.name})`;
-    close.hidden = panes.length < 2;
-    close.addEventListener('click', (e) => {
-      e.stopPropagation();
-      window.shell.removeGridPane(pane.paneId);
-    });
-
-    tile.append(num, mark, close);
-    tile.addEventListener('dragstart', () => {
-      // Defer so the class lands after the drag image is captured.
-      requestAnimationFrame(() => tile.classList.add('dragging'));
-    });
-    tile.addEventListener('dragend', () => {
-      tile.classList.remove('dragging');
-      // Commit whatever order the DOM ended up in.
-      const ids = Array.from(gridPreviewEl.children).map((c) => c.dataset.paneId);
-      window.shell.reorderGridPanes(ids);
-    });
-    gridPreviewEl.appendChild(tile);
-  });
-
-  // The arrangement is drawn from this and the layout above, so the preview re-tiles itself the
-  // moment either changes. Taken from what actually rendered rather than from the pane count: a
-  // pane whose service has gone is skipped, and a template expecting a tile that is not there
-  // would lay out around a hole.
-  gridPreviewEl.dataset.count = String(gridPreviewEl.children.length);
-}
-
-// The tiles in reading order, grouped into rows by their top edge. The preview is a real two-
-// dimensional arrangement, so finding an insertion point needs both axes — unlike the service
-// list, which is a single column and splits on y alone.
-function tileRows() {
-  const rows = [];
-  for (const el of gridPreviewEl.querySelectorAll('.pane-tile:not(.dragging)')) {
-    const box = el.getBoundingClientRect();
-    const row = rows.find((r) => Math.abs(r.top - box.top) < 4);
-    if (row) row.items.push({ el, box });
-    else rows.push({ top: box.top, items: [{ el, box }] });
-  }
-  return rows;
-}
-
-// During a drag, the tile the dragged one should be inserted before (null = put it last).
-function afterTile(x, y) {
-  const rows = tileRows();
-  if (!rows.length) return null;
-  // Which axis decides "before" has to come from the arrangement, not from the tiles left on
-  // screen: dragging one of two side-by-side tiles leaves a single tile behind, which looks
-  // exactly like a one-tall stack and would then be split on the wrong axis. Only 'rows' stacks
-  // vertically — 'columns' is always a strip, and 'auto' is two columns or a block.
-  if ((state.gridLayout || 'auto') === 'rows') {
-    for (const { items } of rows) {
-      const { el, box } = items[0];
-      if (y < box.top + box.height / 2) return el;
-    }
-    return null;
-  }
-  for (let i = 0; i < rows.length; i += 1) {
-    const { items } = rows[i];
-    if (y > items[items.length - 1].box.bottom) continue; // the pointer is below this row entirely
-    for (const { el, box } of items) {
-      if (x < box.left + box.width / 2) return el;
-    }
-    // Past the last tile in this row: the next row's first tile is the insertion point.
-    const next = rows[i + 1];
-    return next ? next.items[0].el : null;
-  }
-  return null;
-}
-
-gridPreviewEl.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  const dragging = gridPreviewEl.querySelector('.dragging');
-  if (!dragging) return;
-  const after = afterTile(e.clientX, e.clientY);
-  if (after == null) gridPreviewEl.appendChild(dragging);
-  else gridPreviewEl.insertBefore(dragging, after);
-});
-
 // ---- Per-service context menu (right-click a row) ----
 function closeServiceMenu() {
   menuEl.hidden = true;
@@ -424,7 +301,9 @@ function renderUpdateBadge() {
 }
 
 // Reflect grid mode on its toolbar button (pressed look) and on the body, which switches the
-// sidebar into "pick panes" mode — a hint line, and rows that read as add/remove targets.
+// sidebar into "pick panes" mode — rows that read as add/remove targets. The preview, the
+// arrangement picker and the hint line live in the HUD now (see hud.js); the sidebar's job in grid
+// mode is the list, and the numbered badges saying which panes a service holds.
 function renderGridToggle() {
   const on = Boolean(state.gridMode);
   gridBtn.classList.toggle('active', on);
@@ -433,24 +312,8 @@ function renderGridToggle() {
     ? 'Grid view on — click a service to add a pane, a number to close one'
     : 'Grid view — watch up to 4 at once';
   document.body.classList.toggle('grid-mode', on);
-  // With four panes tiled there is nothing more to add, so the rows stop reading as add targets
-  // and the hint says why — better than clicks that silently do nothing.
-  const full = on && Boolean(state.gridFull);
-  document.body.classList.toggle('grid-full', full);
-  document.getElementById('grid-hint').textContent = full
-    ? 'All four panes are in use. Close one to add another.'
-    : 'Click a service to add a pane. Drag a tile to move it.';
-
-  // Mark the arrangement in use. With a single pane there is nothing to arrange, so the choice
-  // is disabled rather than hidden — it keeps the sidebar from reflowing as panes come and go.
-  const only = (state.gridPanes || []).length < 2;
-  for (const btn of gridLayoutEl.querySelectorAll('button')) {
-    const chosen = btn.dataset.layout === (state.gridLayout || 'auto');
-    btn.classList.toggle('active', chosen);
-    btn.setAttribute('aria-pressed', chosen ? 'true' : 'false');
-    btn.disabled = only;
-  }
-  gridLayoutEl.title = only ? 'Add a second pane to choose an arrangement' : '';
+  // With four panes tiled there is nothing more to add, so the rows stop reading as add targets.
+  document.body.classList.toggle('grid-full', on && Boolean(state.gridFull));
 }
 
 // The chrome sits on the picture now, so its resting state is "away": the sidebar lives off the
@@ -494,17 +357,26 @@ const LEAVE_GRACE_MS = 180;
 let openSheetName = null;
 let paletteOpen = false;
 
-let region = 'sidebar'; // the region main.js was last asked for
+let region = 'sidebar'; // the chrome-view region main.js was last asked for
+let dockInset = 'sidebar'; // …and how much of the window the sidebar itself was holding
 let regionTimer = null; // a pending shrink, held until the slide it would clip has finished
 let peekTimer = null; // a pending un-peek, cancelled if the pointer comes back
 
-// Which slice of the window the chrome needs right now. Anything that has to be drawn over the
-// picture — a sheet, the palette, a right-click menu — needs the whole window; otherwise the chrome
-// is only as wide as the sidebar it is showing. See CHROME_REGIONS in main.js.
-function chromeRegion() {
-  if (openSheetName || paletteOpen || !menuEl.hidden) return 'full';
+// How much of the window the sidebar itself is occupying — never the whole thing, whatever is
+// drawn over the page on top of it. This is what the docked layout insets the page by, so a
+// stowed sidebar has to report the strip: reserving its full width for a sidebar that has left is
+// what leaves a bare band of window background down the side of the page.
+function sidebarRegion() {
   if (stowed && !peeking) return 'peek';
   return state.sidebarCollapsed ? 'rail' : 'sidebar';
+}
+
+// Which slice of the window the chrome view needs right now. Anything that has to be drawn over the
+// page — a sheet, the palette, a right-click menu — needs the whole window; otherwise the chrome is
+// only as wide as the sidebar it is showing. See CHROME_REGIONS in main.js.
+function chromeRegion() {
+  if (openSheetName || paletteOpen || !menuEl.hidden) return 'full';
+  return sidebarRegion();
 }
 
 // The chrome view is the room the sidebar is drawn in, so it has to be at least as wide as the
@@ -513,17 +385,19 @@ function chromeRegion() {
 // of existence instead of letting it leave, and the animation is never seen.
 function syncChromeRegion() {
   const want = chromeRegion();
+  const inset = sidebarRegion();
   clearTimeout(regionTimer);
-  if (want === region) return;
-  if (REGION_ORDER[want] > REGION_ORDER[region]) {
+  if (want === region && inset === dockInset) return;
+  const send = () => {
     region = want;
-    window.shell.setChromeRegion(want);
+    dockInset = inset;
+    window.shell.setChromeRegion(want, inset);
+  };
+  if (REGION_ORDER[want] >= REGION_ORDER[region]) {
+    send();
     return;
   }
-  regionTimer = setTimeout(() => {
-    region = want;
-    window.shell.setChromeRegion(want);
-  }, SLIDE_MS);
+  regionTimer = setTimeout(send, SLIDE_MS);
 }
 
 // Reaching for the strip holds the sidebar in; leaving it lets go again, after a moment's grace so
@@ -783,7 +657,6 @@ function applyState(next) {
   setCollapsed(state.sidebarCollapsed);
   renderUpdateBadge();
   renderGridToggle();
-  renderGridPreview();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
   // Last, because it asks for the chrome region that all of the above has just settled.
   renderStow();
@@ -893,10 +766,6 @@ async function init() {
   document.getElementById('btn-back').addEventListener('click', () => window.shell.back());
   document.getElementById('btn-reload').addEventListener('click', () => window.shell.reload());
   gridBtn.addEventListener('click', () => window.shell.toggleGrid());
-  gridLayoutEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-layout]');
-    if (btn && !btn.disabled) window.shell.setGridLayout(btn.dataset.layout);
-  });
   document
     .getElementById('btn-fullscreen')
     .addEventListener('click', () => window.shell.toggleFullscreen());

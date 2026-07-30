@@ -471,11 +471,6 @@ class ViewManager {
     this.layout(this.bounds.width, this.bounds.height);
   }
 
-  setSidebarWidth(width) {
-    this.sidebarWidth = width;
-    this.layout(this.bounds.width, this.bounds.height);
-  }
-
   // Tear down every view of a service when it is removed from the list — it may hold several
   // grid panes, not just one. The persistent partition (its cookies/login) stays on disk, so
   // re-adding the service later recreates the view already signed in.

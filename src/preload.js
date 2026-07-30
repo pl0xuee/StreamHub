@@ -20,8 +20,9 @@ contextBridge.exposeInMainWorld('shell', {
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
   // Which slice of the window the chrome view occupies: 'peek' | 'rail' | 'sidebar' | 'full'.
   // A native view eats mouse events across its whole rect, so the chrome is only ever as wide as
-  // the part of it that is meant to be clickable.
-  setChromeRegion: (region) => ipcRenderer.send('set-chrome-region', region),
+  // the part of it that is meant to be clickable. `inset` is the same measure minus the overlays —
+  // how much the sidebar itself is holding — which is what the docked layout insets the page by.
+  setChromeRegion: (region, inset) => ipcRenderer.send('set-chrome-region', region, inset),
   toggleFullscreen: () => ipcRenderer.send('toggle-fullscreen'),
   reload: () => ipcRenderer.send('reload-active'),
   back: () => ipcRenderer.send('go-back'),
@@ -41,6 +42,8 @@ contextBridge.exposeInMainWorld('shell', {
   setAutoHideSidebar: (on) => ipcRenderer.invoke('set-auto-hide-sidebar', on),
   // Whether the sidebar is tinted glass over the page, or docked opaque beside it.
   setGlassSidebar: (on) => ipcRenderer.invoke('set-glass-sidebar', on),
+  // The grid HUD is only as big as it is drawn, so it asks to be grown before it expands.
+  setHudExpanded: (on) => ipcRenderer.send('set-hud-expanded', on),
   // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
   // renderer could never have seen for itself, forwarded by the main process.
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),
