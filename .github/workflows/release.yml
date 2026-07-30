@@ -51,7 +51,7 @@ jobs:
       # secrets; castlabs-evs reads them from these exact env var names.
       - name: Set up VMP signing (Windows)
         if: matrix.name == 'windows'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -102,8 +102,10 @@ jobs:
         with:
           fetch-depth: 0 # the changelog diffs against the previous tag
 
+      # v8 errors on a download whose hash does not match the server's rather than warning, which is
+      # what we want for something that goes straight out as a release asset.
       - name: Download build assets
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: dist-*
