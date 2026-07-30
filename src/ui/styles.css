@@ -1,40 +1,62 @@
-/* StreamHub — "theater dark".
+/* StreamHub — "gunmetal glass".
  *
- * The room has the lights down and one warm bulb in it. That gives the whole interface exactly
- * two colour temperatures and no more: cool greys for everything at rest, and a single warm gold
- * for anything that is *lit* — the active service, a hovered control, keyboard focus. Nothing
- * else carries colour, with two deliberate exceptions: the services' own brand marks (the posters
- * on the wall) and the exit-sign red, which is only ever used for leaving or removing.
+ * The chrome is a pane of tinted glass laid over the picture: one cold material, lit with one cold
+ * accent. Everything at rest is gunmetal; anything *lit* — the active service, a hovered control,
+ * keyboard focus — is steel. Nothing else carries colour, with two deliberate exceptions: the
+ * services' own brand marks (the posters on the wall) and the exit-sign red, which is only ever
+ * used for leaving or removing.
  *
- * The chrome's job is to get out of the way of the picture, so it is flat: no metal gradients,
- * no inset highlights, no bevels. Where something needs to stand out it is lit, not embossed.
+ * The glass is tinted, not frosted. backdrop-filter samples the current rendering context and the
+ * video is a different WebContents entirely, so there is nothing there for Chromium to blur — the
+ * picture shows through sharply, dimmed and cooled by the tint. Contrast is therefore set by the
+ * worst case, a white frame behind the sidebar, which is why --dim sits as light as it does.
+ *
+ * The one thing here that is allowed to be memorable is the seam: the hairline where the chrome
+ * stops and the picture starts. It carries the light, and while something is playing it breathes.
+ * That edge is the only boundary this app really has, it is the last thing left on screen once the
+ * sidebar stows, and making it the on-air signal means the app needs no indicator lamp at all.
+ * Everything else is flat and quiet: no gradients, no inset highlights, no bevels.
  */
 
 :root {
-  /* Ink — the house with the lights down. */
-  --ink: #080a10;
-  --ink-2: #0b0e15;
-  --surface: #12151d;
-  --surface-2: #1a1e28;
-  --line: #222734;
-  --line-soft: #161a23;
+  /* The window itself, seen only through the grid's gutters. */
+  --ink: #0d1015;
 
-  /* Cool ambient: text and everything unlit. */
-  --text: #e9eaef;
-  --dim: #7d8698;
-  --dim-2: #545c6b;
+  /* The glass. Alpha is doing all the work, and the value is set by the worst case rather than by
+     taste: measured against a full-white frame, 0.86 left the service names at 4.2:1 and 0.90
+     brings them back over AA. A tenth of the picture still comes through, which is enough to read
+     as glass — the frames that make it obvious are the bright ones, and those are exactly the ones
+     that needed the extra tenth. */
+  --gun: rgba(30, 35, 43, 0.9);
+  --gun-raised: rgba(38, 44, 54, 0.94);
+  --gun-hover: rgba(52, 60, 72, 0.55);
 
-  /* The one warm light in the room. */
-  --bulb: #d9c188;
-  --bulb-hot: #f4e6c2;
-  --bulb-wash: rgba(217, 193, 136, 0.13);
-  --bulb-edge: rgba(217, 193, 136, 0.24);
-  --bulb-glow: rgba(217, 193, 136, 0.45);
+  /* A hairline of light along an edge is the whole trick: it is what reads as a sheet of glass
+     over the picture rather than a hole cut in it. */
+  --edge: rgba(255, 255, 255, 0.07);
+  --edge-strong: rgba(255, 255, 255, 0.11);
+
+  /* Text, set against a white frame behind the glass — the case that decides it. There the glass
+     resolves to #343940, and these give 9.9:1, 6.5:1 and 4.7:1 — all three clear AA at the worst
+     the picture can do to them. They are lighter than a solid dark panel would have needed; that
+     is the rent the transparency charges. */
+  --text: #e9edf2;
+  --dim: #b8c2d1;
+  --dim-2: #9aa6b8;
+
+  /* The one lit thing. */
+  --steel: #8fa3b8;
+  --steel-hot: #c9d6e4;
+  --steel-wash: rgba(143, 163, 184, 0.14);
+  --steel-edge: rgba(143, 163, 184, 0.3);
+  --steel-glow: rgba(143, 163, 184, 0.45);
 
   /* Exit sign. Removing, signing out, closing a pane — nothing else. */
   --exit: #b8434b;
 
   --sidebar-width: 220px;
+  --rail-width: 56px;
+  --peek-width: 8px;
   --radius: 8px;
   --radius-sm: 6px;
 
@@ -60,7 +82,9 @@
 html,
 body {
   height: 100%;
-  background: var(--ink);
+  /* Transparent, so the picture behind the chrome view shows through. The view's own background is
+     cleared in main.js; both halves are needed, or Chromium paints its base colour first. */
+  background: transparent;
   color: var(--text);
   user-select: none;
   overflow: hidden;
@@ -71,19 +95,19 @@ body {
   width: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: var(--edge-strong);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #2e3442;
+  background: rgba(255, 255, 255, 0.16);
   background-clip: padding-box;
 }
 
 /* Keyboard focus is "lit", like every other active thing here. */
 :focus-visible {
-  outline: 1px solid var(--bulb);
+  outline: 1px solid var(--steel);
   outline-offset: 2px;
 }
 
@@ -94,14 +118,18 @@ body {
   left: 0;
   width: var(--sidebar-width);
   height: 100%;
-  /* Flat ink with the faintest lift at the top, where the bulb would be. */
-  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 62%);
-  border-right: 1px solid #04050a;
+  background: var(--gun);
+  /* The seam: one hairline of light where the chrome stops and the picture starts. This is what
+     reads as a sheet of glass over the film rather than a hole cut in it, and it is also where the
+     on-air signal lives — see "the seam" below. The dark shadow beside it keeps the edge legible
+     against a pale frame, where a light-on-light hairline would vanish. */
+  border-right: 1px solid var(--edge);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   padding: 16px 12px 14px;
   gap: 14px;
-  transition: background 0.45s ease;
+  transition: transform 0.22s ease;
 }
 
 .brand {
@@ -109,10 +137,7 @@ body {
   align-items: center;
   gap: 11px;
   padding: 2px 4px 14px;
-  /* A hairline of bulb-light under the wordmark: the marquee, and the only rule in the sidebar
-     that is warm rather than grey. */
-  border-bottom: 1px solid var(--line-soft);
-  box-shadow: 0 1px 0 rgba(217, 193, 136, 0.07);
+  border-bottom: 1px solid var(--edge);
 }
 .brand-text {
   flex: 1;
@@ -126,27 +151,24 @@ body {
   transition: opacity 0.45s ease;
 }
 
-/* The on-air bulb. It is the one thing that stays lit when the house lights go down, so a dark
-   sidebar reads as "something is playing" rather than "the app has gone wrong". */
-.onair {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--bulb);
-  box-shadow: 0 0 8px var(--bulb-glow);
-  animation: breathe 3.4s ease-in-out infinite;
+/* ---- The seam ---- */
+/* While something is playing, the edge where the chrome stops and the picture starts carries the
+   light and breathes.
+   This is the app's only on-air signal, and it needs no lamp of its own: that edge is the one
+   boundary the whole thing has, and it is the last piece still on screen once the sidebar stows —
+   so the strip left behind goes on saying "playing" for free. */
+body.playing #sidebar {
+  animation: seam 3.4s ease-in-out infinite;
 }
-.onair[hidden] {
-  display: none;
-}
-@keyframes breathe {
+@keyframes seam {
   0%,
   100% {
-    opacity: 0.55;
+    border-right-color: rgba(143, 163, 184, 0.2);
+    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 12px -3px rgba(143, 163, 184, 0.18);
   }
   50% {
-    opacity: 1;
+    border-right-color: rgba(143, 163, 184, 0.62);
+    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 16px -2px rgba(143, 163, 184, 0.5);
   }
 }
 
@@ -194,7 +216,7 @@ body {
 #btn-collapse:hover .bars,
 #btn-collapse:hover .bars::before,
 #btn-collapse:hover .bars::after {
-  background: var(--bulb);
+  background: var(--steel);
 }
 
 /* ---- Service list ---- */
@@ -223,7 +245,7 @@ body {
   position: relative;
   transition: background 0.16s ease, color 0.16s ease;
 }
-/* The bulb marking the row that is showing. Drawn always, unlit until it is. */
+/* The light marking the row that is showing. Drawn always, unlit until it is. */
 .service::before {
   content: "";
   position: absolute;
@@ -242,11 +264,11 @@ body {
 }
 .service.active {
   color: var(--text);
-  background: var(--bulb-wash);
+  background: var(--steel-wash);
 }
 .service.active::before {
-  background: var(--bulb);
-  box-shadow: 0 0 7px var(--bulb-glow);
+  background: var(--steel);
+  box-shadow: 0 0 7px var(--steel-glow);
 }
 
 /* The service's own mark is the poster on the wall: dimmed while the row is at rest and lit to
@@ -333,7 +355,7 @@ body {
 }
 .service.dragging {
   opacity: 0.4;
-  background: var(--surface);
+  background: var(--gun-raised);
 }
 
 /* Which panes a service occupies, so the list mirrors the tiling. One badge per pane — a service
@@ -343,10 +365,10 @@ body {
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
-  border: 1px solid var(--bulb-edge);
+  border: 1px solid var(--steel-edge);
   border-radius: 4px;
   background: transparent;
-  color: var(--bulb);
+  color: var(--steel);
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
@@ -385,7 +407,7 @@ body.grid-full .service {
   flex-direction: column;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--edge);
 }
 .grid-panel[hidden] {
   display: none;
@@ -400,9 +422,9 @@ body.grid-full .service {
   gap: 2px;
   aspect-ratio: 16 / 10;
   padding: 3px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
-  background: var(--ink-2);
+  background: var(--ink);
 }
 /* One pane fills the screen whatever the arrangement says, so this must come after — and beat —
    nothing: no arrangement rule below matches a count of one. */
@@ -449,13 +471,13 @@ body.grid-full .service {
   min-width: 0;
   min-height: 0;
   border-radius: 3px;
-  background: var(--surface);
+  background: var(--gun-raised);
   cursor: grab;
   transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 .pane-tile:hover {
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--bulb-edge);
+  background: var(--gun-hover);
+  box-shadow: inset 0 0 0 1px var(--steel-edge);
 }
 .pane-tile:active {
   cursor: grabbing;
@@ -528,7 +550,7 @@ body.grid-full .service {
 .grid-layout button {
   flex: 1;
   height: 24px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--dim-2);
@@ -542,9 +564,9 @@ body.grid-full .service {
   background: rgba(255, 255, 255, 0.03);
 }
 .grid-layout button.active {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
 }
 /* One pane has no arrangement to speak of; dim the row rather than removing it, so the sidebar
    does not reflow every time a pane is added or closed. */
@@ -572,7 +594,7 @@ body.grid-full .service {
   gap: 6px;
   background: transparent;
   color: var(--dim-2);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   padding: 8px 6px;
   font-family: var(--font-display);
@@ -584,9 +606,9 @@ body.grid-full .service {
   transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 .list-actions button:hover {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
 }
 #removed-count {
   font-family: var(--font-mono);
@@ -598,7 +620,7 @@ body.grid-full .service {
 
 /* ---- Footer: navigation, version, settings ---- */
 .sidebar-footer {
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--edge);
   padding-top: 12px;
 }
 
@@ -619,7 +641,7 @@ body.grid-full .service {
   transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 .toolbar button:hover {
-  color: var(--bulb);
+  color: var(--steel);
   background: rgba(255, 255, 255, 0.035);
 }
 .toolbar button:active {
@@ -627,9 +649,9 @@ body.grid-full .service {
 }
 /* Grid-view toggle while it is on: lit, so the mode is obvious at a glance. */
 .toolbar button.active {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
 }
 
 .app-meta {
@@ -654,7 +676,7 @@ body.grid-full .service {
   gap: 6px;
   background: transparent;
   color: var(--dim);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   padding: 5px 10px;
   font-family: var(--font-display);
@@ -667,9 +689,9 @@ body.grid-full .service {
 }
 #btn-update:hover,
 #btn-settings:hover {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
 }
 #btn-update:disabled {
   opacity: 0.55;
@@ -685,106 +707,66 @@ body.grid-full .service {
   transform: rotate(45deg);
 }
 
-/* ---- House lights ---- */
-/* While something is playing the chrome is not what anyone is looking at, so it goes down to
-   almost nothing and comes back up the moment it is reached for. Only the on-air bulb stays lit,
-   which is what keeps a dark sidebar readable as "playing" rather than "broken".
-   Nothing moves and nothing resizes: the service views keep the exact bounds they had, so the
-   page being watched never reflows. */
-#sidebar .services,
-#sidebar .grid-panel,
-#sidebar .list-actions,
-#sidebar .sidebar-footer,
-#sidebar .brand-text,
-#sidebar #btn-collapse {
-  transition: opacity 0.5s ease;
+/* ---- Stowing ---- */
+/* While something is playing the chrome is not what anyone is looking at, and it is sitting on the
+   picture — so it leaves, rather than merely dimming the way it did when it sat beside the film.
+   The sidebar slides out of the window and main.js shrinks the chrome view to the strip below,
+   which hands the whole left edge back to the video, clicks included. Reaching for the strip brings
+   it in again.
+   Nothing resizes: the service views keep the bounds they had, so the page being watched never
+   reflows. It is a transform and a view width, nothing else. */
+body.stowed #sidebar {
+  transform: translateX(-100%);
 }
-#sidebar .brand {
-  transition: border-color 0.5s ease, box-shadow 0.5s ease;
-}
-body.lights-down #sidebar {
-  background: var(--ink);
-}
-/* The marquee's own rule goes with everything else, or it is left drawing a bright line across
-   an otherwise dark panel — the one thing still at full strength, and the last thing that should
-   be. Only the on-air bulb stays lit. */
-body.lights-down #sidebar .brand {
-  border-bottom-color: transparent;
-  box-shadow: none;
-}
-body.lights-down #sidebar .services,
-body.lights-down #sidebar .grid-panel,
-body.lights-down #sidebar .list-actions,
-body.lights-down #sidebar .sidebar-footer,
-body.lights-down #sidebar #btn-collapse {
-  opacity: 0.12;
-}
-body.lights-down #sidebar .brand-text {
-  opacity: 0.4;
+body.stowed.peeking #sidebar {
+  transform: none;
 }
 
-/* Bringing them back up. Reaching for the sidebar with the pointer, tabbing into it, or opening a
-   service's menu (which puts the pointer outside the sidebar, so hover alone would not hold) all
-   count as wanting the chrome back. These must come after the rules above: same specificity, so
-   source order is what decides. */
-body.lights-down #sidebar:hover .services,
-body.lights-down #sidebar:hover .grid-panel,
-body.lights-down #sidebar:hover .list-actions,
-body.lights-down #sidebar:hover .sidebar-footer,
-body.lights-down #sidebar:hover #btn-collapse,
-body.lights-down #sidebar:hover .brand-text,
-body.lights-down #sidebar:focus-within .services,
-body.lights-down #sidebar:focus-within .grid-panel,
-body.lights-down #sidebar:focus-within .list-actions,
-body.lights-down #sidebar:focus-within .sidebar-footer,
-body.lights-down #sidebar:focus-within #btn-collapse,
-body.lights-down #sidebar:focus-within .brand-text,
-body.menu-open.lights-down #sidebar .services,
-body.menu-open.lights-down #sidebar .grid-panel,
-body.menu-open.lights-down #sidebar .list-actions,
-body.menu-open.lights-down #sidebar .sidebar-footer,
-body.menu-open.lights-down #sidebar #btn-collapse,
-body.menu-open.lights-down #sidebar .brand-text {
-  opacity: 1;
+/* What is left once the sidebar is away: the seam, on its own. It is the same edge the sidebar
+   carries, so the on-air light simply goes on down it and nothing else has to be drawn. */
+.edge-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--peek-width);
+  height: 100%;
+  border-right: 1px solid var(--edge);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35);
+  background: linear-gradient(90deg, rgba(143, 163, 184, 0.1), transparent);
 }
-body.lights-down #sidebar:hover,
-body.lights-down #sidebar:focus-within,
-body.menu-open.lights-down #sidebar {
-  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 62%);
+.edge-strip[hidden] {
+  display: none;
 }
-body.lights-down #sidebar:hover .brand,
-body.lights-down #sidebar:focus-within .brand,
-body.menu-open.lights-down #sidebar .brand {
-  border-bottom-color: var(--line-soft);
-  box-shadow: 0 1px 0 rgba(217, 193, 136, 0.07);
+body.playing .edge-strip {
+  animation: seam 3.4s ease-in-out infinite;
 }
 
 /* ---- An update is waiting ---- */
-/* A slow pulse of bulb-light: enough to catch the eye on a glance at the sidebar, not so much
-   that it nags at someone who is trying to watch something. */
+/* A slow pulse of steel: enough to catch the eye on a glance at the sidebar, not so much that it
+   nags at someone who is trying to watch something. */
 @keyframes update-pulse {
   0%,
   100% {
-    border-color: var(--bulb-edge);
-    box-shadow: 0 0 0 rgba(217, 193, 136, 0);
+    border-color: var(--steel-edge);
+    box-shadow: 0 0 0 rgba(143, 163, 184, 0);
   }
   50% {
-    border-color: var(--bulb);
-    box-shadow: 0 0 9px rgba(217, 193, 136, 0.4);
+    border-color: var(--steel);
+    box-shadow: 0 0 9px rgba(143, 163, 184, 0.4);
   }
 }
 
 #btn-update.has-update,
 #btn-settings.has-update {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
   animation: update-pulse 2.4s ease-in-out infinite;
 }
 #btn-update.has-update:hover,
 #btn-settings.has-update:hover {
   animation-play-state: paused; /* settle once it is being aimed at */
-  border-color: var(--bulb);
+  border-color: var(--steel);
 }
 
 /* The update itself is installed from the settings window, so the sidebar's gear only has to say
@@ -797,14 +779,14 @@ body.menu-open.lights-down #sidebar .brand {
   margin-left: 5px;
   vertical-align: middle;
   border-radius: 50%;
-  background: var(--bulb);
-  box-shadow: 0 0 6px var(--bulb-glow);
+  background: var(--steel);
+  box-shadow: 0 0 6px var(--steel-glow);
 }
 
 /* Collapsed to the rail the gear has no label, so put the mark on the version instead — the only
    part of the footer still carrying text. */
 body.collapsed.update-available #app-version {
-  color: var(--bulb);
+  color: var(--steel);
 }
 body.collapsed.update-available #app-version::after {
   content: "";
@@ -814,13 +796,15 @@ body.collapsed.update-available #app-version::after {
   margin-left: 4px;
   vertical-align: middle;
   border-radius: 50%;
-  background: var(--bulb);
-  box-shadow: 0 0 6px var(--bulb-glow);
+  background: var(--steel);
+  box-shadow: 0 0 6px var(--steel-glow);
   animation: update-pulse 2.4s ease-in-out infinite;
 }
 
-/* Respect a reduced-motion preference. The house lights still go down — that is a state, not an
-   animation — but they change instantly rather than fading, and nothing pulses or turns. */
+/* Respect a reduced-motion preference. The sidebar still stows — that is a state, not an animation
+   — but it goes instantly rather than sliding, and nothing pulses or turns. The seam still lights
+   while something is playing; it simply holds its brightest value instead of breathing, so the
+   on-air signal survives. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -832,13 +816,15 @@ body.collapsed.update-available #app-version::after {
   #btn-update.has-update,
   #btn-settings.has-update,
   body.collapsed.update-available #app-version::after {
-    border-color: var(--bulb);
+    border-color: var(--steel);
   }
   #btn-settings:hover .gear {
     transform: none;
   }
-  .onair {
-    opacity: 1;
+  body.playing #sidebar,
+  body.playing .edge-strip {
+    border-right-color: rgba(143, 163, 184, 0.62);
+    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 16px -2px rgba(143, 163, 184, 0.5);
   }
 }
 
@@ -895,12 +881,8 @@ body.collapsed #btn-settings .btn-label {
 body.collapsed #btn-settings .gear {
   font-size: 14px;
 }
-/* The on-air bulb survives the rail — it is the smallest thing here and the one worth keeping. */
-body.collapsed .onair {
-  position: absolute;
-  top: 12px;
-  right: 10px;
-}
+/* The on-air signal needs no room in the rail: it is the sidebar's own edge, which the rail still
+   has. Nothing to reposition. */
 
 /* ---- Right-click menu on a service ---- */
 .context-menu {
@@ -908,9 +890,9 @@ body.collapsed .onair {
   z-index: 50;
   min-width: 180px;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--gun-raised);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
 }
 .context-title {
@@ -922,7 +904,7 @@ body.collapsed .onair {
   color: var(--dim-2);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--edge);
 }
 .context-item {
   display: block;
@@ -938,8 +920,8 @@ body.collapsed .onair {
   cursor: pointer;
 }
 .context-item:hover:not(:disabled) {
-  background: var(--bulb-wash);
-  color: var(--bulb-hot);
+  background: var(--steel-wash);
+  color: var(--steel-hot);
 }
 .context-item:disabled {
   color: var(--dim-2);
@@ -958,7 +940,9 @@ body.settings-window,
 body.removed-window {
   padding: 22px 20px;
   overflow-y: auto;
-  background: linear-gradient(180deg, var(--ink-2) 0%, var(--ink) 40%);
+  /* Windows of their own, so these two are opaque — the transparent background above is for the
+     chrome view floating over the picture, which these are not. */
+  background: var(--ink);
 }
 
 .settings-header h1,
@@ -988,7 +972,7 @@ body.removed-window {
   text-transform: uppercase;
   margin-bottom: 10px;
   padding-bottom: 7px;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--edge);
 }
 .section-note {
   margin-top: 9px;
@@ -1010,15 +994,15 @@ body.removed-window {
   padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--gun-raised);
   cursor: pointer;
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 .setting:hover {
-  background: var(--surface-2);
+  background: var(--gun-hover);
 }
 .setting:focus-within {
-  border-color: var(--bulb-edge);
+  border-color: var(--steel-edge);
 }
 
 /* The checkbox is a small lamp: dark when off, lit when on. */
@@ -1028,7 +1012,7 @@ body.removed-window {
   width: 16px;
   height: 16px;
   margin-top: 1px;
-  border: 1px solid #39404e;
+  border: 1px solid var(--edge-strong);
   border-radius: 4px;
   background: var(--ink);
   cursor: pointer;
@@ -1037,9 +1021,9 @@ body.removed-window {
   transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 .setting input[type="checkbox"]:checked {
-  background: var(--bulb);
-  border-color: var(--bulb);
-  box-shadow: 0 0 8px rgba(217, 193, 136, 0.3);
+  background: var(--steel);
+  border-color: var(--steel);
+  box-shadow: 0 0 8px rgba(143, 163, 184, 0.3);
 }
 .setting input[type="checkbox"]:checked::after {
   content: "";
@@ -1092,7 +1076,7 @@ body.removed-window {
 #btn-refresh-filters {
   background: transparent;
   color: var(--dim-2);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--edge);
   border-radius: 4px;
   padding: 3px 8px;
   font-family: var(--font-display);
@@ -1103,9 +1087,9 @@ body.removed-window {
   transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 #btn-refresh-filters:hover:not(:disabled) {
-  color: var(--bulb);
-  border-color: var(--bulb-edge);
-  background: var(--bulb-wash);
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
 }
 #btn-refresh-filters:disabled {
   opacity: 0.55;
@@ -1121,7 +1105,7 @@ body.removed-window {
   cursor: default;
 }
 .update-row:hover {
-  background: var(--surface);
+  background: var(--gun-raised);
 }
 .settings-window #btn-update {
   flex-shrink: 0;
@@ -1131,11 +1115,11 @@ body.removed-window {
 .removed-window .service.restorable {
   padding: 10px 12px;
   margin-bottom: 6px;
-  background: var(--surface);
+  background: var(--gun-raised);
   transition: background 0.16s ease;
 }
 .removed-window .service.restorable:hover {
-  background: var(--surface-2);
+  background: var(--gun-hover);
   color: var(--text);
 }
 .removed-window .service .restore-plus {
@@ -1146,7 +1130,7 @@ body.removed-window {
   transition: color 0.16s ease;
 }
 .removed-window .service.restorable:hover .restore-plus {
-  color: var(--bulb);
+  color: var(--steel);
 }
 .empty {
   color: var(--dim-2);

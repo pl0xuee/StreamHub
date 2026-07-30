@@ -10,7 +10,6 @@ const gridBtn = document.getElementById('btn-grid');
 const gridPanelEl = document.getElementById('grid-panel');
 const gridLayoutEl = document.getElementById('grid-layout');
 const gridPreviewEl = document.getElementById('grid-preview');
-const onairEl = document.getElementById('onair');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
@@ -414,16 +413,10 @@ function renderGridToggle() {
   gridLayoutEl.title = only ? 'Add a second pane to choose an arrangement' : '';
 }
 
-// The house lights. While something is playing the chrome is not what anyone is looking at, so it
-// goes down to almost nothing and comes back the moment it is reached for (styles.css does the
-// reaching, via :hover and :focus-within). Only the on-air bulb stays lit — which is what keeps a
-// dark sidebar readable as "playing" rather than "broken".
-//
-// Nothing here resizes anything: the service views keep the bounds they had, so the page being
-// watched never reflows. It is opacity and nothing else.
+// The on-air signal is the seam — the edge where the chrome stops and the picture starts — so
+// there is nothing here to show or hide, only a state for styles.css to light that edge from.
 function renderLights() {
-  onairEl.hidden = !playing;
-  document.body.classList.toggle('lights-down', playing && state.dimWhilePlaying !== false);
+  document.body.classList.toggle('playing', playing);
 }
 
 // Which slice of the window the chrome needs right now. Anything that has to be drawn over the
