@@ -29,10 +29,10 @@ function defaultSettings() {
     // the way it used to sit: some people would rather have nothing at all over the picture, and
     // it is also the way out if a compositor will not composite one view over another.
     glassSidebar: true,
-    // Fade the sidebar down while something is playing, and bring it back on approach. On by
-    // default: it is the app's own idea of good manners, and the one control that undoes it is
-    // in Settings for anyone who disagrees.
-    dimWhilePlaying: true,
+    // Keep the sidebar off the left edge until the pointer reaches for it. On by default: the
+    // chrome floats over the page now, so resting out of the way is the whole point of it — off
+    // pins it open, for anyone who would rather give up the space than reach.
+    autoHideSidebar: true,
     // Per-site cosmetic tweaks, each switchable on its own — see enhance.js.
     enhance: defaultEnhance(),
   };
@@ -47,7 +47,10 @@ function cleanSettings(raw) {
     minimizeToTray: s.minimizeToTray === true,
     glassSidebar: s.glassSidebar !== false,
     // Defaults on, so an absent key (a config written before this shipped) keeps the behaviour.
-    dimWhilePlaying: s.dimWhilePlaying !== false,
+    // `dimWhilePlaying` is what this was called when the sidebar faded rather than slid away, so a
+    // config written before the rename still carries the user's choice: honour it.
+    autoHideSidebar:
+      s.autoHideSidebar !== undefined ? s.autoHideSidebar !== false : s.dimWhilePlaying !== false,
     enhance: cleanEnhance(s.enhance),
   };
 }

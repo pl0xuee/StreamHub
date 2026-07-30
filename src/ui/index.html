@@ -10,6 +10,12 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <!-- What is left on screen while the sidebar is stowed: a strip down the left edge that catches
+         the pointer reaching for it. It is the sidebar's own seam, so it goes on carrying the
+         on-air light. The chrome view is shrunk to exactly this width, which is what hands
+         everything to its right — clicks included — back to the picture. -->
+    <div id="edge-strip" class="edge-strip" hidden></div>
+
     <nav id="sidebar">
       <div class="brand">
         <button id="btn-collapse" title="Hide sidebar" aria-label="Hide sidebar">

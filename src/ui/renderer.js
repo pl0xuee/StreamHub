@@ -23,12 +23,22 @@ let state = {
   gridMode: false,
   gridPanes: [],
 };
+const edgeStripEl = document.getElementById('edge-strip');
+const sidebarEl = document.getElementById('sidebar');
+
 let menuServiceId = null; // the service the context menu is currently open for
 let menuWanted = null; // where that menu was asked for, so it can be re-placed when the view resizes
 // Whether a service is playing right now. It arrives on its own channel rather than in the state
 // payload (see 'playback' in main.js) so that starting or stopping a video does not re-render the
 // service list — which would cancel an in-progress drag.
 let playing = false;
+// Whether the sidebar has slid out of the window, and whether the pointer is currently holding it
+// back in. Kept out of `state` because they change on hover and on playback, neither of which is a
+// reason to re-render the service list — that would cancel an in-progress drag.
+let stowed = false;
+// Starts held open: the app opens with the sidebar out and it leaves the first time the pointer
+// moves off it, so the gesture is learned by watching it happen once.
+let peeking = true;
 
 // The grid panes showing this service, as {paneId, position} — position being the pane's 1-based
 // place in the whole grid, which is what the on-screen tiling order is. A service can hold more
@@ -413,22 +423,92 @@ function renderGridToggle() {
   gridLayoutEl.title = only ? 'Add a second pane to choose an arrangement' : '';
 }
 
-// The on-air signal is the seam — the edge where the chrome stops and the picture starts — so
-// there is nothing here to show or hide, only a state for styles.css to light that edge from.
-function renderLights() {
+// The chrome sits on the picture now, so its resting state is "away": the sidebar lives off the
+// left edge and main.js shrinks the chrome view to the strip, which hands the entire window —
+// clicks included — to the page. Reaching for that strip slides it back over the top.
+//
+// Away all the time rather than only while something is playing. Tying it to playback meant the
+// sidebar appeared and disappeared on its own while you were picking something to watch, and it
+// still covered the page whenever nothing happened to be playing. One gesture, always the same one,
+// is easier to learn than a rule about when the gesture applies.
+//
+// The on-air signal is separate and stays on the seam — the edge where the chrome stops and the
+// picture starts. There is no lamp to show or hide, only a state for styles.css to light that edge
+// from, and the strip is that same edge, so it goes on saying "playing" with the sidebar gone.
+function renderStow() {
+  const away = state.autoHideSidebar !== false;
+  if (away !== stowed) {
+    stowed = away;
+    clearTimeout(peekTimer);
+    // Pinned open, nothing is peeking; newly stowed, the sidebar is left out until the pointer
+    // moves off it, which is what teaches the gesture without a tooltip explaining it.
+    peeking = away;
+    document.body.classList.toggle('peeking', peeking);
+  }
   document.body.classList.toggle('playing', playing);
+  document.body.classList.toggle('stowed', stowed);
+  edgeStripEl.hidden = !stowed;
+  syncChromeRegion();
 }
+
+// How wide each region is, for comparing one against another. The real widths live in main.js;
+// these only have to sort. 'full' is whatever the window is, so it beats everything.
+const REGION_ORDER = { peek: 0, rail: 1, sidebar: 2, full: 3 };
+// Must match the sidebar's transform transition in styles.css.
+const SLIDE_MS = 220;
+// A small overshoot off the sidebar should not slam it shut.
+const LEAVE_GRACE_MS = 180;
+
+let region = 'sidebar'; // the region main.js was last asked for
+let regionTimer = null; // a pending shrink, held until the slide it would clip has finished
+let peekTimer = null; // a pending un-peek, cancelled if the pointer comes back
 
 // Which slice of the window the chrome needs right now. Anything that has to be drawn over the
 // picture — a sheet, the palette, a right-click menu — needs the whole window; otherwise the chrome
 // is only as wide as the sidebar it is showing. See CHROME_REGIONS in main.js.
 function chromeRegion() {
   if (!menuEl.hidden) return 'full';
+  if (stowed && !peeking) return 'peek';
   return state.sidebarCollapsed ? 'rail' : 'sidebar';
 }
 
+// The chrome view is the room the sidebar is drawn in, so it has to be at least as wide as the
+// sidebar for the whole of a slide. Growing can happen at once — the sidebar then slides into the
+// room that makes. Shrinking has to wait for the slide to finish, or the view clips the sidebar out
+// of existence instead of letting it leave, and the animation is never seen.
 function syncChromeRegion() {
-  window.shell.setChromeRegion(chromeRegion());
+  const want = chromeRegion();
+  clearTimeout(regionTimer);
+  if (want === region) return;
+  if (REGION_ORDER[want] > REGION_ORDER[region]) {
+    region = want;
+    window.shell.setChromeRegion(want);
+    return;
+  }
+  regionTimer = setTimeout(() => {
+    region = want;
+    window.shell.setChromeRegion(want);
+  }, SLIDE_MS);
+}
+
+// Reaching for the strip holds the sidebar in; leaving it lets go again, after a moment's grace so
+// that clipping the corner on the way past does not slam it shut.
+function holdPeek() {
+  clearTimeout(peekTimer);
+  if (!stowed || peeking) return;
+  peeking = true;
+  document.body.classList.toggle('peeking', true);
+  syncChromeRegion();
+}
+
+function releasePeek() {
+  clearTimeout(peekTimer);
+  if (!stowed || !peeking) return;
+  peekTimer = setTimeout(() => {
+    peeking = false;
+    document.body.classList.toggle('peeking', false);
+    syncChromeRegion();
+  }, LEAVE_GRACE_MS);
 }
 
 function applyState(next) {
@@ -439,9 +519,9 @@ function applyState(next) {
   renderUpdateBadge();
   renderGridToggle();
   renderGridPreview();
-  renderLights();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
-  syncChromeRegion();
+  // Last, because it asks for the chrome region that all of the above has just settled.
+  renderStow();
 }
 
 async function init() {
@@ -475,12 +555,19 @@ async function init() {
     .getElementById('btn-fullscreen')
     .addEventListener('click', () => window.shell.toggleFullscreen());
 
-  // Playback rides its own channel rather than the state payload, so the sidebar can dim and lift
-  // without re-rendering the service list under an in-progress drag.
+  // Playback rides its own channel rather than the state payload, so the sidebar can stow and
+  // return without re-rendering the service list under an in-progress drag.
   window.shell.onPlayback((on) => {
     playing = on;
-    renderLights();
+    renderStow();
   });
+
+  // Reaching for the strip holds the sidebar in; leaving it lets go. Entering the sidebar itself
+  // counts as reaching too — the strip sits underneath it, so a pointer that arrives while the
+  // sidebar is already sliding in would otherwise never cross the strip at all.
+  edgeStripEl.addEventListener('mouseenter', holdPeek);
+  sidebarEl.addEventListener('mouseenter', holdPeek);
+  sidebarEl.addEventListener('mouseleave', releasePeek);
 
   window.shell.onState((next) => applyState(next));
 }

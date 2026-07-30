@@ -218,7 +218,7 @@ function statePayload() {
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
     glassSidebar: config.settings.glassSidebar !== false,
-    dimWhilePlaying: config.settings.dimWhilePlaying !== false,
+    autoHideSidebar: config.settings.autoHideSidebar !== false,
     // Only the opening value — after this it is pushed on the 'playback' channel above.
     playing: mediaPlaying,
     enhance: cleanEnhance(config.settings.enhance),
@@ -765,11 +765,11 @@ ipcMain.handle('set-tray', (_e, on) => {
   return config.settings.minimizeToTray;
 });
 
-ipcMain.handle('set-dim-while-playing', (_e, on) => {
-  config.settings.dimWhilePlaying = on === true;
+ipcMain.handle('set-auto-hide-sidebar', (_e, on) => {
+  config.settings.autoHideSidebar = on === true;
   persist();
   broadcast();
-  return config.settings.dimWhilePlaying;
+  return config.settings.autoHideSidebar;
 });
 
 ipcMain.handle('set-enhance', (_e, key, on) => {
