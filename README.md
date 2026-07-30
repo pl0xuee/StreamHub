@@ -34,23 +34,31 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 
 ## Features
 
+- **Glass chrome** — the sidebar is tinted gunmetal floating over the page rather than sitting
+  beside it, and it rests off the left edge until you reach for that edge. Nothing behind it moves
+  or resizes when it comes and goes. Both halves are switchable in Settings: pin it open, or dock
+  it beside the page opaque, the way it used to sit.
 - Sidebar with one-click switching; drag to reorder, delete to a "Removed" list, click to
   restore. Collapses to an icon rail.
+- **Quick switch** — `Ctrl+K`, a few letters, Enter. Shift+Enter tiles it as another grid pane.
+  Works from inside a service too, not just when the sidebar is already open.
 - **Pause on switch** — leaving a service pauses its video, returning resumes it.
 - **Stays signed in**, per service, in isolated sessions. Popup sign-in ("Sign in with
   Google/Apple") works. Right-click a service to sign out and wipe its data.
 - **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen drive playback.
   Media keys work while the app is focused.
 - **Grid view** — tile up to four services at once, the same one more than once if you like
-  (two streams side by side). Drag the numbered chips to move a pane; each keeps playing where
-  it is. Choose packed, stacked or side-by-side.
-- **Full-window theater mode on YouTube** — the player fills the window and the top bar hides
-  until you reach for it. Scroll down as usual for the description and comments. On by default;
-  the switch is in Settings.
+  (two streams side by side). The controls live in a small panel at the top of the window that
+  stays out of the way until you reach for it: drag a tile to move a pane and it keeps playing
+  where it lands. Choose packed, stacked or side-by-side.
+- **Full-window theater mode on YouTube** — the player takes the window to itself with the video
+  centred in it, and the top bar hides until you reach for it. Scroll down as usual for the
+  description and comments. On by default; the switch is in Settings.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
-- **Settings** (sidebar gear, or `Ctrl+,`) — ad blocker, YouTube theater mode, tray behaviour,
-  updates.
+- **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
+  ad blocker, YouTube theater mode, how the sidebar behaves, tray behaviour, updates. The removed
+  list is a panel now too.
 - **Optional tray icon** — closing the window keeps a stream running.
 
 ## Updating
