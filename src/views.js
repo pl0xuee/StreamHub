@@ -225,6 +225,7 @@ class ViewManager {
     // that something has to be told.
     this.onStackChange = () => {};
     this.onFullscreenChange = () => {};
+    this.onCommandPalette = () => {}; // Ctrl+K pressed inside a service view; main.js opens ours
   }
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
@@ -328,6 +329,16 @@ class ViewManager {
     // to the OS external-protocol handler. See ALLOWED_PROTOCOLS above.
     wc.on('will-frame-navigate', (details) => {
       if (!isNavigable(details.url)) details.preventDefault();
+    });
+
+    // A keystroke inside a service view never reaches our own renderer — the page has it. Ctrl+K is
+    // the one chord we take back, because the whole point of a quick switch is that it works from
+    // wherever you are, and by then the sidebar is usually resting off the edge.
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || !input.control || input.alt || input.meta) return;
+      if ((input.key || '').toLowerCase() !== 'k') return;
+      event.preventDefault();
+      this.onCommandPalette();
     });
 
     // When a site enters/exits HTML5 fullscreen, let the service view own the whole

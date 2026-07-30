@@ -68,6 +68,140 @@
       </div>
     </nav>
 
+    <!-- Settings and the removed list used to be windows of their own, because a 220px sidebar had
+         nowhere to put a panel and the service view covered everything else. The chrome can own the
+         whole window now, so they are sheets over the page instead. -->
+    <div id="scrim" class="scrim" hidden></div>
+
+    <!-- Quick switch. With the sidebar resting off the edge, this is how a service is reached
+         without going to fetch the sidebar first: type a few letters, Enter switches, Shift+Enter
+         tiles it as another grid pane. -->
+    <div id="palette" class="palette" hidden role="dialog" aria-label="Quick switch">
+      <input
+        id="palette-input"
+        class="palette-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Switch to…"
+      />
+      <ul id="palette-list" class="palette-list"></ul>
+      <p class="palette-hint">
+        <span>Enter — switch</span><span>Shift+Enter — add a pane</span><span>Esc — close</span>
+      </p>
+    </div>
+
+    <aside id="sheet-settings" class="sheet" hidden aria-label="Settings">
+      <header class="sheet-head">
+        <h1>Settings</h1>
+        <button class="sheet-close" data-close-sheet title="Close (Esc)" aria-label="Close">×</button>
+      </header>
+      <div class="sheet-body">
+        <p class="sheet-lede">Saved on this machine, and applied as soon as you change them.</p>
+
+        <section class="settings-section">
+          <h2>Privacy</h2>
+          <div class="settings">
+            <label class="setting" for="chk-adblock">
+              <input type="checkbox" id="chk-adblock" />
+              <span class="setting-text">
+                <span class="setting-title">Experimental ad blocker</span>
+                <span class="setting-sub" id="adblock-sub">Brave Experimental Adblock Rules</span>
+              </span>
+            </label>
+
+            <div class="setting-extra" id="adblock-extra" hidden>
+              <span id="filter-age">—</span>
+              <button id="btn-refresh-filters" title="Fetch the latest filter lists now">Update</button>
+            </div>
+          </div>
+          <p class="section-note">
+            Right-click a service in the sidebar to turn blocking off for just that site — some
+            players object to it.
+          </p>
+        </section>
+
+        <section class="settings-section">
+          <h2>YouTube</h2>
+          <div class="settings">
+            <label class="setting" for="chk-theater">
+              <input type="checkbox" id="chk-theater" />
+              <span class="setting-text">
+                <span class="setting-title">Full-window theater mode</span>
+                <span class="setting-sub">The video fills the window on its own, centred; the top bar hides until you reach for it</span>
+              </span>
+            </label>
+          </div>
+          <p class="section-note">
+            Scroll down as usual to reach the description and comments. Turn this off if YouTube
+            changes its layout and the page starts looking wrong.
+          </p>
+        </section>
+
+        <section class="settings-section">
+          <h2>Sidebar</h2>
+          <div class="settings">
+            <label class="setting" for="chk-autohide">
+              <input type="checkbox" id="chk-autohide" />
+              <span class="setting-text">
+                <span class="setting-title">Hide the sidebar until you reach for it</span>
+                <span class="setting-sub">It rests off the left edge and slides back over the page when you move onto that edge</span>
+              </span>
+            </label>
+
+            <label class="setting" for="chk-glass">
+              <input type="checkbox" id="chk-glass" />
+              <span class="setting-text">
+                <span class="setting-title">Glass sidebar</span>
+                <span class="setting-sub">Tinted, with the page showing through it. Off docks it beside the page instead, opaque</span>
+              </span>
+            </label>
+          </div>
+          <p class="section-note">
+            Turn hiding off to keep the sidebar out permanently. Either way nothing behind it moves
+            or resizes — only the sidebar travels, so the page you are watching stays exactly where
+            it is.
+          </p>
+        </section>
+
+        <section class="settings-section">
+          <h2>Window</h2>
+          <div class="settings">
+            <label class="setting" for="chk-tray">
+              <input type="checkbox" id="chk-tray" />
+              <span class="setting-text">
+                <span class="setting-title">Keep running in tray</span>
+                <span class="setting-sub">Closing the window keeps playback going</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>Updates</h2>
+          <div class="setting update-row">
+            <span class="setting-text">
+              <span class="setting-title" id="update-title">StreamHub</span>
+              <span class="setting-sub" id="update-sub">Checking is manual — nothing is downloaded until you say so.</span>
+            </span>
+            <button id="btn-update" title="Check for updates">Check for updates</button>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <aside id="sheet-removed" class="sheet" hidden aria-label="Removed services">
+      <header class="sheet-head">
+        <h1>Removed</h1>
+        <button class="sheet-close" data-close-sheet title="Close (Esc)" aria-label="Close">×</button>
+      </header>
+      <div class="sheet-body">
+        <p class="sheet-lede">Click one to add it back to your list.</p>
+        <ul id="removed-list" class="services"></ul>
+        <p id="removed-empty" class="empty" hidden>Nothing removed. Sites you delete show up here.</p>
+      </div>
+    </aside>
+
     <!-- Right-click menu for a service row. Hidden until a row is right-clicked. -->
     <div id="service-menu" class="context-menu" hidden>
       <div class="context-title" id="menu-title">Service</div>

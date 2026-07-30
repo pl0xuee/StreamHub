@@ -17,8 +17,6 @@ contextBridge.exposeInMainWorld('shell', {
   reorderServices: (orderedIds) => ipcRenderer.send('reorder-services', orderedIds),
   removeService: (id) => ipcRenderer.send('remove-service', id),
   restoreService: (id) => ipcRenderer.send('restore-service', id),
-  openRemovedWindow: () => ipcRenderer.send('open-removed-window'),
-  openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
   // Which slice of the window the chrome view occupies: 'peek' | 'rail' | 'sidebar' | 'full'.
   // A native view eats mouse events across its whole rect, so the chrome is only ever as wide as
@@ -41,6 +39,12 @@ contextBridge.exposeInMainWorld('shell', {
   setTray: (on) => ipcRenderer.invoke('set-tray', on),
   // Whether the sidebar slides out of the window while something is playing.
   setAutoHideSidebar: (on) => ipcRenderer.invoke('set-auto-hide-sidebar', on),
+  // Whether the sidebar is tinted glass over the page, or docked opaque beside it.
+  setGlassSidebar: (on) => ipcRenderer.invoke('set-glass-sidebar', on),
+  // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
+  // renderer could never have seen for itself, forwarded by the main process.
+  onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),
+  onOpenPalette: (cb) => ipcRenderer.on('open-palette', () => cb()),
   // Running count of blocked requests, pushed every couple of seconds while blocking is on.
   onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),
   // Download percentage while an update is being fetched; null when it finishes or fails.

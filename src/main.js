@@ -4,7 +4,6 @@ const { spawn } = require('child_process');
 const {
   app,
   BaseWindow,
-  BrowserWindow,
   WebContentsView,
   components,
   ipcMain,
@@ -75,7 +74,9 @@ const SIDEBAR_RAIL_WIDTH = 56;
 // a hover strip while it is stowed, the rail or the sidebar while it is out, and the whole window
 // only while something (a sheet, the palette, a context menu) genuinely needs to be over the
 // picture. The renderer asks for a region by name; this is the only place bounds are set.
-const CHROME_REGIONS = { peek: 8, rail: SIDEBAR_RAIL_WIDTH, sidebar: SIDEBAR_WIDTH, full: null };
+// `peek` must match --peek-width in styles.css: it is the same strip, described once as a reach
+// target and once as a slice of window taken away from the page.
+const CHROME_REGIONS = { peek: 24, rail: SIDEBAR_RAIL_WIDTH, sidebar: SIDEBAR_WIDTH, full: null };
 let chromeRegion = 'sidebar';
 
 function chromeRegionWidth(windowWidth) {
@@ -102,8 +103,6 @@ function chromeRegionWidth(windowWidth) {
 
 let baseWindow;
 let chromeView; // the app's own UI (sidebar), hosted in its own view
-let removedWindow = null; // separate window listing removed services
-let settingsWindow = null; // separate window holding the app's settings
 let viewManager;
 let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
@@ -229,12 +228,12 @@ function statePayload() {
   };
 }
 
-// Every window that renders app state: the sidebar, plus the two secondary windows when open.
+// Everything that renders app state. Settings and the removed list are panels in the chrome now
+// rather than windows of their own, so this is a one-item list — kept as a list because the grid
+// HUD is about to be a second one.
 function uiWebContents() {
   const out = [];
   if (chromeView && !chromeView.webContents.isDestroyed()) out.push(chromeView.webContents);
-  if (removedWindow && !removedWindow.isDestroyed()) out.push(removedWindow.webContents);
-  if (settingsWindow && !settingsWindow.isDestroyed()) out.push(settingsWindow.webContents);
   return out;
 }
 
@@ -244,16 +243,13 @@ function broadcast() {
 }
 
 // Live counters and progress, which have their own channels rather than riding the full state
-// payload. Sent to whichever windows are open — the ad blocker's tally and an update's
-// progress are both rendered in the settings window.
+// payload — the ad blocker's tally and an update's download percentage.
 function sendToUi(channel, payload) {
   for (const wc of uiWebContents()) wc.send(channel, payload);
 }
 
-// The settings window owns the controls that raise these dialogs, so it is the window they
-// belong to while it is open — parenting them to the main window would put them behind it.
+// The controls that raise these dialogs live in the main window now, so that is where they belong.
 function uiParent() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) return settingsWindow;
   return baseWindow;
 }
 
@@ -390,6 +386,13 @@ function createWindow() {
   viewManager.onFullscreenChange = (on) => {
     if (chromeView && !chromeView.webContents.isDestroyed()) chromeView.setVisible(!on);
   };
+  // Ctrl+K pressed inside a service view: the page owns the keystroke, so views.js takes this one
+  // chord back and hands it here.
+  viewManager.onCommandPalette = () => {
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      chromeView.webContents.send('open-palette');
+    }
+  };
 
   layout();
   baseWindow.on('resize', layout);
@@ -421,7 +424,6 @@ function createWindow() {
 
   baseWindow.on('closed', () => {
     baseWindow = null;
-    if (removedWindow && !removedWindow.isDestroyed()) removedWindow.close();
   });
 }
 
@@ -468,62 +470,13 @@ function applyTraySetting() {
   else destroyTray();
 }
 
-// Separate window listing removed services; clicking one restores it to the sidebar.
-function openRemovedWindow() {
-  if (removedWindow && !removedWindow.isDestroyed()) {
-    removedWindow.focus();
-    return;
+// Settings and the removed list are panels in the chrome now, so opening one is a message to the
+// renderer rather than a window to build. Same for the quick switch, which the app menu and any
+// service view both need a way to raise.
+function openSheet(name) {
+  if (chromeView && !chromeView.webContents.isDestroyed()) {
+    chromeView.webContents.send('open-sheet', name);
   }
-  removedWindow = new BrowserWindow({
-    width: 380,
-    height: 560,
-    minWidth: 300,
-    minHeight: 320,
-    backgroundColor: '#0d1015',
-    title: 'Removed services',
-    autoHideMenuBar: true,
-    parent: baseWindow || undefined,
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  removedWindow.loadFile(path.join(__dirname, 'ui', 'removed.html'));
-  removedWindow.on('closed', () => {
-    removedWindow = null;
-  });
-}
-
-// Settings live in their own window rather than in the sidebar: the sidebar is 220px wide and
-// is covered by the active service's view everywhere else, so there is nowhere in the main
-// window to put a panel that isn't the sidebar itself.
-function openSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
-    return;
-  }
-  settingsWindow = new BrowserWindow({
-    width: 440,
-    height: 580,
-    minWidth: 380,
-    minHeight: 420,
-    backgroundColor: '#0d1015',
-    title: 'Settings',
-    autoHideMenuBar: true,
-    parent: baseWindow || undefined,
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
-  settingsWindow.on('closed', () => {
-    settingsWindow = null;
-  });
 }
 
 // A tiny menu that keeps useful accelerators (F11 fullscreen, reload) without the
@@ -540,7 +493,7 @@ function buildAppMenu() {
           {
             label: 'Settings',
             accelerator: 'CmdOrCtrl+,',
-            click: () => openSettingsWindow(),
+            click: () => openSheet('settings'),
           },
           { type: 'separator' },
           { role: 'quit' },
@@ -695,8 +648,16 @@ ipcMain.on('restore-service', (_e, serviceId) => {
   else broadcast();
 });
 
-ipcMain.on('open-removed-window', () => openRemovedWindow());
-ipcMain.on('open-settings-window', () => openSettingsWindow());
+ipcMain.handle('set-glass-sidebar', (_e, on) => {
+  config.settings.glassSidebar = on === true;
+  // The picture either runs the full width of the window with the chrome over it, or starts where
+  // the sidebar ends. Re-laying out is all it takes; nothing reloads.
+  viewManager.glass = config.settings.glassSidebar;
+  layout();
+  persist();
+  broadcast();
+  return config.settings.glassSidebar;
+});
 
 // Toggle ad blocking across every service session. Turning it on for the first time has to
 // fetch the filter engine, which can fail (offline, upstream down) — setEnabled reports the

@@ -364,7 +364,37 @@ menuSignoutEl.addEventListener('click', () => {
 window.addEventListener('click', closeServiceMenu);
 window.addEventListener('blur', closeServiceMenu);
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeServiceMenu();
+  if (e.key === 'Escape') {
+    // Innermost first: the menu sits on top of a sheet, and a sheet on top of the sidebar.
+    if (!menuEl.hidden) closeServiceMenu();
+    else if (paletteOpen) closePalette();
+    else if (openSheetName) closeSheet();
+    return;
+  }
+
+  // Ctrl+K from inside our own chrome. The same chord pressed in a service view belongs to the
+  // page, so main.js takes it back there and forwards it — see onOpenPalette in init().
+  if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key || '').toLowerCase() === 'k') {
+    e.preventDefault();
+    if (paletteOpen) closePalette();
+    else openPalette();
+    return;
+  }
+
+  if (!paletteOpen) return;
+  const matches = paletteMatches();
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    paletteIndex = Math.min(paletteIndex + 1, matches.length - 1);
+    renderPalette();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    paletteIndex = Math.max(paletteIndex - 1, 0);
+    renderPalette();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    choosePalette(matches[paletteIndex], e.shiftKey);
+  }
 });
 menuEl.addEventListener('click', (e) => e.stopPropagation());
 
@@ -459,6 +489,11 @@ const SLIDE_MS = 220;
 // A small overshoot off the sidebar should not slam it shut.
 const LEAVE_GRACE_MS = 180;
 
+// Declared here because chromeRegion() below has to know about them, and it is defined before
+// either has anything to say. See the sheet and palette sections further down.
+let openSheetName = null;
+let paletteOpen = false;
+
 let region = 'sidebar'; // the region main.js was last asked for
 let regionTimer = null; // a pending shrink, held until the slide it would clip has finished
 let peekTimer = null; // a pending un-peek, cancelled if the pointer comes back
@@ -467,7 +502,7 @@ let peekTimer = null; // a pending un-peek, cancelled if the pointer comes back
 // picture — a sheet, the palette, a right-click menu — needs the whole window; otherwise the chrome
 // is only as wide as the sidebar it is showing. See CHROME_REGIONS in main.js.
 function chromeRegion() {
-  if (!menuEl.hidden) return 'full';
+  if (openSheetName || paletteOpen || !menuEl.hidden) return 'full';
   if (stowed && !peeking) return 'peek';
   return state.sidebarCollapsed ? 'rail' : 'sidebar';
 }
@@ -511,9 +546,239 @@ function releasePeek() {
   }, LEAVE_GRACE_MS);
 }
 
+// ---- Sheets ----
+//
+// Settings and the removed list. They were windows of their own until the chrome could cover the
+// whole window; the code that renders them is unchanged, it just draws into a panel here and reads
+// the state the sidebar already has instead of fetching its own copy.
+const scrimEl = document.getElementById('scrim');
+const sheetEls = {
+  settings: document.getElementById('sheet-settings'),
+  removed: document.getElementById('sheet-removed'),
+};
+
+function openSheet(name) {
+  if (!sheetEls[name]) return;
+  openSheetName = name;
+  for (const [key, el] of Object.entries(sheetEls)) el.hidden = key !== name;
+  scrimEl.hidden = false;
+  syncChromeRegion();
+  renderSheets();
+  // The sheet is over the page, so the pointer is nowhere near the sidebar — without this the
+  // sidebar would stow out from under the panel that was opened from it.
+  holdPeek();
+}
+
+function closeSheet() {
+  if (!openSheetName) return;
+  openSheetName = null;
+  for (const el of Object.values(sheetEls)) el.hidden = true;
+  if (!paletteOpen) scrimEl.hidden = true;
+  syncChromeRegion();
+  releasePeek();
+}
+
+// ---- Quick switch ----
+//
+// Substring match on the service name, in list order. With a dozen services there is nothing for
+// fuzzy matching to earn, and "net" landing on Netflix rather than on whatever scores highest is
+// what someone typing three letters fast is expecting.
+const paletteEl = document.getElementById('palette');
+const paletteInputEl = document.getElementById('palette-input');
+const paletteListEl = document.getElementById('palette-list');
+let paletteIndex = 0;
+
+function paletteMatches() {
+  const q = paletteInputEl.value.trim().toLowerCase();
+  const all = state.services || [];
+  return q ? all.filter((s) => s.name.toLowerCase().includes(q)) : all;
+}
+
+function renderPalette() {
+  const matches = paletteMatches();
+  if (paletteIndex >= matches.length) paletteIndex = Math.max(0, matches.length - 1);
+  paletteListEl.replaceChildren();
+  if (!matches.length) {
+    const li = document.createElement('li');
+    li.className = 'palette-empty';
+    li.textContent = 'No service by that name.';
+    paletteListEl.appendChild(li);
+    return;
+  }
+  matches.forEach((svc, i) => {
+    const li = document.createElement('li');
+    if (i === paletteIndex) li.className = 'on';
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.style.background = svc.color;
+    icon.textContent = initial(svc.name);
+
+    const label = document.createElement('span');
+    label.textContent = svc.name;
+
+    li.append(icon, label);
+
+    // In grid mode every choice adds a pane rather than switching, so say which panes this service
+    // already holds — otherwise a second Enter on the same row looks like it did nothing.
+    const panes = state.gridMode ? panesFor(svc.id) : [];
+    if (panes.length) {
+      const where = document.createElement('span');
+      where.className = 'where';
+      where.textContent = panes.map((p) => p.position).join(' ');
+      where.title = `Already in pane ${panes.map((p) => p.position).join(', ')}`;
+      li.appendChild(where);
+    }
+
+    li.addEventListener('click', (e) => choosePalette(svc, e.shiftKey));
+    paletteListEl.appendChild(li);
+  });
+}
+
+function openPalette() {
+  paletteOpen = true;
+  paletteIndex = 0;
+  paletteInputEl.value = '';
+  paletteEl.hidden = false;
+  scrimEl.hidden = false;
+  syncChromeRegion();
+  renderPalette();
+  paletteInputEl.focus();
+  // Same reason as a sheet: the pointer is out over the page, and the sidebar must not stow out
+  // from under the thing that is using it.
+  holdPeek();
+}
+
+function closePalette() {
+  if (!paletteOpen) return;
+  paletteOpen = false;
+  paletteEl.hidden = true;
+  if (!openSheetName) scrimEl.hidden = true;
+  syncChromeRegion();
+  releasePeek();
+}
+
+// Enter switches; Shift+Enter tiles it as another grid pane. In grid mode there is nothing to
+// switch to, so every choice adds a pane.
+function choosePalette(svc, asPane) {
+  if (!svc) return;
+  closePalette();
+  if (asPane || state.gridMode) window.shell.addGridPane(svc.id);
+  else window.shell.switchService(svc.id);
+}
+
+// ---- Settings sheet ----
+// Owns no state of its own: it renders what the main process sends and reports changes back over
+// the same `shell` bridge, so a change made here shows up in the sidebar at once.
+const adblockEl = document.getElementById('chk-adblock');
+const adblockSubEl = document.getElementById('adblock-sub');
+const adblockExtraEl = document.getElementById('adblock-extra');
+const filterAgeEl = document.getElementById('filter-age');
+const refreshBtn = document.getElementById('btn-refresh-filters');
+const theaterEl = document.getElementById('chk-theater');
+const autoHideEl = document.getElementById('chk-autohide');
+const glassEl = document.getElementById('chk-glass');
+const trayEl = document.getElementById('chk-tray');
+const updateBtn = document.getElementById('btn-update');
+const updateTitleEl = document.getElementById('update-title');
+const updateSubEl = document.getElementById('update-sub');
+
+const ADBLOCK_SUB = 'Brave Experimental Adblock Rules';
+
+function setAdblockSub(text, isError) {
+  adblockSubEl.textContent = text;
+  adblockSubEl.classList.toggle('error', Boolean(isError));
+}
+
+function renderAdblockCount(blocked) {
+  setAdblockSub(blocked > 0 ? `${blocked.toLocaleString()} requests blocked` : ADBLOCK_SUB, false);
+}
+
+// How stale the rules are, which is the useful question — not the exact timestamp.
+function ageText(ms) {
+  if (!ms) return 'Age unknown';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  if (days <= 0) return 'Updated today';
+  if (days === 1) return '1 day old';
+  return `${days} days old`;
+}
+
+function renderAdblock(ab) {
+  if (!ab) return;
+  adblockEl.checked = ab.enabled;
+  if (ab.error) setAdblockSub(`Filter list unavailable — ${ab.error}`, true);
+  else if (ab.enabled) renderAdblockCount(ab.blocked);
+  else setAdblockSub(ADBLOCK_SUB, false);
+
+  // The filter controls only mean anything once the engine is actually loaded.
+  adblockExtraEl.hidden = !ab.enabled || !ab.ready;
+  filterAgeEl.textContent = ageText(ab.lastUpdated);
+}
+
+// `busy` covers the checking/downloading states, where the button is reporting on itself and must
+// not be overwritten by a state broadcast arriving mid-download.
+let updateBusy = false;
+
+function renderUpdate() {
+  updateTitleEl.textContent = state.version ? `StreamHub v${state.version}` : 'StreamHub';
+  if (updateBusy) return;
+  const version = state.updateAvailable;
+  updateBtn.textContent = version ? `Update to v${version}` : 'Check for updates';
+  updateBtn.title = version ? `Install StreamHub v${version}` : 'Check for updates';
+  updateBtn.classList.toggle('has-update', Boolean(version));
+  updateSubEl.textContent = version
+    ? `v${version} is available. Installing restarts StreamHub.`
+    : 'Checking is manual — nothing is downloaded until you say so.';
+}
+
+// ---- Removed sheet ----
+const removedListEl = document.getElementById('removed-list');
+const removedEmptyEl = document.getElementById('removed-empty');
+
+function renderRemoved(removed) {
+  removedListEl.replaceChildren();
+  removedEmptyEl.hidden = removed.length > 0;
+  for (const svc of removed) {
+    const li = document.createElement('li');
+    li.className = 'service restorable';
+    li.dataset.id = svc.id;
+    li.title = `Add ${svc.name} back`;
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.style.background = svc.color;
+    icon.textContent = initial(svc.name);
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = svc.name;
+
+    const plus = document.createElement('span');
+    plus.className = 'restore-plus';
+    plus.textContent = '+';
+
+    li.append(icon, label, plus);
+    li.addEventListener('click', () => window.shell.restoreService(svc.id));
+    removedListEl.appendChild(li);
+  }
+}
+
+// Both sheets, rendered from the state the sidebar already has. Cheap enough to do on every
+// broadcast whether they are open or not, which keeps them from having to be woken up.
+function renderSheets() {
+  renderAdblock(state.adblock);
+  theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
+  autoHideEl.checked = state.autoHideSidebar !== false;
+  glassEl.checked = state.glassSidebar !== false;
+  trayEl.checked = state.minimizeToTray === true;
+  renderUpdate();
+  renderRemoved(state.removed || []);
+}
+
 function applyState(next) {
   state = next;
   renderServices();
+  renderSheets();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
   renderUpdateBadge();
@@ -538,8 +803,89 @@ async function init() {
     window.shell.switchService((last || state.services[0]).id);
   }
 
-  document.getElementById('btn-removed').addEventListener('click', () => window.shell.openRemovedWindow());
-  settingsBtn.addEventListener('click', () => window.shell.openSettingsWindow());
+  document.getElementById('btn-removed').addEventListener('click', () => openSheet('removed'));
+  settingsBtn.addEventListener('click', () => openSheet('settings'));
+  scrimEl.addEventListener('click', () => {
+    closePalette();
+    closeSheet();
+  });
+  for (const btn of document.querySelectorAll('[data-close-sheet]')) {
+    btn.addEventListener('click', closeSheet);
+  }
+  // A click inside a sheet is not a click past it. Without this the window-level handler that
+  // dismisses the context menu would take the sheet down with it.
+  for (const el of Object.values(sheetEls)) el.addEventListener('click', (e) => e.stopPropagation());
+  // Ctrl+, and Ctrl+K pressed anywhere but here — the app menu, or inside a service view, where
+  // the page owns the keystroke until main.js takes it back.
+  window.shell.onOpenSheet((name) => openSheet(name));
+  window.shell.onOpenPalette(() => {
+    if (paletteOpen) closePalette();
+    else openPalette();
+  });
+  paletteEl.addEventListener('click', (e) => e.stopPropagation());
+  paletteInputEl.addEventListener('input', () => {
+    paletteIndex = 0;
+    renderPalette();
+  });
+
+  // Toggling reloads every open service, and turning it on the first time may have to fetch the
+  // filter list — so disable the box until the main process reports back, and render whatever
+  // state it actually reached (which is "off" if the fetch failed).
+  adblockEl.addEventListener('change', async () => {
+    const wanted = adblockEl.checked;
+    adblockEl.disabled = true;
+    setAdblockSub(wanted ? 'Loading filter lists…' : ADBLOCK_SUB, false);
+    try {
+      renderAdblock(await window.shell.setAdblock(wanted));
+    } finally {
+      adblockEl.disabled = false;
+    }
+  });
+
+  window.shell.onAdblockStats((blocked) => {
+    if (adblockEl.checked) renderAdblockCount(blocked);
+  });
+
+  // Pull fresh filter lists on demand. Rebuilding the engine reloads every open service, so report
+  // progress on the button rather than appearing to do nothing for a few seconds.
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true;
+    const label = refreshBtn.textContent;
+    refreshBtn.textContent = 'Updating…';
+    try {
+      renderAdblock(await window.shell.refreshFilters());
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = label;
+    }
+  });
+
+  // Applied in place by the injected controller, so there is nothing to wait for and no reload to
+  // sit through — unlike the ad blocker above.
+  theaterEl.addEventListener('change', () => window.shell.setEnhance('theater', theaterEl.checked));
+  autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
+  glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));
+  trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
+
+  // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the
+  // button rather than leaving it sitting on "Checking…".
+  window.shell.onUpdateProgress((percent) => {
+    updateBtn.textContent = percent === null ? 'Checking…' : `Downloading ${percent}%`;
+  });
+
+  updateBtn.addEventListener('click', () => {
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Checking…';
+    updateBtn.classList.remove('has-update'); // stop pulsing the moment it is acted on
+    updateBusy = true;
+    Promise.resolve(window.shell.checkForUpdates()).finally(() => {
+      updateBtn.disabled = false;
+      updateBusy = false;
+      // The main process has since told us whether an update is really there, so let the button
+      // settle back to whatever the truth now is.
+      renderUpdate();
+    });
+  });
 
   document
     .getElementById('btn-collapse')
