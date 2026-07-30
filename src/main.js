@@ -94,17 +94,22 @@ function chromeRegionWidth(windowWidth) {
 // left edge — and, for the same reason the chrome is, it is only ever as big as the part of it
 // meant to catch clicks. So it is a nub until the pointer arrives on it.
 const HUD_NUB = { width: 48, height: 8 };
-const HUD_OPEN = { width: 300, height: 210 };
+// Must match .hud's width in styles.css. The height is not a constant: the HUD measures its own
+// panel and reports it, because it depends on the preview's aspect ratio and on how the hint line
+// wraps — a number guessed here clips the arrangement buttons off the bottom the moment either
+// changes. This is only the value used before the first report lands.
+const HUD_WIDTH = 300;
 let hudView = null;
 let hudExpanded = false;
+let hudHeight = 280;
 
 function hudBounds(windowWidth) {
-  const size = hudExpanded ? HUD_OPEN : HUD_NUB;
+  const width = hudExpanded ? HUD_WIDTH : HUD_NUB.width;
   return {
-    x: Math.round((windowWidth - size.width) / 2),
+    x: Math.round((windowWidth - width) / 2),
     y: 0,
-    width: size.width,
-    height: size.height,
+    width,
+    height: hudExpanded ? hudHeight : HUD_NUB.height,
   };
 }
 
@@ -709,8 +714,9 @@ ipcMain.on('restore-service', (_e, serviceId) => {
 });
 
 // The HUD is only as big as it is drawn, for the same reason the chrome is — see CHROME_REGIONS.
-ipcMain.on('set-hud-expanded', (_e, on) => {
+ipcMain.on('set-hud-expanded', (_e, on, height) => {
   hudExpanded = on === true;
+  if (hudExpanded && Number.isFinite(height) && height > 0) hudHeight = Math.round(height);
   if (hudView && !hudView.webContents.isDestroyed()) {
     hudView.setBounds(hudBounds(baseWindow.getContentBounds().width));
   }

@@ -42,8 +42,9 @@ contextBridge.exposeInMainWorld('shell', {
   setAutoHideSidebar: (on) => ipcRenderer.invoke('set-auto-hide-sidebar', on),
   // Whether the sidebar is tinted glass over the page, or docked opaque beside it.
   setGlassSidebar: (on) => ipcRenderer.invoke('set-glass-sidebar', on),
-  // The grid HUD is only as big as it is drawn, so it asks to be grown before it expands.
-  setHudExpanded: (on) => ipcRenderer.send('set-hud-expanded', on),
+  // The grid HUD is only as big as it is drawn, so it asks to be grown before it expands — and
+  // tells the main process the height it measured, rather than both ends keeping their own guess.
+  setHudExpanded: (on, height) => ipcRenderer.send('set-hud-expanded', on, height),
   // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
   // renderer could never have seen for itself, forwarded by the main process.
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),

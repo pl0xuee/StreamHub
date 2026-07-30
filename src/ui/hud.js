@@ -162,14 +162,27 @@ function renderLayoutPicker() {
 
 // Same bargain the sidebar's hover strip makes: ask to be grown before expanding, and to be shrunk
 // once collapsed, so the rest of the window belongs to the picture.
+//
+// The height is measured rather than agreed in advance. It depends on the preview's aspect ratio,
+// on how many lines the hint wraps to and on the user's font — a constant in main.js would be a
+// guess that quietly drifts out of step with the CSS, and being short by even a little clips the
+// arrangement buttons off the bottom of the view.
 nubEl.addEventListener('mouseenter', () => {
   document.body.classList.add('expanded');
-  window.shell.setHudExpanded(true);
+  window.shell.setHudExpanded(true, Math.ceil(hudEl.getBoundingClientRect().height));
 });
 hudEl.addEventListener('mouseleave', () => {
   document.body.classList.remove('expanded');
   window.shell.setHudExpanded(false);
 });
+
+// The panel's height changes with its contents — a fourth pane makes the preview no taller, but the
+// hint line swapping to "All four panes are in use." can rewrap. Re-report while it is open.
+const resize = new ResizeObserver(() => {
+  if (!document.body.classList.contains('expanded')) return;
+  window.shell.setHudExpanded(true, Math.ceil(hudEl.getBoundingClientRect().height));
+});
+resize.observe(hudEl);
 
 function applyState(next) {
   state = next;

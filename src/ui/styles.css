@@ -412,7 +412,11 @@ body.grid-full .service {
 .hud-window {
   background: transparent;
 }
+/* A fixed width, not 100%: the view around this is a 48px nub until the pointer arrives, and the
+   panel has to lay out at its real width even inside that nub so its height can be measured before
+   the view has grown to hold it. Must match HUD_WIDTH in main.js. */
 .hud {
+  width: 300px;
   display: flex;
   flex-direction: column;
   align-items: center;
