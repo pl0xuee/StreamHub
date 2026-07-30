@@ -89,30 +89,6 @@ function chromeRegionWidth(windowWidth) {
   return width === null || width === undefined ? windowWidth : width;
 }
 
-// The grid HUD, parked at the top centre: the one band of a video player that is never controls.
-// It is a view of its own rather than part of the chrome because the chrome is a strip down the
-// left edge — and, for the same reason the chrome is, it is only ever as big as the part of it
-// meant to catch clicks. So it is a nub until the pointer arrives on it.
-const HUD_NUB = { width: 48, height: 8 };
-// Must match .hud's width in styles.css. The height is not a constant: the HUD measures its own
-// panel and reports it, because it depends on the preview's aspect ratio and on how the hint line
-// wraps — a number guessed here clips the arrangement buttons off the bottom the moment either
-// changes. This is only the value used before the first report lands.
-const HUD_WIDTH = 300;
-let hudView = null;
-let hudExpanded = false;
-let hudHeight = 280;
-
-function hudBounds(windowWidth) {
-  const width = hudExpanded ? HUD_WIDTH : HUD_NUB.width;
-  return {
-    x: Math.round((windowWidth - width) / 2),
-    y: 0,
-    width,
-    height: hudExpanded ? hudHeight : HUD_NUB.height,
-  };
-}
-
 // NOTE: cookies — i.e. the logins — live in <userData>/Partitions/<service>@default/Cookies.
 // They are encrypted through the OS secret store (kwallet/gnome-libsecret on Linux), which is
 // switched on by the EnableCookieEncryption fuse flipped at package time — see
@@ -172,35 +148,10 @@ let mpris = null; // Linux system media controls (KDE panel, lock screen)
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
   chromeView.setBounds({ x: 0, y: 0, width: chromeRegionWidth(width), height });
-  if (hudView && !hudView.webContents.isDestroyed()) hudView.setBounds(hudBounds(width));
   // Docked, the page starts where the sidebar actually ends. On glass this is ignored — the page
   // runs the full width and the sidebar floats over it.
   viewManager.sidebarWidth = dockInsetWidth;
   viewManager.layout(width, height);
-}
-
-// The HUD exists exactly while grid mode does: with one pane there is nothing to arrange, and a nub
-// hanging off the top of the window with nothing behind it is clutter.
-function showHud(on) {
-  if (on === Boolean(hudView)) return;
-  if (on) {
-    hudView = new WebContentsView({
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    hudView.setBackgroundColor('#00000000');
-    baseWindow.contentView.addChildView(hudView);
-    hudView.webContents.loadFile(path.join(__dirname, 'ui', 'hud.html'));
-    layout();
-    return;
-  }
-  baseWindow.contentView.removeChildView(hudView);
-  hudView.webContents.close();
-  hudView = null;
-  hudExpanded = false;
 }
 
 // Hold the display awake while a service is playing. Watching a film is the one time a
@@ -286,12 +237,10 @@ function statePayload() {
 }
 
 // Everything that renders app state. Settings and the removed list are panels in the chrome now
-// rather than windows of their own, so this is a one-item list — kept as a list because the grid
-// HUD is about to be a second one.
+// rather than windows of their own, so the sidebar's view is the only one left.
 function uiWebContents() {
   const out = [];
   if (chromeView && !chromeView.webContents.isDestroyed()) out.push(chromeView.webContents);
-  if (hudView && !hudView.webContents.isDestroyed()) out.push(hudView.webContents);
   return out;
 }
 
@@ -396,7 +345,6 @@ function setGridMode(on) {
       viewManager.show(service);
     }
   }
-  showHud(gridMode);
   persist();
   broadcast();
 }
@@ -439,15 +387,11 @@ function createWindow() {
     if (chromeView && !chromeView.webContents.isDestroyed()) {
       baseWindow.contentView.addChildView(chromeView);
     }
-    if (hudView && !hudView.webContents.isDestroyed()) {
-      baseWindow.contentView.addChildView(hudView);
-    }
   };
-  // A site in fullscreen owns the window outright — a strip of sidebar, or a nub hanging off the
-  // top of it, would be the one thing left on screen that isn't the film.
+  // A site in fullscreen owns the window outright — a strip of sidebar floating over it would be
+  // the one thing left on screen that isn't the film.
   viewManager.onFullscreenChange = (on) => {
     if (chromeView && !chromeView.webContents.isDestroyed()) chromeView.setVisible(!on);
-    if (hudView && !hudView.webContents.isDestroyed()) hudView.setVisible(!on);
   };
   // Ctrl+K pressed inside a service view: the page owns the keystroke, so views.js takes this one
   // chord back and hands it here.
@@ -711,15 +655,6 @@ ipcMain.on('restore-service', (_e, serviceId) => {
   // one so the content area isn't left blank; otherwise just refresh the lists.
   if (!activeServiceId) switchService(service.id);
   else broadcast();
-});
-
-// The HUD is only as big as it is drawn, for the same reason the chrome is — see CHROME_REGIONS.
-ipcMain.on('set-hud-expanded', (_e, on, height) => {
-  hudExpanded = on === true;
-  if (hudExpanded && Number.isFinite(height) && height > 0) hudHeight = Math.round(height);
-  if (hudView && !hudView.webContents.isDestroyed()) {
-    hudView.setBounds(hudBounds(baseWindow.getContentBounds().width));
-  }
 });
 
 ipcMain.handle('set-glass-sidebar', (_e, on) => {
@@ -1181,7 +1116,6 @@ app.whenReady().then(async () => {
     const tiles = reconcileGrid();
     if (tiles.length) viewManager.showGrid(tiles);
     else gridMode = false;
-    showHud(gridMode); // a restored grid needs its controls too, and this path never calls setGridMode
   }
 
   // Look for a new release in the background so the sidebar button can announce one instead

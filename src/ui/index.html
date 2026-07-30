@@ -26,6 +26,30 @@
 
       <ul id="service-list" class="services"></ul>
 
+      <!-- Grid controls: the panes as they are actually tiled, how they are arranged, and a line
+           saying how to work them. Shown only in grid mode. They live here rather than in a panel
+           over the window because the sidebar is itself hidden until you reach for it — controls
+           that cover the picture only while you are using them still cover the picture, and there
+           is no reason to put them there when this panel costs nothing at rest. -->
+      <section id="grid-panel" class="grid-panel" hidden>
+        <div
+          id="grid-preview"
+          class="grid-preview"
+          role="group"
+          aria-label="Panes — drag a tile to move it"
+        ></div>
+
+        <div id="grid-layout" class="grid-layout" role="group" aria-label="Pane arrangement">
+          <button data-layout="auto" title="Packed — fill the space evenly">▦</button>
+          <button data-layout="rows" title="Stacked — one above another">▤</button>
+          <button data-layout="columns" title="Side by side — one next to another">▥</button>
+        </div>
+
+        <p id="grid-hint" class="grid-hint">
+          Click a service to add a pane. Drag a tile to move it.
+        </p>
+      </section>
+
       <div class="list-actions">
         <button id="btn-removed" title="Show removed services">Removed <span id="removed-count">0</span></button>
       </div>
