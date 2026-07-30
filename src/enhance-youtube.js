@@ -56,15 +56,16 @@ html.${ROOT_CLASS} ytd-page-manager#page-manager {
 /* The size cap itself, and the point of the whole feature. YouTube's theater mode ("full bleed")
    deliberately stops short of the window bottom so the title and description stay peeking in
    underneath — it caps #full-bleed-container from its own layout code, which is what this
-   overrides. Scrolling still works, so the description and comments are one flick away rather
-   than gone; that is what makes this worth doing instead of just going fullscreen.
+   overrides.
 
-   min() rather than a flat 100vh because the container is full-width: past 16:9 the extra height
-   goes to black bars above and below the picture, not to a bigger picture. So take the smaller of
-   "as tall as the window" and "as tall as this width's 16:9", which on the usual landscape window
-   is the latter. 100vh stays the ceiling for tall or narrow windows. */
+   A flat 100vh, so the player owns the window and nothing else is on screen. The picture does not
+   stretch to fill it: YouTube fits the video to the container and centres it, so past 16:9 the
+   spare height becomes bars above and below and the video sits in the middle of the window, which
+   is where someone watching it is looking. Scrolling still works, so the description and comments
+   are one flick away rather than gone; that is what makes this worth doing instead of just going
+   fullscreen. */
 html.${ROOT_CLASS} ytd-watch-flexy[theater]:not([fullscreen]) #full-bleed-container {
-  height: min(100vh, 56.25vw) !important;
+  height: 100vh !important;
   max-height: 100vh !important;
 }
 `;
