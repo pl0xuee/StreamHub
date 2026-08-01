@@ -687,6 +687,7 @@ const adblockExtraEl = document.getElementById('adblock-extra');
 const filterAgeEl = document.getElementById('filter-age');
 const refreshBtn = document.getElementById('btn-refresh-filters');
 const theaterEl = document.getElementById('chk-theater');
+const twitchTheaterEl = document.getElementById('chk-twitch-theater');
 const autoHideEl = document.getElementById('chk-autohide');
 const glassEl = document.getElementById('chk-glass');
 const trayEl = document.getElementById('chk-tray');
@@ -779,6 +780,7 @@ function renderRemoved(removed) {
 function renderSheets() {
   renderAdblock(state.adblock);
   theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
+  twitchTheaterEl.checked = Boolean(state.enhance && state.enhance.twitchTheater);
   autoHideEl.checked = state.autoHideSidebar !== false;
   glassEl.checked = state.glassSidebar !== false;
   trayEl.checked = state.minimizeToTray === true;
@@ -874,6 +876,9 @@ async function init() {
   // Applied in place by the injected controller, so there is nothing to wait for and no reload to
   // sit through — unlike the ad blocker above.
   theaterEl.addEventListener('change', () => window.shell.setEnhance('theater', theaterEl.checked));
+  twitchTheaterEl.addEventListener('change', () =>
+    window.shell.setEnhance('twitchTheater', twitchTheaterEl.checked),
+  );
   autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
   glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));
   trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));

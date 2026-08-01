@@ -11,8 +11,9 @@ const {
   identityArg,
 } = require('./services');
 const { adblocker } = require('./adblock');
-const { isYouTubeHost } = require('./enhance');
-const { controllerJs } = require('./enhance-youtube');
+const { isYouTubeHost, isTwitchHost } = require('./enhance');
+const { controllerJs: youtubeControllerJs } = require('./enhance-youtube');
+const { controllerJs: twitchControllerJs } = require('./enhance-twitch');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
 // presents. Only headers Chromium already decided to send are overwritten — adding ones
@@ -257,7 +258,7 @@ class ViewManager {
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
   // controller is how it is reconfigured, so this is safe to call on every document load and on
-  // every settings change alike — see enhance-youtube.js.
+  // every settings change alike — see enhance-youtube.js and enhance-twitch.js.
   applyEnhancements(view) {
     const wc = view && view.webContents;
     if (!wc || wc.isDestroyed()) return;
@@ -267,8 +268,11 @@ class ViewManager {
     } catch {
       return; // about:blank and the like, before the first real navigation
     }
-    if (!isYouTubeHost(host)) return;
-    wc.executeJavaScript(controllerJs(this.enhance)).catch(() => {});
+    let source = null;
+    if (isYouTubeHost(host)) source = youtubeControllerJs(this.enhance);
+    else if (isTwitchHost(host)) source = twitchControllerJs(this.enhance);
+    if (!source) return; // every other service is loaded exactly as the site serves it
+    wc.executeJavaScript(source).catch(() => {});
   }
 
   // The user changed the enhancement settings. The controller applies and unapplies them in
