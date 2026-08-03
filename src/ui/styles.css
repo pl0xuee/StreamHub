@@ -95,12 +95,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbars. Steel, like everything else here that is drawn rather than lit — the plain white
-   they were is the one neutral the rest of the interface does not use.
-   Narrow, because of where they turn up: a 220px sidebar and a sheet, both of which are already
-   tight on line length, and neither of which wants a grey stripe down its edge. The transparent
-   border is what insets the thumb; background-clip keeps the paint inside it, so the gutter stays
-   clear and the track needs no colour of its own. */
+/* Scrollbars. Steel, like everything else here that is drawn rather than lit — and asleep until
+   used: at rest the thumb is transparent, so an idle scrollbar is simply not there and the pane
+   reads as one surface. It wakes while its element is actually scrolling (renderer.js stamps
+   data-streamhub-scrolling on the scrolled element and lifts it a moment after the motion stops)
+   and under the pointer, so the strip can still be found by reaching for the edge. The 6px gutter
+   stays reserved the whole time — waking must never reflow the text beside it.
+   The transparent border is what insets the thumb; background-clip keeps the paint inside it, so
+   the gutter stays clear and the track needs no colour of its own. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -109,12 +111,20 @@ body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+::-webkit-scrollbar-button {
+  display: none;
+}
 ::-webkit-scrollbar-thumb {
-  background: rgba(143, 163, 184, 0.24);
+  background: transparent;
   border: 1px solid transparent;
   background-clip: padding-box;
   border-radius: 4px;
 }
+[data-streamhub-scrolling]::-webkit-scrollbar-thumb {
+  background: var(--steel-edge);
+  background-clip: padding-box;
+}
+/* Ordered after the scrolling rule so the pointer wins while both apply. */
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(143, 163, 184, 0.5);
   background-clip: padding-box;

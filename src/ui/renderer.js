@@ -934,4 +934,21 @@ async function init() {
   window.shell.onState((next) => applyState(next));
 }
 
+// Scrollbars sleep until used (see styles.css): whatever is scrolling gets stamped, and the stamp
+// is lifted a beat after the motion stops. One capture-phase listener covers every scroller the
+// chrome has or grows — scroll events don't bubble, but they do capture. An attribute rather than
+// a class, so nothing that rewrites className can knock it off mid-scroll.
+const scrollStamps = new WeakMap();
+window.addEventListener(
+  'scroll',
+  (e) => {
+    const el = e.target === document ? document.documentElement : e.target;
+    if (!el || el.nodeType !== 1) return;
+    el.setAttribute('data-streamhub-scrolling', '');
+    clearTimeout(scrollStamps.get(el));
+    scrollStamps.set(el, setTimeout(() => el.removeAttribute('data-streamhub-scrolling'), 1000));
+  },
+  { capture: true, passive: true },
+);
+
 init();

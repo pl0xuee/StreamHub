@@ -1,5 +1,5 @@
 const path = require('path');
-const { WebContentsView, session } = require('electron');
+const { WebContentsView, session, webFrameMain } = require('electron');
 const {
   CHROME_UA,
   CHROME_MAJOR,
@@ -123,32 +123,77 @@ const RESUME_JS = `(() => {
 // bleeding into one another. The window's background colour shows through it.
 const GRID_GAP = 6;
 
-// The sites draw Chromium's default scrollbar: a wide pale stripe down the edge of every pane, and
-// the one piece of furniture in the window that never matched the app. This is the chrome's own
-// treatment from styles.css, injected into the pages so all of them agree — same steel, same 6px.
+// The sites draw Chromium's default scrollbar: a wide pale stripe (arrows and all) down the edge
+// of every pane, and the one piece of furniture in the window that never matched the app. This is
+// the chrome's own treatment from styles.css — same steel, same 6px, and asleep until used: the
+// thumb is transparent at rest, wakes while its element is actually scrolling or under the
+// pointer, and goes back to nothing a moment later, so a pane at rest is all picture.
 //
-// Cosmetic and nothing else: it changes no layout the site depends on, and it goes in through
-// insertCSS rather than the enhancement controller because it applies to every service rather than
-// to one site's structure. These sites are all dark-themed, which is what steel-on-transparent is
-// picked against.
-const SCROLLBAR_CSS = `
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(143, 163, 184, 0.3);
-  border: 1px solid transparent;
-  background-clip: padding-box;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(143, 163, 184, 0.55);
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:active {
-  background: #8fa3b8;
-  background-clip: padding-box;
-}
-`;
+// It goes in as a script rather than insertCSS for two reasons. insertCSS only ever reaches the
+// top frame, and the scrollbars that stood out worst live in iframes — chat panels and the like —
+// which kept the stock ~15px stripe. And "asleep until used" needs a scroll listener to stamp the
+// scrolling element; CSS alone cannot know motion. The rules go in through CSSOM insertRule, which
+// a site's style-src CSP cannot veto the way it can a <style> body.
+//
+// Still cosmetic and nothing else: no layout a site depends on changes (the gutter width is the
+// one visible metric, and it only shrinks), and it stays out of the enhancement controller because
+// it applies to every service rather than to one site's structure. These sites are all dark-
+// themed, which is what steel-on-transparent is picked against.
+// Everything is !important because this is a blanket, not a suggestion: sites theme their own
+// scrollbars with element-attached rules (body::-webkit-scrollbar and stronger) that would
+// otherwise outrank these universal selectors, and the whole point is that every pane agrees.
+const SCROLLBAR_RULES = [
+  // The standard scrollbar-color property, when a site sets it, switches Chromium to its stock
+  // scrollbar rendering and every ::-webkit-scrollbar rule below is ignored — YouTube sets it on
+  // html, which is how the default bar survived the first pass at this. Forcing it back to auto
+  // re-engages the custom styling. scrollbar-width is deliberately left alone: `none` is how
+  // sites hide carousel scrollbars entirely, and those should stay hidden.
+  '* { scrollbar-color: auto !important; }',
+  '::-webkit-scrollbar { width: 6px !important; height: 6px !important; }',
+  '::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent !important; }',
+  '::-webkit-scrollbar-button { display: none !important; }',
+  `::-webkit-scrollbar-thumb {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    background-clip: padding-box !important;
+    border-radius: 4px !important;
+  }`,
+  `[data-streamhub-scrolling]::-webkit-scrollbar-thumb {
+    background: rgba(143, 163, 184, 0.3) !important;
+    background-clip: padding-box !important;
+  }`,
+  `::-webkit-scrollbar-thumb:hover {
+    background: rgba(143, 163, 184, 0.55) !important;
+    background-clip: padding-box !important;
+  }`,
+  `::-webkit-scrollbar-thumb:active {
+    background: #8fa3b8 !important;
+    background-clip: padding-box !important;
+  }`,
+];
+
+const SCROLLBAR_JS = `(() => {
+  if (window.__streamhubScrollbars) return;
+  const root = document.head || document.documentElement;
+  if (!root) return;
+  window.__streamhubScrollbars = true;
+  const style = document.createElement('style');
+  root.appendChild(style);
+  for (const rule of ${JSON.stringify(SCROLLBAR_RULES)}) {
+    try { style.sheet.insertRule(rule, style.sheet.cssRules.length); } catch (e) {}
+  }
+  // Stamp whatever is scrolling; lift the stamp a beat after the motion stops. Scroll events
+  // don't bubble but do capture, so one listener covers every scroller the page ever makes. An
+  // attribute rather than a class, so a framework rewriting className can't knock it off.
+  const stamps = new WeakMap();
+  addEventListener('scroll', (e) => {
+    const el = e.target === document ? document.documentElement : e.target;
+    if (!el || el.nodeType !== 1) return;
+    el.setAttribute('data-streamhub-scrolling', '');
+    clearTimeout(stamps.get(el));
+    stamps.set(el, setTimeout(() => el.removeAttribute('data-streamhub-scrolling'), 1000));
+  }, { capture: true, passive: true });
+})()`;
 
 // How the panes are arranged. 'auto' packs them into a square-ish block; 'rows' stacks them all
 // vertically (two panes become one above the other, which suits two 16:9 videos far better than
@@ -395,10 +440,21 @@ class ViewManager {
 
     // Per document load, since the injected controller lives in the page and goes with it. It
     // survives the site's own in-page navigations, which is what YouTube does between videos. The
-    // scrollbar styling rides along for the same reason — a new document draws its own.
+    // scrollbar styling rides along for the same reason — a new document draws its own — and goes
+    // into every frame already present, not just the top one.
     wc.on('dom-ready', () => {
-      wc.insertCSS(SCROLLBAR_CSS).catch(() => {});
+      for (const frame of wc.mainFrame.framesInSubtree) {
+        frame.executeJavaScript(SCROLLBAR_JS).catch(() => {});
+      }
       this.applyEnhancements(view);
+    });
+
+    // Chat panels and their kind are iframes that arrive after dom-ready and navigate on their
+    // own, each new document drawing the stock scrollbar again. Every finished frame load gets the
+    // treatment; the in-page flag makes the overlap with dom-ready harmless.
+    wc.on('did-frame-finish-load', (event, isMainFrame, frameProcessId, frameRoutingId) => {
+      const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+      if (frame) frame.executeJavaScript(SCROLLBAR_JS).catch(() => {});
     });
 
     view.setVisible(false);
