@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Nothing here loads from anywhere: the server is contacted by the main process, not by
+         this page, so the page itself never needs to reach off disk. `unsafe-inline` is for
+         styles only, and only because the service's own colour is painted onto the mark from
+         script — the same thing the sidebar does, under the same allowance. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self';"
+    />
+    <title>Set up</title>
+    <link rel="stylesheet" href="setup.css" />
+  </head>
+  <body>
+    <main class="card">
+      <div class="mark">
+        <span class="icon" id="icon">J</span>
+        <span class="mark-name" id="mark-name">Jellyfin</span>
+      </div>
+
+      <h1 id="title">Where is your Jellyfin server?</h1>
+      <p class="lede" id="lede">
+        Jellyfin is your own server, so there is no address to ship with the app. Give it the one
+        you would type into a browser — StreamHub loads the web player from there and keeps you
+        signed in to it like any other service.
+      </p>
+
+      <form id="form" novalidate>
+        <label class="field-label" for="address">Server address</label>
+        <div class="row">
+          <input
+            id="address"
+            type="text"
+            inputmode="url"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            placeholder="192.168.1.10:8096"
+            aria-describedby="status"
+          />
+          <button id="connect" type="submit" class="primary">Connect</button>
+        </div>
+      </form>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <button id="anyway" type="button" class="ghost" hidden>Use that address anyway</button>
+
+      <ul class="notes">
+        <li>
+          On your own network it is usually <code>http://&lt;ip&gt;:8096</code> — the same address
+          the Jellyfin app on your phone or TV uses.
+        </li>
+        <li>
+          A path is fine (<code>https://media.example.com/jellyfin</code>), and anything the
+          browser added after it is trimmed for you.
+        </li>
+        <li>
+          HTTPS with a self-signed certificate will not load — over the local network use plain
+          <code>http</code>, or give the server a real certificate.
+        </li>
+        <li>Getting it wrong costs nothing: right-click Jellyfin in the sidebar to change it.</li>
+      </ul>
+    </main>
+
+    <script src="setup.js"></script>
+  </body>
+</html>

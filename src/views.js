@@ -9,6 +9,7 @@ const {
   CH_PLATFORM,
   isGoogleAuthHost,
   identityArg,
+  needsSetup,
 } = require('./services');
 const { adblocker } = require('./adblock');
 const { isYouTubeHost, isTwitchHost } = require('./enhance');
@@ -352,6 +353,12 @@ class ViewManager {
     const existing = this.views.get(viewKey);
     if (existing) return existing;
 
+    // A self-hosted service with no address yet gets a view built around our own setup page
+    // rather than a site: a different preload, since that page needs a bridge to save what the
+    // user types and a streaming site must never have one. Which preload a view carries is
+    // fixed when it is made, so main.js rebuilds these views once an address is saved rather
+    // than navigating them — see applyServerUrl there.
+    const setup = needsSetup(service);
     const partition = `persist:${this.key(service.id)}`;
     // Set the spoofed UA at the session level so sub-resource requests match too.
     const ses = session.fromPartition(partition);
@@ -370,8 +377,9 @@ class ViewManager {
         // The only preload on a service view: it makes navigator.userAgentData match
         // CHROME_UA (see service-preload.js). It bridges nothing to the page, so these
         // untrusted remote sites stay isolated; they are still driven from the main
-        // process via executeJavaScript.
-        preload: path.join(__dirname, 'service-preload.js'),
+        // process via executeJavaScript. The setup page, which is ours, gets the one
+        // preload here that does expose something (see setup-preload.js).
+        preload: path.join(__dirname, setup ? 'setup-preload.js' : 'service-preload.js'),
         additionalArguments: [identityArg()],
       },
     });
@@ -459,7 +467,7 @@ class ViewManager {
 
     view.setVisible(false);
     this.win.contentView.addChildView(view);
-    wc.loadURL(service.url);
+    this.loadService(view, service);
 
     // Remember what this view is, so the service-wide operations below (destroy on removal,
     // sign-out, reload-on-adblock-change) can find every pane belonging to one service.
@@ -467,6 +475,27 @@ class ViewManager {
     view.__viewKey = viewKey;
     this.views.set(viewKey, view);
     return view;
+  }
+
+  // Point a view at its service: the site itself, or — for a self-hosted service with nowhere to
+  // point yet — the built-in setup page that asks where the server is. That page is handed the
+  // service's identity so it can name it, wear its colour, and save the address back onto the
+  // right entry; `prev` is the address it was on before, if it is being changed rather than set.
+  loadService(view, service) {
+    const wc = view && view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    if (!needsSetup(service)) {
+      wc.loadURL(service.url);
+      return;
+    }
+    wc.loadFile(path.join(__dirname, 'ui', 'setup.html'), {
+      query: {
+        service: service.id,
+        name: service.name,
+        color: service.color || '#5aa9c9',
+        prev: service.lastUrl || '',
+      },
+    });
   }
 
   // Every live view of one service — normally just the single-mode view, but more when the grid
@@ -600,9 +629,7 @@ class ViewManager {
     // Every pane of this service shared the cookie jar we just wiped, so every one of them has
     // to go back to the front door — leaving a sibling pane on a signed-in page would be showing
     // a session that no longer exists.
-    for (const view of this.viewsForService(service.id)) {
-      if (!view.webContents.isDestroyed()) view.webContents.loadURL(service.url);
-    }
+    for (const view of this.viewsForService(service.id)) this.loadService(view, service);
   }
 
   setVideoFullscreen(on, view) {

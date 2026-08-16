@@ -1,5 +1,6 @@
 const path = require('path');
 const os = require('os');
+const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const {
   app,
@@ -18,6 +19,7 @@ const {
 const { autoUpdater } = require('electron-updater');
 
 const configStore = require('./config');
+const { normalizeServerUrl } = require('./services');
 const { ViewManager, GRID_LAYOUTS } = require('./views');
 const { adblocker } = require('./adblock');
 const { cleanEnhance } = require('./enhance');
@@ -659,6 +661,136 @@ ipcMain.on('restore-service', (_e, serviceId) => {
   // one so the content area isn't left blank; otherwise just refresh the lists.
   if (!activeServiceId) switchService(service.id);
   else broadcast();
+});
+
+// ---- Self-hosted services (Jellyfin) ----
+//
+// A self-hosted service has no address until the user gives one, and until then its view shows
+// the setup page (src/ui/setup.html) asking for it. This is that page's other end.
+
+// The setup page as the URL its view actually reports. The two handlers below are the only ones
+// reachable from a *service* view rather than from our own chrome, so each one checks it is
+// really that page calling — a site can never hold this bridge (views.js only attaches the setup
+// preload to a view showing this file), and this makes that structural rather than incidental.
+const SETUP_PAGE_URL = pathToFileURL(path.join(__dirname, 'ui', 'setup.html')).href;
+
+function fromSetupPage(event) {
+  const sender = event && event.sender;
+  if (!sender || sender.isDestroyed()) return false;
+  return sender.getURL().startsWith(SETUP_PAGE_URL);
+}
+
+// Jellyfin's unauthenticated "who am I" endpoint. Asking before saving is what turns a typo into
+// a sentence rather than a blank page, and naming the server it found is how the user can see
+// they reached their own and not, say, the router's web interface.
+const JELLYFIN_PUBLIC_INFO = '/System/Info/Public';
+const PROBE_TIMEOUT_MS = 8000;
+
+// Say what actually went wrong in the terms the user can act on — the wrong port, a machine that
+// is off, a certificate the app will not accept — rather than handing over a stack of an error.
+function describeProbeError(err, url) {
+  const name = (err && err.name) || '';
+  const code = (err && err.cause && err.cause.code) || (err && err.code) || '';
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return (
+      `No answer from ${url} within ${PROBE_TIMEOUT_MS / 1000} seconds. ` +
+      'Is the server on, and reachable from this machine?'
+    );
+  }
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return `No such host as ${url}.`;
+  if (code === 'ECONNREFUSED') {
+    return `Nothing is listening at ${url}. Check the port — Jellyfin's own default is 8096.`;
+  }
+  if (code === 'ECONNRESET' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH') {
+    return `Could not reach ${url} from this machine.`;
+  }
+  if (/CERT|SSL|TLS/i.test(code)) {
+    return (
+      'The server\'s HTTPS certificate is not one this app will accept. Over the local network ' +
+      'use plain http, or give the server a real certificate.'
+    );
+  }
+  return `Could not reach ${url}.`;
+}
+
+// Is there a Jellyfin server at this address? Never throws at the page: a failure is a message.
+ipcMain.handle('probe-server', async (event, input) => {
+  if (!fromSetupPage(event)) return { ok: false, url: '', error: 'Not allowed.' };
+  const url = normalizeServerUrl(input);
+  if (!url) return { ok: false, url: '', error: 'That cannot be read as an address.' };
+  try {
+    const res = await fetch(`${url}${JELLYFIN_PUBLIC_INFO}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        url,
+        error:
+          `Something answered at ${url}, but with ${res.status}. ` +
+          'If Jellyfin is served under a path, include it.',
+      };
+    }
+    const info = await res.json().catch(() => null);
+    if (!info || typeof info.Version !== 'string') {
+      return {
+        ok: false,
+        url,
+        error: `Something answered at ${url}, but it was not a Jellyfin server.`,
+      };
+    }
+    return {
+      ok: true,
+      url,
+      name: typeof info.ServerName === 'string' && info.ServerName ? info.ServerName : 'Jellyfin',
+      version: info.Version,
+    };
+  } catch (err) {
+    return { ok: false, url, error: describeProbeError(err, url) };
+  }
+});
+
+// Point a self-hosted service at an address — or, with '', send it back to its setup page.
+//
+// Its views are rebuilt rather than navigated: which preload a view carries is settled when it is
+// made, and the setup page holds a bridge that a website must never be handed. Rebuilding is also
+// what makes the switch immediate, since the page the user is looking at is the one being replaced.
+function applyServerUrl(serviceId, url) {
+  const service = config.services.find((s) => s.id === serviceId);
+  if (!service || !service.selfHosted) return false;
+  if (url) {
+    service.url = url;
+  } else {
+    if (service.url) service.lastUrl = service.url; // offer it back on the setup page
+    service.url = '';
+  }
+  persist();
+
+  viewManager.destroyView(service.id);
+  if (gridMode && gridPanes.some((p) => p.serviceId === service.id)) {
+    const tiles = reconcileGrid();
+    if (tiles.length) viewManager.showGrid(tiles);
+  } else if (activeServiceId === service.id) {
+    viewManager.show(service);
+  }
+  broadcast();
+  return true;
+}
+
+// From the setup page: this is the address, open it.
+ipcMain.handle('set-server-url', (event, serviceId, input) => {
+  if (!fromSetupPage(event)) return false;
+  const url = normalizeServerUrl(input);
+  if (!url) return false;
+  return applyServerUrl(serviceId, url);
+});
+
+// From the sidebar's right-click menu: forget the address and go back to the setup page. The old
+// one is kept to be offered there, and nothing else about the service — its login above all — is
+// touched, so pointing it at the same server again picks up exactly where it left off.
+ipcMain.on('change-server', (_e, serviceId) => {
+  applyServerUrl(serviceId, '');
 });
 
 ipcMain.handle('set-glass-sidebar', (_e, on) => {

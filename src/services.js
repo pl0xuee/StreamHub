@@ -18,7 +18,47 @@ const DEFAULT_SERVICES = [
   { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com',   color: '#f47521' },
   { id: 'twitch',      name: 'Twitch',      url: 'https://www.twitch.tv',         color: '#9146ff' },
   { id: 'tubi',        name: 'Tubi',        url: 'https://tubitv.com',            color: '#fa382f' },
+  // Jellyfin is the one entry here that is not a website: it is the user's own server, so there
+  // is no address to ship with the app. `selfHosted` says exactly that — the entry starts with
+  // no url, and its view shows the built-in setup page (src/ui/setup.html) asking where the
+  // server is until the user has said. See needsSetup below.
+  { id: 'jellyfin',    name: 'Jellyfin',    url: '',                              color: '#aa5cc3', selfHosted: true },
 ];
+
+// A self-hosted service that has not been pointed at a server yet. Its view loads the setup
+// page instead of a site (views.js), and the address the user gives there is saved onto the
+// entry as its `url` (main.js), after which it behaves like every other service.
+function needsSetup(service) {
+  return Boolean(service && service.selfHosted && !service.url);
+}
+
+// Turn what someone types on the setup page into a base URL the app can load, or null if it
+// cannot be read as an address at all.
+//
+// Three things are forgiven, because all three are what people actually type or paste:
+//   * no scheme — a bare `192.168.1.10:8096` is assumed to be http, which is what a server on
+//     the local network speaks;
+//   * a trailing slash;
+//   * the web client's own entry point. Copying the address out of a browser gives you
+//     `…/web/index.html#/home.html`, while the server (and its API) sits at the root above it.
+// A path is otherwise kept, since a server behind a reverse proxy often lives under one —
+// `https://media.example.com/jellyfin`.
+function normalizeServerUrl(input) {
+  if (typeof input !== 'string') return null;
+  let raw = input.trim();
+  if (!raw) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = `http://${raw}`;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (!url.hostname) return null;
+  const basePath = url.pathname.replace(/\/+$/, '').replace(/\/web(\/index\.html)?$/i, '');
+  return `${url.origin}${basePath}`;
+}
 
 // Desktop Chrome identity. Several services block the default "Electron/..." UA, so
 // every service view presents itself as Chrome instead.
@@ -96,6 +136,8 @@ function identityArg() {
 
 module.exports = {
   DEFAULT_SERVICES,
+  needsSetup,
+  normalizeServerUrl,
   identityArg,
   CHROME_UA,
   CHROME_MAJOR,

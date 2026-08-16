@@ -137,18 +137,45 @@ function migrateGridIds(list) {
   return out;
 }
 
+// Which shipped services keep their address on the user's own machine rather than on the web.
+//
+// This is a property of the *catalog*, never of the saved file: any writer that does not know the
+// flag — an older build, a hand-edited services.json — drops it, and a Jellyfin demoted to an
+// ordinary service is stuck for good, with no way back to its setup page and no way to change the
+// server. So it is re-derived from the shipped list on every load, and the file is left carrying
+// only the part that is genuinely the user's: the address itself.
+const SELF_HOSTED_IDS = new Set(DEFAULT_SERVICES.filter((s) => s.selfHosted).map((s) => s.id));
+
+function isWebUrl(value) {
+  try {
+    const p = new URL(value).protocol;
+    return p === 'http:' || p === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // A service entry is only trusted if it has an id, a name, and an http(s) url.
+//
+// The one exception is a self-hosted service (Jellyfin — see services.js), whose address is the
+// user's own server rather than anything this app can know: it is allowed to carry no url at
+// all, which is what makes its view show the setup page asking for one.
 function sanitize(entry) {
   if (!entry || typeof entry !== 'object') return null;
-  const { id, name, url, color } = entry;
+  const { id, name, url, color, selfHosted, lastUrl } = entry;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof url !== 'string') return null;
-  try {
-    const p = new URL(url).protocol;
-    if (p !== 'http:' && p !== 'https:') return null;
-  } catch {
-    return null;
+  // The shipped catalog decides this, with the file's own claim only able to add to it — that is
+  // what makes the flag survive a build that has never heard of it. See SELF_HOSTED_IDS above.
+  const self = SELF_HOSTED_IDS.has(id) || selfHosted === true;
+  if (!(self && url === '') && !isWebUrl(url)) return null;
+  const out = { id, name, url, color: typeof color === 'string' ? color : '#5aa9c9' };
+  if (self) {
+    out.selfHosted = true;
+    // The address it was last pointed at, kept so that changing server offers the old one back
+    // instead of making it be typed out again from nothing.
+    if (typeof lastUrl === 'string' && isWebUrl(lastUrl)) out.lastUrl = lastUrl;
   }
-  return { id, name, url, color: typeof color === 'string' ? color : '#5aa9c9' };
+  return out;
 }
 
 function cleanList(list) {

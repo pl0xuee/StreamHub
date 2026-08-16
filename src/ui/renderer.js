@@ -13,6 +13,7 @@ const gridPreviewEl = document.getElementById('grid-preview');
 const menuEl = document.getElementById('service-menu');
 const menuTitleEl = document.getElementById('menu-title');
 const menuAdblockEl = document.getElementById('menu-adblock');
+const menuServerEl = document.getElementById('menu-server');
 const menuSignoutEl = document.getElementById('menu-signout');
 
 let state = {
@@ -325,6 +326,11 @@ function openServiceMenu(svc, x, y) {
   menuAdblockEl.disabled = !globallyOn;
   menuAdblockEl.title = globallyOn ? '' : 'Turn the ad blocker on first';
 
+  // Only a self-hosted service has an address the user chose, and so one they can change. Which
+  // server it is currently on is worth saying here — it is nowhere else in the UI.
+  menuServerEl.hidden = !svc.selfHosted;
+  menuServerEl.title = svc.url ? `Currently ${svc.url}` : '';
+
   menuEl.hidden = false;
   document.body.classList.add('menu-open');
   menuWanted = { x, y };
@@ -352,6 +358,17 @@ menuAdblockEl.addEventListener('click', async () => {
   const on = !adblockOnFor(id);
   closeServiceMenu();
   applyState({ ...state, adblock: await window.shell.setServiceAdblock(id, on) });
+});
+
+menuServerEl.addEventListener('click', () => {
+  const id = menuServiceId;
+  closeServiceMenu();
+  // Switch to it as well as sending it back to its setup page: the page is shown in that
+  // service's own view, so asking to change the server from somewhere else would otherwise put
+  // the question where it cannot be seen.
+  if (!id) return;
+  window.shell.changeServer(id);
+  if (!state.gridMode) window.shell.switchService(id);
 });
 
 menuSignoutEl.addEventListener('click', () => {

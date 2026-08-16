@@ -1,0 +1,232 @@
+/* The setup page — what a self-hosted service shows in its own view until it has been told where
+ * its server is. It is a whole window rather than a sheet, so unlike the chrome it is opaque:
+ * there is no picture behind it to show through yet.
+ *
+ * Same material as styles.css and the same one lit accent, restated here rather than shared
+ * because this is a separate document loaded into a service view, not part of the sidebar. Only
+ * the handful of tokens this page actually uses are repeated; if the palette in styles.css moves,
+ * these move with it.
+ */
+
+:root {
+  --ink: #0d1015;
+  --gun: #161a21;
+  --gun-raised: #1d222b;
+  --card: rgba(255, 255, 255, 0.045);
+  --text: #eef1f6;
+  --dim: #c2cbd8;
+  --dim-2: #a6b1c1;
+  --steel: #9db2c8;
+  --steel-hot: #d6e2ef;
+  --steel-wash: rgba(157, 178, 200, 0.16);
+  --steel-edge: rgba(157, 178, 200, 0.34);
+  --edge: rgba(255, 255, 255, 0.075);
+  --exit: #c94a52;
+  --good: #7fcaa2;
+  --lift: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+  --radius-lg: 16px;
+  --radius: 11px;
+  --radius-sm: 8px;
+
+  --font-display: "Fira Sans Condensed", "Archivo Narrow", "Roboto Condensed",
+    "Liberation Sans Narrow", "Segoe UI", system-ui, sans-serif;
+  --font-body: Inter, "Adwaita Sans", "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Adwaita Mono", "JetBrains Mono", Hack, "DejaVu Sans Mono", "Liberation Mono",
+    Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  /* The one light source, up and to the left, exactly as the chrome's sheen implies it. Opaque
+     here: this page has its own whole window, with no picture behind it to show through. */
+  background: radial-gradient(120% 90% at 18% -10%, #171c25 0%, var(--ink) 62%);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  display: grid;
+  place-items: center;
+  padding: 6vh 24px;
+  overflow: auto;
+}
+
+.card {
+  width: 100%;
+  max-width: 460px;
+}
+
+/* The service's own mark, the way the sidebar draws it: a coloured initial and the name. It is
+   the only colour on the page, and it is what says which service this page is standing in for. */
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 26px;
+}
+
+.icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff;
+  background: var(--steel);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.mark-name {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 10px;
+}
+
+.lede {
+  margin: 0 0 24px;
+  color: var(--dim);
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--dim-2);
+  margin-bottom: 7px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--gun);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  outline: none;
+  transition: border-color var(--ease), background var(--ease);
+}
+
+input::placeholder {
+  color: var(--dim-2);
+  opacity: 0.7;
+}
+
+input:hover {
+  border-color: var(--steel-edge);
+}
+
+input:focus {
+  border-color: var(--steel);
+  background: var(--gun-raised);
+}
+
+button {
+  font-family: var(--font-body);
+  font-size: 13px;
+  border-radius: var(--radius);
+  padding: 11px 17px;
+  transition: color var(--ease), border-color var(--ease), background var(--ease);
+  border: 1px solid var(--edge);
+  background: var(--gun-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--steel-edge);
+  color: var(--steel-hot);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary {
+  background: var(--steel-wash);
+  border-color: var(--steel-edge);
+  white-space: nowrap;
+}
+
+/* Offered only after a check has failed: the server may simply not answer that endpoint (behind
+   an auth proxy, say), and being told "no" should not be the end of it. */
+.ghost {
+  margin-top: 12px;
+  background: transparent;
+  color: var(--dim);
+  padding: 7px 12px;
+}
+
+/* Holds its line whether or not it is saying anything, so the notes below do not jump when a
+   check starts or finishes. */
+.status {
+  min-height: 1.55em;
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.status[data-kind='busy'] {
+  color: var(--steel);
+}
+
+.status[data-kind='good'] {
+  color: var(--good);
+}
+
+.status[data-kind='bad'] {
+  color: var(--exit);
+}
+
+.notes {
+  margin: 28px 0 0;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--edge);
+  list-style: none;
+  color: var(--dim-2);
+  font-size: 13px;
+}
+
+.notes li + li {
+  margin-top: 9px;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dim);
+  background: var(--gun);
+  border-radius: 4px;
+  padding: 1px 5px;
+}

@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('shell', {
   reorderServices: (orderedIds) => ipcRenderer.send('reorder-services', orderedIds),
   removeService: (id) => ipcRenderer.send('remove-service', id),
   restoreService: (id) => ipcRenderer.send('restore-service', id),
+  // Self-hosted services only (Jellyfin): forget the server address and go back to the setup
+  // page that asks for one. The login is left alone.
+  changeServer: (id) => ipcRenderer.send('change-server', id),
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
   // Which slice of the window the chrome view occupies: 'peek' | 'rail' | 'sidebar' | 'full'.
   // A native view eats mouse events across its whole rect, so the chrome is only ever as wide as

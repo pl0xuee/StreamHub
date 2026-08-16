@@ -226,6 +226,9 @@
     <div id="service-menu" class="context-menu" hidden>
       <div class="context-title" id="menu-title">Service</div>
       <button id="menu-adblock" class="context-item">Block ads here</button>
+      <!-- Self-hosted services only (Jellyfin): the way back to the page that asks where the
+           server is. Hidden on everything else, whose address is not the user's to choose. -->
+      <button id="menu-server" class="context-item" hidden>Change server…</button>
       <button id="menu-signout" class="context-item danger">Sign out / clear data</button>
     </div>
 
