@@ -954,6 +954,12 @@ body.collapsed #btn-settings .gear {
   font-size: 12.5px;
   cursor: pointer;
 }
+/* `display: block` above is an author rule, so it outranks the UA stylesheet's `[hidden]` no matter
+   the specificity — without this, an item hidden from script would go on showing anyway. Same trap
+   as .sheet[hidden] and the others below. */
+.context-item[hidden] {
+  display: none;
+}
 .context-item:hover:not(:disabled) {
   background: var(--steel-wash);
   color: var(--steel-hot);
@@ -1245,6 +1251,12 @@ body.collapsed #btn-settings .gear {
   align-items: center;
   gap: 8px;
   padding: 2px 4px 0 36px; /* line up under the toggle's label, not the toggle */
+}
+/* The row is only shown once the engine is actually loaded (renderer.js sets `hidden`), and the
+   author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]` — leaving a
+   filter age and an Update button sitting under a blocker that is switched off. */
+.setting-extra[hidden] {
+  display: none;
 }
 #filter-age {
   font-family: var(--font-mono);

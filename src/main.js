@@ -522,8 +522,12 @@ ipcMain.on('toggle-grid', () => setGridMode(!gridMode));
 // the grid adds *another* pane rather than removing it, so a service can be tiled several times
 // over — two Twitch streams at once, say. Removal is per pane, below.
 ipcMain.on('add-grid-pane', (_e, serviceId) => {
-  if (!gridMode) return;
   if (!config.services.some((s) => s.id === serviceId)) return;
+  // Asking for a pane from single view is a way *into* the grid, not a no-op: seed the grid with
+  // whatever is showing, then tile the chosen service beside it. This is what Shift+Enter in the
+  // quick switch means — it promised a pane and did nothing at all until the grid had first been
+  // turned on by hand.
+  if (!gridMode) setGridMode(true);
   if (gridPanes.length >= MAX_GRID_PANES) return;
   gridPanes.push({ paneId: newPaneId(serviceId), serviceId });
   viewManager.showGrid(reconcileGrid());
