@@ -1,8 +1,8 @@
 # StreamHub
 
 One desktop app for the **official** streaming sites — Netflix, Prime Video, Disney+, Max,
-Hulu, YouTube, YouTube TV, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Tubi, and any
-others you add — instead of a drawer full of browser tabs.
+Hulu, YouTube, YouTube TV, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Tubi, your own
+**Jellyfin** server, and any others you add — instead of a drawer full of browser tabs.
 
 Each service loads its own website and plays through its own DRM. **No DRM is circumvented,
 extracted, or bypassed:** this is a purpose-built Chromium shell hosting the official web
@@ -34,10 +34,12 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 
 ## Features
 
-- **Glass chrome** — the sidebar is tinted gunmetal floating over the page rather than sitting
-  beside it, and it rests off the left edge until you reach for that edge. Nothing behind it moves
-  or resizes when it comes and goes. Both halves are switchable in Settings: pin it open, or dock
-  it beside the page opaque, the way it used to sit.
+- **Glass chrome** — the sidebar is a slab of tinted glass resting *over* the page rather than
+  sitting beside it: held clear of the window on all four sides, rounded, lifted by a shadow, and
+  see-through enough that a bright frame is plainly visible behind it. It rests off the left edge
+  until you reach for that edge, and nothing behind it moves or resizes when it comes and goes.
+  The settings, the removed list and the quick switch float the same way. Both halves are
+  switchable in Settings: pin it open, or dock it beside the page opaque, the way it used to sit.
 - Sidebar with one-click switching; drag to reorder, delete to a "Removed" list, click to
   restore. Collapses to an icon rail.
 - **Quick switch** — `Ctrl+K`, a few letters, Enter. Shift+Enter tiles it as another grid pane.
@@ -58,6 +60,7 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   arrives, chat still beside it, instead of sitting in a box with the channel panels underneath.
   Leaving theater mode on one stream lasts until you open the next. On by default; the switch is
   in Settings.
+- **Your own Jellyfin server** — see below.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
 - **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
@@ -79,6 +82,24 @@ repoint your shortcuts that one time and updates stop disturbing them.
 
 Self-updating only works when running as the AppImage. Started any other way, the app sends
 you to the download page instead.
+
+## Jellyfin
+
+Jellyfin ships in the list like everything else, but it is the one service with no address to
+ship: the server is yours. Click it and StreamHub asks where that server is — the same address
+you would type into a browser, `http://192.168.1.10:8096` or `https://media.example.com/jellyfin`
+— checks something is actually answering there, and names the server it found before saving it.
+From then on it is an ordinary service: its own session, its own login, grid panes, media keys.
+
+- A bare `192.168.1.10:8096` is enough; the scheme is assumed, and a `/web/index.html` copied out
+  of a browser is trimmed off.
+- If the check fails but you know the address is right, it offers to use it anyway.
+- Right-click Jellyfin in the sidebar → **Change server…** to point it somewhere else. The login
+  is left alone, so pointing it back picks up where it left off.
+- **HTTPS with a self-signed certificate will not load.** Chromium refuses it and StreamHub does
+  not override that. Use plain `http` on your own network, or give the server a real certificate.
+- No DRM is involved here — this is your own server, so quality is whatever it serves and the
+  ~720p Widevine ceiling above does not apply.
 
 ## Ad blocking
 
@@ -123,6 +144,11 @@ The built-in service list is `DEFAULT_SERVICES` in [`src/services.js`](src/servi
 `{ id, name, url, color }` and it shows up, including for existing users, without disturbing
 their order or removals. Personal lists live in `~/.config/streamhub/services.json`, never in
 the source.
+
+A service whose address is the user's own server instead carries `selfHosted: true` and an empty
+`url`. Its view then loads [`src/ui/setup.html`](src/ui/setup.html) — the only page in the app
+served to a service view, and the only one given a bridge ([`src/setup-preload.js`](src/setup-preload.js))
+— until an address is saved, at which point the view is rebuilt on the real server.
 
 ## Legal
 
