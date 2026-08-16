@@ -8,51 +8,81 @@
  *
  * The glass is tinted, not frosted. backdrop-filter samples the current rendering context and the
  * video is a different WebContents entirely, so there is nothing there for Chromium to blur — the
- * picture shows through sharply, dimmed and cooled by the tint. Contrast is therefore set by the
- * worst case, a white frame behind the sidebar, which is why --dim sits as light as it does.
+ * picture shows through sharply, dimmed and cooled by the tint. Everything below follows from that
+ * one fact: with no blur to hide behind, transparency has to be paid for in *darkness*.
  *
- * The one thing here that is allowed to be memorable is the seam: the hairline where the chrome
+ * The panel floats. It is inset from the window on all four sides with a soft shadow under it, so
+ * it reads as a slab of glass resting over the film rather than a wall built against its edge —
+ * and a floating thing is allowed to be see-through in a way a wall is not. That is what buys the
+ * transparency: the tint went darker (#12151c, near the window's own ink) as it went thinner, so a
+ * quarter of the picture now comes through while the type behind it holds its contrast.
+ *
+ * The one thing here that is allowed to be memorable is the seam: the lit edge where the chrome
  * stops and the picture starts. It carries the light, and while something is playing it breathes.
  * That edge is the only boundary this app really has, it is the last thing left on screen once the
  * sidebar stows, and making it the on-air signal means the app needs no indicator lamp at all.
- * Everything else is flat and quiet: no gradients, no inset highlights, no bevels.
+ *
+ * Otherwise: one whisper of a top sheen on each floating surface, because that is what makes glass
+ * read as glass rather than as a hole cut in the picture, and nothing else. No bevels, no colour
+ * beyond the marks, no second accent.
  */
 
 :root {
-  /* The window itself, seen only through the grid's gutters. */
+  /* The window itself, seen only through the grid's gutters and around the floating chrome. */
   --ink: #0d1015;
 
-  /* The glass. Alpha is doing all the work, and the value is set by the worst case rather than by
-     taste: measured against a full-white frame, 0.86 left the service names at 4.2:1 and 0.90
-     brings them back over AA. A tenth of the picture still comes through, which is enough to read
-     as glass — the frames that make it obvious are the bright ones, and those are exactly the ones
-     that needed the extra tenth. */
-  --gun: rgba(30, 35, 43, 0.9);
-  --gun-raised: rgba(38, 44, 54, 0.94);
-  --gun-hover: rgba(52, 60, 72, 0.55);
+  /* The glass. Alpha and tint are set together, against the worst case — a full-white frame behind
+     the panel. At 0.9 of #1e232b the panel was nearly solid; going thinner alone would have taken
+     the service names under AA, so the tint went darker by the same move. 0.78 of #12151c resolves
+     to #43464e over white, which keeps the names at 7.4:1 and their labels at 5:1, and lets a full
+     quarter of the picture through — enough that a bright frame is plainly visible behind it.
+     `raised` is for what sits *on* the glass (menus, sheets, the quick switch): denser, because
+     something in front of the panel has to read as being in front of it. */
+  --gun: rgba(18, 21, 28, 0.78);
+  --gun-raised: rgba(24, 28, 37, 0.9);
+  --gun-hover: rgba(86, 98, 116, 0.28);
+
+  /* A card *inside* a surface — a settings row, a removed service. Light laid on the glass rather
+     than another sheet of it: stacking two tinted panes turns them opaque, which is the one thing
+     the material must not do. */
+  --card: rgba(255, 255, 255, 0.045);
+  --card-hover: rgba(255, 255, 255, 0.08);
 
   /* A hairline of light along an edge is the whole trick: it is what reads as a sheet of glass
-     over the picture rather than a hole cut in it. */
-  --edge: rgba(255, 255, 255, 0.07);
-  --edge-strong: rgba(255, 255, 255, 0.11);
+     over the picture rather than a hole cut in it. `sheen` is the same idea spread over the top of
+     a surface instead of drawn along its edge — the one gradient in the app. */
+  --edge: rgba(255, 255, 255, 0.075);
+  --edge-strong: rgba(255, 255, 255, 0.13);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 96px);
 
   /* Text, set against a white frame behind the glass — the case that decides it. There the glass
-     resolves to #343940, and these give 9.9:1, 6.5:1 and 4.7:1 — all three clear AA at the worst
-     the picture can do to them. They are lighter than a solid dark panel would have needed; that
-     is the rent the transparency charges. */
-  --text: #e9edf2;
-  --dim: #b8c2d1;
-  --dim-2: #9aa6b8;
+     resolves to #43464e, and these give 7.4:1, 5.0:1 and 4.0:1. The first two clear AA outright;
+     --dim-2 carries only counts, versions and captions, and it is a tenth lighter than it was to
+     spend as little of that as possible. It is the rent the transparency charges, and the reason
+     nothing that has to be *read* is set in it. */
+  --text: #eef1f6;
+  --dim: #c2cbd8;
+  --dim-2: #a6b1c1;
 
   /* The one lit thing. */
-  --steel: #8fa3b8;
-  --steel-hot: #c9d6e4;
-  --steel-wash: rgba(143, 163, 184, 0.14);
-  --steel-edge: rgba(143, 163, 184, 0.3);
-  --steel-glow: rgba(143, 163, 184, 0.45);
+  --steel: #9db2c8;
+  --steel-hot: #d6e2ef;
+  --steel-wash: rgba(157, 178, 200, 0.16);
+  --steel-edge: rgba(157, 178, 200, 0.34);
+  --steel-glow: rgba(157, 178, 200, 0.5);
 
   /* Exit sign. Removing, signing out, closing a pane — nothing else. */
-  --exit: #b8434b;
+  --exit: #c94a52;
+
+  /* Depth. The panel floats, so it casts: one wide soft shadow for the ambient contact and one
+     tight dark one to keep its edge legible against a pale frame. */
+  --lift: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --lift-high: 0 28px 70px rgba(0, 0, 0, 0.62), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+  /* How far the floating chrome is held off the window's edges. It comes out of the sidebar's own
+     width rather than being added to it — the chrome view is only ever as wide as CHROME_REGIONS
+     says (main.js), and anything drawn past that is simply cut off. */
+  --float: 9px;
 
   --sidebar-width: 220px;
   --rail-width: 56px;
@@ -61,8 +91,15 @@
      edge. Must match CHROME_REGIONS.peek in main.js, which is the matching slice of window this
      takes away from the page. */
   --peek-width: 24px;
-  --radius: 8px;
-  --radius-sm: 6px;
+  /* Roomier than they were. A floating panel wants a radius you can see from across the room; the
+     rows and controls inside it follow, or the corners disagree with one another. */
+  --radius-lg: 16px;
+  --radius: 11px;
+  --radius-sm: 8px;
+  /* Everything that moves uses one of these two. The first is for things that change appearance
+     under the pointer, the second for things that actually travel. */
+  --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-move: 0.26s cubic-bezier(0.32, 0.72, 0, 1);
 
   /* A condensed grotesk for the wordmark and section rules — marquee lettering is condensed,
      spaced and set in caps, which is exactly what those two roles want. The body face carries
@@ -142,24 +179,32 @@ body {
 }
 
 /* ---- Sidebar ---- */
+/* A slab of glass resting over the picture: held off all four window edges, rounded, and lifted by
+   a shadow. The inset comes out of the sidebar's own width — the chrome view is only ever as wide
+   as CHROME_REGIONS allows (main.js), so anything drawn past that edge is cut off, not overlapped.
+   Held off the *bottom* as well as the top, which is what stops it reading as a column welded to
+   the window and is most of why it can be this transparent. */
 #sidebar {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: var(--sidebar-width);
-  height: 100%;
-  background: var(--gun);
-  /* The seam: one hairline of light where the chrome stops and the picture starts. This is what
-     reads as a sheet of glass over the film rather than a hole cut in it, and it is also where the
-     on-air signal lives — see "the seam" below. The dark shadow beside it keeps the edge legible
-     against a pale frame, where a light-on-light hairline would vanish. */
-  border-right: 1px solid var(--edge);
-  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35);
+  top: var(--float);
+  left: var(--float);
+  width: calc(var(--sidebar-width) - var(--float));
+  height: calc(100% - var(--float) * 2);
+  /* One whisper of a top sheen over the tint: the light has to come from somewhere for this to
+     read as a pane of glass rather than a grey rectangle. */
+  background: var(--sheen), var(--gun);
+  border-radius: var(--radius-lg);
+  /* The seam is the panel's whole lit edge now rather than one hairline down its right-hand side —
+     it is a floating object, so the light catches all of it. It is still where the on-air signal
+     lives (see "the seam" below), and the shadow under it is what keeps that edge legible against
+     a pale frame, where a light-on-light hairline would vanish. */
+  border: 1px solid var(--edge);
+  box-shadow: var(--lift);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px 14px;
-  gap: 14px;
-  transition: transform 0.22s ease;
+  padding: 15px 11px 13px;
+  gap: 13px;
+  transition: transform var(--ease-move), box-shadow var(--ease-move);
 }
 
 .brand {
@@ -190,15 +235,18 @@ body {
 body.playing #sidebar {
   animation: seam 3.4s ease-in-out infinite;
 }
+/* The panel floats, so the light catches its whole edge rather than one side of it: the border
+   brightens and a steel halo swells around the slab, over the shadow that is already holding it
+   off the picture. */
 @keyframes seam {
   0%,
   100% {
-    border-right-color: rgba(143, 163, 184, 0.2);
-    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 12px -3px rgba(143, 163, 184, 0.18);
+    border-color: rgba(157, 178, 200, 0.18);
+    box-shadow: var(--lift), 0 0 16px -4px rgba(157, 178, 200, 0.2);
   }
   50% {
-    border-right-color: rgba(143, 163, 184, 0.62);
-    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 16px -2px rgba(143, 163, 184, 0.5);
+    border-color: rgba(157, 178, 200, 0.6);
+    box-shadow: var(--lift), 0 0 26px -2px rgba(157, 178, 200, 0.45);
   }
 }
 
@@ -213,7 +261,7 @@ body.playing #sidebar {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.16s ease;
+  transition: background var(--ease);
 }
 #btn-collapse:hover {
   background: rgba(255, 255, 255, 0.04);
@@ -226,7 +274,7 @@ body.playing #sidebar {
   height: 1.5px;
   border-radius: 2px;
   background: var(--dim);
-  transition: background 0.16s ease;
+  transition: background var(--ease);
 }
 .bars {
   position: relative;
@@ -269,11 +317,11 @@ body.playing #sidebar {
      inside 220px — a roomier gap is what clips "Prime Video" to "Prime …". */
   gap: 9px;
   padding: 8px 8px 8px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   color: var(--dim);
   cursor: pointer;
   position: relative;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background var(--ease), color var(--ease);
 }
 /* The light marking the row that is showing. Drawn always, unlit until it is. */
 .service::before {
@@ -290,11 +338,14 @@ body.playing #sidebar {
 }
 .service:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.028);
+  background: rgba(255, 255, 255, 0.05);
 }
+/* The row that is showing: the steel wash, plus a hairline of the same light around it. On glass
+   this thin, a wash alone was starting to read as a smudge rather than as a selection. */
 .service.active {
   color: var(--text);
   background: var(--steel-wash);
+  box-shadow: inset 0 0 0 1px rgba(157, 178, 200, 0.16);
 }
 .service.active::before {
   background: var(--steel);
@@ -310,13 +361,15 @@ body.playing #sidebar {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 7px;
+  border-radius: 8px;
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  /* A dark ring to seat the mark on the glass, and a hairline of light along its top so it catches
+     the same light the panel does. */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16);
   /* Unlit means darker, not paler: desaturating a bright brand colour turns it milky, which
      reads as "washed out" rather than "in shadow". Brightness alone keeps the mark recognisably
      Netflix-red or Twitch-purple while it waits its turn. */
@@ -372,7 +425,7 @@ body.playing #sidebar {
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+  transition: opacity var(--ease), background var(--ease), color var(--ease);
 }
 /* Revealed on focus as well as hover, or tabbing to it lands on a button nobody can see. */
 .service:hover .del,
@@ -405,7 +458,7 @@ body.playing #sidebar {
   line-height: 13px;
   text-align: center;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
 }
 .service .grid-num:hover:not(:disabled) {
   background: var(--exit);
@@ -506,7 +559,7 @@ body.grid-full .service {
   border-radius: 3px;
   background: var(--gun-raised);
   cursor: grab;
-  transition: background 0.16s ease, box-shadow 0.16s ease;
+  transition: background var(--ease), box-shadow var(--ease);
 }
 .pane-tile:hover {
   background: var(--gun-hover);
@@ -558,7 +611,7 @@ body.grid-full .service {
   line-height: 12px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+  transition: opacity var(--ease), background var(--ease), color var(--ease);
 }
 .pane-tile:hover .pane-close,
 .pane-close:focus-visible {
@@ -590,7 +643,7 @@ body.grid-full .service {
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
 }
 .grid-layout button:hover:not(:disabled) {
   color: var(--text);
@@ -636,7 +689,7 @@ body.grid-full .service {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  transition: color var(--ease), border-color var(--ease), background var(--ease);
 }
 .list-actions button:hover {
   color: var(--steel);
@@ -671,7 +724,7 @@ body.grid-full .service {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+  transition: color var(--ease), background var(--ease), border-color var(--ease);
 }
 .toolbar button:hover {
   color: var(--steel);
@@ -718,7 +771,7 @@ body.grid-full .service {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  transition: color var(--ease), border-color var(--ease), background var(--ease);
 }
 #btn-update:hover,
 #btn-settings:hover {
@@ -748,8 +801,10 @@ body.grid-full .service {
    it in again.
    Nothing resizes: the service views keep the bounds they had, so the page being watched never
    reflows. It is a transform and a view width, nothing else. */
+/* Far enough to take the shadow and the left inset with it — translating by its own width alone
+   would leave the panel's rounded left edge sitting in the window. */
 body.stowed #sidebar {
-  transform: translateX(-100%);
+  transform: translateX(calc(-100% - var(--float) - 6px));
 }
 body.stowed.peeking #sidebar {
   transform: none;
@@ -763,17 +818,39 @@ body.stowed.peeking #sidebar {
   left: 0;
   width: var(--peek-width);
   height: 100%;
-  /* Lit only along its first few pixels, so widening the reach did not widen the mark it leaves on
-     the picture. The border is on the left here, not the right: the seam is the window's own edge
-     while the sidebar is away. */
-  border-left: 1px solid var(--edge);
-  background: linear-gradient(90deg, rgba(143, 163, 184, 0.14), transparent 30%);
+  /* The strip is all reach target and almost no mark: a wash that fades out well before its own
+     edge, so widening the thing you aim at did not widen what sits on the picture. */
+  background: linear-gradient(90deg, rgba(157, 178, 200, 0.1), transparent 45%);
+}
+/* What is actually drawn: a hairline pill, held off the top and bottom the same distance the panel
+   is. It is the panel's own lit edge, left behind — so it reads as the thing that comes back, and
+   it carries the on-air light while the sidebar is away. */
+.edge-strip::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: var(--float);
+  bottom: var(--float);
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(157, 178, 200, 0.26);
 }
 .edge-strip[hidden] {
   display: none;
 }
-body.playing .edge-strip {
-  animation: seam 3.4s ease-in-out infinite;
+body.playing .edge-strip::after {
+  animation: seam-strip 3.4s ease-in-out infinite;
+}
+@keyframes seam-strip {
+  0%,
+  100% {
+    background: rgba(157, 178, 200, 0.22);
+    box-shadow: 0 0 10px rgba(157, 178, 200, 0.16);
+  }
+  50% {
+    background: rgba(157, 178, 200, 0.72);
+    box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
+  }
 }
 
 /* ---- An update is waiting ---- */
@@ -856,10 +933,13 @@ body.collapsed.update-available #app-version::after {
   #btn-settings:hover .gear {
     transform: none;
   }
-  body.playing #sidebar,
-  body.playing .edge-strip {
-    border-right-color: rgba(143, 163, 184, 0.62);
-    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.35), 2px 0 16px -2px rgba(143, 163, 184, 0.5);
+  body.playing #sidebar {
+    border-color: rgba(157, 178, 200, 0.6);
+    box-shadow: var(--lift), 0 0 26px -2px rgba(157, 178, 200, 0.45);
+  }
+  body.playing .edge-strip::after {
+    background: rgba(157, 178, 200, 0.72);
+    box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
   }
 }
 
@@ -923,12 +1003,21 @@ body.collapsed #btn-settings .gear {
 .context-menu {
   position: fixed;
   z-index: 50;
-  min-width: 180px;
-  padding: 4px;
+  min-width: 190px;
+  padding: 5px;
   border: 1px solid var(--edge-strong);
-  border-radius: var(--radius-sm);
-  background: var(--gun-raised);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius);
+  background: var(--sheen), var(--gun-raised);
+  box-shadow: var(--lift-high);
+  animation: pop 0.13s cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* Everything that appears over the panel arrives the same way: from just under where it lands, and
+   quickly. Enough to say "this came from there" and not enough to wait for. */
+@keyframes pop {
+  from {
+    transform: translateY(-4px) scale(0.985);
+    opacity: 0;
+  }
 }
 .context-title {
   padding: 6px 8px 7px;
@@ -955,8 +1044,9 @@ body.collapsed #btn-settings .gear {
   cursor: pointer;
 }
 /* `display: block` above is an author rule, so it outranks the UA stylesheet's `[hidden]` no matter
-   the specificity — without this, an item hidden from script would go on showing anyway. Same trap
-   as .sheet[hidden] and the others below. */
+   the specificity — without this, an item hidden from script (Change server, which only a
+   self-hosted service has) would go on showing on every service. Same trap as .sheet[hidden] and
+   the others below. */
 .context-item[hidden] {
   display: none;
 }
@@ -982,32 +1072,43 @@ body.collapsed #btn-settings .gear {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(6, 8, 12, 0.55);
+  background: rgba(6, 8, 12, 0.5);
+  animation: fade var(--ease);
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
 }
 .scrim[hidden] {
   display: none;
 }
 
+/* A sheet floats the way the panel does — held off the window's edges, rounded, lifted — rather
+   than being pinned to the right-hand side of the screen. Same material, one step denser, because
+   it is in front of the picture *and* in front of the panel. */
 .sheet {
   position: fixed;
-  top: 0;
-  right: 0;
+  top: var(--float);
+  right: var(--float);
   z-index: 41;
   display: flex;
   flex-direction: column;
   width: min(460px, 60vw);
-  height: 100%;
-  background: var(--gun-raised);
-  border-left: 1px solid var(--edge);
-  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45);
-  animation: sheet-in 0.2s ease;
+  height: calc(100% - var(--float) * 2);
+  background: var(--sheen), var(--gun-raised);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift-high);
+  overflow: hidden; /* so the head and body stay inside the rounded corners */
+  animation: sheet-in var(--ease-move);
 }
 .sheet[hidden] {
   display: none;
 }
 @keyframes sheet-in {
   from {
-    transform: translateX(16px);
+    transform: translateX(20px);
     opacity: 0;
   }
 }
@@ -1038,7 +1139,7 @@ body.collapsed #btn-settings .gear {
   font-size: 17px;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background var(--ease), color var(--ease);
 }
 .sheet-close:hover {
   background: var(--gun-hover);
@@ -1063,12 +1164,13 @@ body.collapsed #btn-settings .gear {
   top: 16vh;
   left: 50%;
   transform: translateX(-50%);
-  width: min(420px, 76vw);
-  padding: 6px;
+  width: min(440px, 76vw);
+  padding: 7px;
   border: 1px solid var(--edge-strong);
-  border-radius: var(--radius);
-  background: var(--gun-raised);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius-lg);
+  background: var(--sheen), var(--gun-raised);
+  box-shadow: var(--lift-high);
+  animation: pop 0.16s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .palette[hidden] {
   display: none;
@@ -1176,15 +1278,15 @@ body.collapsed #btn-settings .gear {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 9px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: var(--gun-raised);
+  padding: 10px 11px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--card);
   cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease;
+  transition: border-color var(--ease), background var(--ease);
 }
 .setting:hover {
-  background: var(--gun-hover);
+  background: var(--card-hover);
 }
 .setting:focus-within {
   border-color: var(--steel-edge);
@@ -1203,7 +1305,7 @@ body.collapsed #btn-settings .gear {
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: background var(--ease), border-color var(--ease), box-shadow var(--ease);
 }
 .setting input[type="checkbox"]:checked {
   background: var(--steel);
@@ -1275,7 +1377,7 @@ body.collapsed #btn-settings .gear {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  transition: color var(--ease), border-color var(--ease), background var(--ease);
 }
 #btn-refresh-filters:hover:not(:disabled) {
   color: var(--steel);
@@ -1296,7 +1398,7 @@ body.collapsed #btn-settings .gear {
   cursor: default;
 }
 .update-row:hover {
-  background: var(--gun-raised);
+  background: var(--card);
 }
 #sheet-settings #btn-update {
   flex-shrink: 0;
@@ -1306,11 +1408,13 @@ body.collapsed #btn-settings .gear {
 #sheet-removed .service.restorable {
   padding: 10px 12px;
   margin-bottom: 6px;
-  background: var(--gun-raised);
-  transition: background 0.16s ease;
+  border: 1px solid var(--edge);
+  background: var(--card);
+  transition: background var(--ease), border-color var(--ease);
 }
 #sheet-removed .service.restorable:hover {
-  background: var(--gun-hover);
+  background: var(--card-hover);
+  border-color: var(--steel-edge);
   color: var(--text);
 }
 #sheet-removed .service .restore-plus {
@@ -1318,7 +1422,7 @@ body.collapsed #btn-settings .gear {
   font-size: 17px;
   font-weight: 400;
   color: var(--dim-2);
-  transition: color 0.16s ease;
+  transition: color var(--ease);
 }
 #sheet-removed .service.restorable:hover .restore-plus {
   color: var(--steel);
