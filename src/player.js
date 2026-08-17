@@ -23,6 +23,9 @@ const { Mpv, isAvailable } = require('./mpv');
 // How often to tell the server where we are. Jellyfin's own clients report every ten seconds;
 // more often is just traffic, less and a crash loses the resume point.
 const PROGRESS_INTERVAL_MS = 10000;
+// How often to tell the *page*. It is in the same process tree and it reads the position out of
+// its own mirror the moment anything asks — so this is what the resume point is rounded to.
+const PAGE_TICK_MS = 1000;
 
 /**
  * Owns the host window and the mpv talking to it.
@@ -30,7 +33,8 @@ const PROGRESS_INTERVAL_MS = 10000;
  * Emits:
  *   'active'   (bool)                 — playback started / finished, for the chrome and the
  *                                       sleep inhibitor
- *   'position' ({ positionSeconds, durationSeconds, paused }) — throttled progress
+ *   'position' ({ positionSeconds, durationSeconds, paused }) — every second, for the page
+ *   'progress' (same)                 — every ten seconds, for the server
  *   'finished' (reason)               — an item ended; 'eof' means it played to the end
  *   'error'    (Error)
  */
@@ -440,12 +444,10 @@ class Player extends EventEmitter {
       if (!this.embedded && this.mpv) {
         this.mpv.setProperty('fullscreen', true).catch(() => {});
       }
-      // Say how to leave. While a film is playing mpv covers the content area and the sidebar is
-      // hidden, so there is nothing on screen suggesting a way back — and the key that does it is
-      // not one anybody would guess at. Shown once, briefly, as playback starts.
-      if (this.mpv) {
-        this.mpv.command('show-text', 'Esc — back to Jellyfin', 4000).catch(() => {});
-      }
+      // Nothing is said about how to leave. It used to be — a line of mpv's own OSD text naming
+      // Escape — from before the controls had a way out of their own. The X on the bar is that
+      // way out now, and it is visible whenever the bar is, so the text was only a second banner
+      // over the opening of every film saying what the button already says.
     });
 
     this.mpv.on('property', (name, value) => {
@@ -514,13 +516,26 @@ class Player extends EventEmitter {
 
   startProgress() {
     this.stopProgress();
-    this.progressTimer = setInterval(() => {
+    // Two rates, because the two listeners want different things. The page holds a mirror of the
+    // position that it reads *synchronously* whenever it reports playback to the server, so a
+    // stale mirror is a wrong resume point — and a stop is never on a tick boundary. Telling a
+    // window in the same process costs nothing, so it is told every second. The server keeps the
+    // ten, which is what Jellyfin's own clients send.
+    this.tickTimer = setInterval(() => {
       if (!this.isActive()) return;
       this.emit('position', { ...this.state }, this.current);
+    }, PAGE_TICK_MS);
+    this.progressTimer = setInterval(() => {
+      if (!this.isActive()) return;
+      this.emit('progress', { ...this.state }, this.current);
     }, PROGRESS_INTERVAL_MS);
   }
 
   stopProgress() {
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
     if (this.progressTimer) {
       clearInterval(this.progressTimer);
       this.progressTimer = null;

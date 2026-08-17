@@ -285,8 +285,9 @@ function jellyfinShellJs(options) {
     //
     // Position and duration live over IPC, and jellyfin-web asks for them far more often than a
     // round trip is worth — every progress report, every OSD tick. So the events pushed from
-    // main keep a local mirror, and the reads answer from it. currentTime() still asks the bridge
-    // (it is the one read where being a second stale is visible), but falls back here.
+    // main keep a local mirror, and every read answers from it — including currentTime(), which
+    // has to come back as a number the instant it is asked. Main pushes a position every second
+    // to keep the mirror close enough for a resume point.
     const state = {
       started: false,
       paused: true,
@@ -549,12 +550,19 @@ function jellyfinShellJs(options) {
       },
 
       // Getter and setter in one, as jellyfin-web's player interface expects, in milliseconds.
-      // The getter returns a promise — AppHost.currentTimeAsync is set for exactly this, because
-      // the true position is a round trip away. The setter updates the mirror before the seek
-      // lands so a read in between does not answer with the position we just left.
+      // The setter updates the mirror before the seek lands, so a read in between does not answer
+      // with the position we just left.
       //
-      // Once the session is over the mirror is the only truth there is: jellyfin-web reads this
-      // after 'stopped' to work out the resume point, and by then mpv has no position to report.
+      // The getter MUST be synchronous and MUST return a number. jellyfin-web builds every
+      // playback report with Math.floor(10000 * player.currentTime()) — no await anywhere near it
+      // — so a promise there becomes NaN, which serialises to a null PositionTicks. And a stop
+      // report with no position is not "position unknown" to Jellyfin: the server takes it as a
+      // client that cannot report one, assumes the item ran to the end, and marks it watched.
+      // That is what made leaving a film halfway tick it off as finished.
+      //
+      // So this answers from the mirror, which main refreshes every second. Once the session is
+      // over the mirror is the only truth there is: jellyfin-web reads this after 'stopped' to
+      // work out the resume point, and by then mpv has no position to report.
       currentTime: function (ms) {
         if (ms !== null && ms !== undefined) {
           const seconds = Number(ms) / 1000;
@@ -563,11 +571,7 @@ function jellyfinShellJs(options) {
           call('seek', seconds);
           return undefined;
         }
-        if (!state.started) return Promise.resolve(state.positionMs);
-        return call('getState').then(function (snapshot) {
-          absorb(snapshot);
-          return state.positionMs;
-        });
+        return state.positionMs;
       },
 
       duration: function () {
@@ -802,9 +806,11 @@ function jellyfinShellJs(options) {
       // so the server must be asked for absolute ones.
       useFullSubtitleUrls: true,
 
-      // Position comes back over IPC, so currentTime() answers with a promise. jellyfin-web
-      // needs telling, or it will read the promise object as a number.
-      currentTimeAsync: true,
+      // NOT set: currentTimeAsync. It was, on the reasoning that the position is a round trip
+      // away — but jellyfin-web reads currentTime() synchronously when it builds a playback
+      // report regardless of this flag, so the promise it got became a null position and the
+      // server marked half-watched films as finished. currentTime() answers from a mirror now.
+      // See the note on it.
     };
 
     const nativeShell = {

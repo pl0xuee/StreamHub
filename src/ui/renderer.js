@@ -487,10 +487,12 @@ function renderStow() {
   if (away !== stowed) {
     stowed = away;
     clearTimeout(peekTimer);
-    // Pinned open, nothing is peeking; newly stowed, the sidebar is left out until the pointer
-    // moves off it, which is what teaches the gesture without a tooltip explaining it.
+    // Pinned open, nothing is peeking; newly stowed, the sidebar is left out for a few seconds
+    // first — long enough to be seen leaving, which is what teaches the gesture without a tooltip
+    // explaining it. Reaching for it in the meantime keeps it, as it would at any other time.
     peeking = away;
     document.body.classList.toggle('peeking', peeking);
+    if (away) stowSoon(IDLE_STOW_MS);
   }
   document.body.classList.toggle('playing', playing);
   document.body.classList.toggle('stowed', stowed);
@@ -505,6 +507,13 @@ const REGION_ORDER = { peek: 0, rail: 1, sidebar: 2, full: 3 };
 const SLIDE_MS = 220;
 // A small overshoot off the sidebar should not slam it shut.
 const LEAVE_GRACE_MS = 180;
+// How long the sidebar stays out when nobody is holding it there.
+//
+// Stowing used to depend on the pointer *leaving* the sidebar, which meant it only ever left after
+// it had been visited: on launch it slid out and stayed out over the page until you moved onto it
+// and off again, which is not a thing anyone thinks to do. Long enough to read the list and pick
+// something, short enough that a window you have gone quiet on ends up showing the picture.
+const IDLE_STOW_MS = 4000;
 
 // Declared here because chromeRegion() below has to know about them, and it is defined before
 // either has anything to say. See the sheet and palette sections further down.
@@ -564,14 +573,20 @@ function holdPeek() {
   syncChromeRegion();
 }
 
-function releasePeek() {
+// Let it go, after `delay`. Anything that holds the sidebar in — the pointer arriving, a sheet
+// opening — cancels the pending departure by way of holdPeek.
+function stowSoon(delay) {
   clearTimeout(peekTimer);
   if (!stowed || !peeking) return;
   peekTimer = setTimeout(() => {
     peeking = false;
     document.body.classList.toggle('peeking', false);
     syncChromeRegion();
-  }, LEAVE_GRACE_MS);
+  }, delay);
+}
+
+function releasePeek() {
+  stowSoon(LEAVE_GRACE_MS);
 }
 
 // ---- Sheets ----
@@ -958,6 +973,10 @@ mpvEl.addEventListener('change', () => window.shell.setMpvPlayback(mpvEl.checked
   edgeStripEl.addEventListener('mouseenter', holdPeek);
   sidebarEl.addEventListener('mouseenter', holdPeek);
   sidebarEl.addEventListener('mouseleave', releasePeek);
+  // Movement over the sidebar counts as holding it too, which matters for the timed stow: a
+  // pointer already sitting on the sidebar when it appeared never sent an enter event, and it
+  // would otherwise slide out from under someone who is reading it.
+  sidebarEl.addEventListener('mousemove', holdPeek);
 
   window.shell.onState((next) => applyState(next));
 }

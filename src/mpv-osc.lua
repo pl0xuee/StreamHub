@@ -359,9 +359,34 @@ local pressed = nil -- which region the button went down on
 local drag = nil -- 'seek' | 'volume' while the pointer is held on a slider
 local drag_pos = nil -- where a seek drag is pointing, so the bar tracks the pointer, not the file
 local last_drag_seek = 0
+-- Where the last seek was aimed, held on to until the file actually arrives there.
+--
+-- A seek is not instant — over a network it is not close to instant — and `time-pos` goes on
+-- reporting the old position until it lands, then reports whatever keyframe it landed on before
+-- the exact seek settles. Read straight, that makes the handle leave the pointer, snap back to
+-- where the film was, and only then arrive: the "jumping around" when skipping through a film.
+-- So the aimed-at position is what the bar shows until the file catches up with it.
+local seek_target = nil
+local seek_target_until = 0 -- ...and never for longer than this, whatever the file does
+local SEEK_LATCH = 2.0 -- how long to keep showing the target before giving up on it
+local SEEK_SETTLE = 0.75 -- how close the file has to get before it is "there"
 local show_remaining = true -- the right-hand clock, toggled by clicking it
 local toast_text, toast_until = nil, 0
 local slab = nil -- the bar's own rectangle, for deciding whether the pointer is on the glass
+
+-- The position to draw: where the file is, unless a seek is still on its way somewhere, in which
+-- case it is where that seek was aimed. The latch drops the moment the file gets near enough —
+-- or when it has plainly not gone there at all and holding on would only be a lie.
+local function settled_pos()
+  local now_pos = mp.get_property_number('time-pos')
+  if not seek_target then return now_pos or 0 end
+  if not now_pos then return seek_target end
+  if math.abs(now_pos - seek_target) < SEEK_SETTLE or mp.get_time() > seek_target_until then
+    seek_target = nil
+    return now_pos
+  end
+  return seek_target
+end
 
 -- mpv drags its own window when a button is held on the picture and the pointer moves more than a
 -- few pixels, and while it is doing that the script stops hearing about the pointer at all — a
@@ -503,7 +528,7 @@ local function layout()
 
   -- Everything the row needs to know about the file, gathered once.
   local duration = mp.get_property_number('duration') or 0
-  local pos = drag_pos or mp.get_property_number('time-pos') or 0
+  local pos = drag_pos or settled_pos()
   L.duration, L.pos = duration, pos
   L.seekable = duration > 0
   -- With nothing loaded mpv is not "paused" — but a bar showing the pause glyph over an empty
@@ -1196,6 +1221,12 @@ local function release()
   if drag == 'seek' then
     local L = layout()
     if L then apply_seek(L, mouse.x, true) end
+    -- Let go of the pointer, but not of where it was pointing: the exact seek above is still on
+    -- its way, and until it lands the file's own position is the *old* one. See seek_target.
+    if drag_pos then
+      seek_target = drag_pos
+      seek_target_until = mp.get_time() + SEEK_LATCH
+    end
   end
   drag, drag_pos = nil, nil
   -- A button fires on release, over the control it went down on: pressing one and sliding off it
@@ -1245,8 +1276,16 @@ for _, name in ipairs({ 'media-title', 'duration', 'chapter-list' }) do
   end))
 end
 
-mp.register_event('file-loaded', guard(wake))
-mp.register_event('end-file', guard(wake))
+-- A different file is a different timeline, so a position aimed at in the last one means nothing
+-- here and holding it would show the new film starting somewhere it is not.
+mp.register_event('file-loaded', guard(function()
+  seek_target = nil
+  wake()
+end))
+mp.register_event('end-file', guard(function()
+  seek_target = nil
+  wake()
+end))
 mp.register_event('shutdown', guard(function() suppress_window_drag(false) end))
 
 mp.add_forced_key_binding('MBTN_LEFT', 'streamhub-osc-click', on_click, { complex = true })

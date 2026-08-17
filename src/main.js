@@ -550,16 +550,23 @@ function createWindow() {
     mpvPlaying = on;
     updateChromeVisible();
     reportPlaying();
-    sendToJellyfin({ type: on ? 'playing' : 'stopped' });
-
-    // Stopping is the report that must not be missed: it is what writes the resume point, and
-    // what tells the server to tear down anything it had set up for this session.
-    //
     // Read the position off the player that raised this, not off the module-level one: closing
     // the window destroys the player and clears that reference before mpv has finished exiting,
     // so by the time this runs it can already be null — which threw, and lost the resume point
     // for whatever was playing when the app was closed.
     const player = jellyfinPlayer;
+
+    // The position rides along with the stop. jellyfin-web reports the stop to the server itself,
+    // reading the position out of its own mirror as it does — and a stop lands between ticks, so
+    // without this the mirror is up to a second behind and the resume point is that much short.
+    if (on) sendToJellyfin({ type: 'playing' });
+    else {
+      const positionSeconds = player ? player.state.positionSeconds : undefined;
+      sendToJellyfin({ type: 'stopped', positionSeconds });
+    }
+
+    // Stopping is the report that must not be missed: it is what writes the resume point, and
+    // what tells the server to tear down anything it had set up for this session.
     if (!on && jellyfinApi && was && was.itemId && player) {
       jellyfinApi
         .reportStopped({
@@ -592,8 +599,13 @@ function createWindow() {
       .catch(() => {});
   });
 
-  jellyfinPlayer.on('position', (state, current) => {
+  // Every second, and only to the page: it answers jellyfin-web's own position reads out of this,
+  // so how fresh it is decides where a film resumes from.
+  jellyfinPlayer.on('position', (state) => {
     sendToJellyfin({ type: 'timeupdate', ...state });
+  });
+
+  jellyfinPlayer.on('progress', (state, current) => {
     if (!jellyfinApi || !current || !current.itemId) return;
     jellyfinApi
       .reportProgress({
