@@ -60,8 +60,25 @@ const { JellyfinApi } = require('./jellyfin-api');
 // spawned from an Electron parent never starts, with or without the parent still alive, and
 // app.relaunch() before the app is ready does nothing at all.
 //
-// So Wayland is not treated as an error. mpv opens a window of its own there instead of being
-// embedded — see player.js. Playback works; it just is not inside the app.
+// So the app moves itself onto X11 when it can, and falls back rather than failing when it
+// cannot: on Wayland mpv opens a window of its own instead of being embedded (see player.js).
+// Playback works either way; only one of them is inside the app.
+//
+// The move has to go through the same shell hand-off the updater uses. Starting a replacement
+// from inside Electron does not work — tested three ways: app.relaunch() before ready, electron
+// spawning electron, and electron spawning the AppImage. The child never started in any of them.
+// The reason is the one relaunchAfterExit already documents: the environment here points into the
+// AppImage's own mount, so the new copy has to be started by something that outlives us, from a
+// working directory that is not about to disappear.
+if (
+  process.platform === 'linux' &&
+  process.env.APPIMAGE &&
+  process.env.WAYLAND_DISPLAY &&
+  !process.argv.some((a) => a.startsWith('--ozone-platform'))
+) {
+  relaunchAfterExit(process.env.APPIMAGE, '--ozone-platform=x11');
+  app.exit(0);
+}
 
 
 // Name the keyring to use, rather than letting Chromium work it out each launch.
@@ -1504,7 +1521,7 @@ async function pollForUpdate() {
 // our pid to disappear, then execs the new build. Its environment is stripped of the old
 // mount's variables — they point into a directory that is about to stop existing — and the
 // new AppImage's runtime sets its own on the way up.
-function relaunchAfterExit(appImagePath) {
+function relaunchAfterExit(appImagePath, extraArg) {
   const env = { ...process.env };
   for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'LD_LIBRARY_PATH', 'LD_PRELOAD']) {
     delete env[key];
@@ -1514,10 +1531,13 @@ function relaunchAfterExit(appImagePath) {
     '/bin/sh',
     [
       '-c',
-      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
+      extraArg
+        ? 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2" "$3"'
+        : 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
       'streamhub-relaunch', // $0
       String(process.pid), //  $1: wait for us to exit…
       appImagePath, //         $2: …then become the new build
+      ...(extraArg ? [extraArg] : []), // $3: …carrying this argument, when one is given
     ],
     {
       detached: true, // its own session, so our exit doesn't take it down with us
