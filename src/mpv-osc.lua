@@ -3,7 +3,7 @@
 -- mpv puts its picture in a native child window of ours, and a native child always draws above the
 -- page beneath it, so nothing the app paints in HTML can reach the film. The controls therefore
 -- have to be drawn *inside* mpv, and the only drawing surface a player script has is ASS subtitle
--- markup. This file is src/ui/player.css restated in that language: the same slab of tinted glass
+-- markup. So this is src/ui/styles.css restated in that language: the same slab of tinted glass
 -- held off the window's edges, the same tokens, the same lit-steel accent.
 --
 -- Loaded with `--script=<this file>` alongside `--no-osc`, in place of mpv's built-in controller.
@@ -13,11 +13,14 @@
 -- did — chapter skip, playlist skip, the cache range shaded into the seek bar, chapter marks, the
 -- hover timestamp, the elapsed/remaining toggle, "2/4" track counts — so all of that is here.
 --
--- Where it deliberately differs is the shape: one row, 48 units tall, rather than the built-in
--- bar's two stacked strips. Everything shares the line and the seek bar takes whatever is left in
--- the middle, which is what keeps a control surface this complete down to the height of a single
--- button. When the window is too narrow for all of it, features are dropped in a fixed order
--- (see FIT_ORDER) rather than being crushed.
+-- Where it deliberately differs is the shape. The progress is not a control in the row: it is the
+-- seam — a lit hairline along the top edge of the slab, unlit ahead of the playhead and steel
+-- behind it, which is the one thing styles.css says this app is allowed to be memorable for. Under
+-- the pointer it thickens and takes a handle; the rest of the time it is a reading. Everything
+-- else is one 48-unit row beneath it: the transport at the left where the hand is, the two clocks
+-- together now that nothing separates them, the title taking whatever is left, and the settings
+-- and the way out at the far end. When the window is too narrow for all of it, features are
+-- dropped in a fixed order (see FIT_ORDER) rather than being crushed.
 --
 -- Two things about ASS decide most of what follows. Colours are written &HBBGGRR& — the reverse of
 -- a CSS hex triple — and alpha runs the other way as well, 00 opaque to FF invisible. And there is
@@ -62,13 +65,18 @@ local ALPHA_EDGE_STRONG = A(0.13) -- --edge-strong
 local ALPHA_STEEL_WASH = A(0.16) -- --steel-wash
 local ALPHA_STEEL_EDGE = A(0.34) -- --steel-edge
 local ALPHA_GROOVE = A(0.42) -- the unplayed rail, rgba(0,0,0,0.42)
-local ALPHA_CACHE = A(0.17) -- what has been fetched but not played
+local ALPHA_CACHE = A(0.11) -- what has been fetched but not played, and must stay behind it
 local ALPHA_DISABLED = A(0.3) -- a control there is nothing for to do
 local ALPHA_MARK = A(0.5) -- chapter marks, which have to read over rail and fill alike
 
--- The font stacks CSS falls down; ASS takes one name, so each is the app's first choice. libass
--- substitutes its own sans when a family is missing, which is the same outcome the CSS stack has.
-local FONT_BODY = 'Inter'
+-- Two faces, and ASS takes one name each — no falling down a stack the way CSS does.
+--
+-- --font-body led with Inter, which is not installed on any machine this has run on, so libass
+-- was quietly substituting its own sans and the bar was set in a face the app never uses. Rather
+-- than name a font and hope, everything here is set in the two the app ships against: the display
+-- face for words, the mono for numbers. Condensed suits a strip of chrome anyway — a long film
+-- title fits without shrinking the type — and numbers that change every second have to be
+-- tabular or the clock jitters.
 local FONT_DISPLAY = 'Fira Sans Condensed'
 local FONT_MONO = 'Adwaita Mono'
 
@@ -76,7 +84,8 @@ local FONT_MONO = 'Adwaita Mono'
 -- Geometry, in CSS pixels at 1x
 --
 -- Every one of these is multiplied by a single scale factor before anything is drawn; see
--- scale_for(). The bar is one row of 26-unit buttons with 11 units of padding above and below.
+-- scale_for(). The bar is 48 units tall: a 10-unit strip along the top that the seam lives in,
+-- and a row of 26-unit controls centred in what is left.
 -- ---------------------------------------------------------------------------------------------
 
 local D = {
@@ -89,19 +98,26 @@ local D = {
   icon = 15, -- the box every glyph is drawn in
   gap = 4, -- between neighbouring buttons
   group = 10, -- between one group of controls and the next
-  rail = 4, -- what is drawn of a slider; the target around it is `btn` tall
-  knob = 10,
+  rail = 3, -- what is drawn of the volume slider; the target around it is `btn` tall
+  knob = 9,
   vol_w = 60,
-  seek_min = 110, -- below this the seek bar stops being scrubable, so something else gives
+  -- The seam: the progress line along the top edge. `band` is what can be grabbed, and it is the
+  -- whole strip rather than the line, because a 2-unit line is not something anyone can hit. The
+  -- line is thin at rest and thickens under the pointer, which is when it stops being a reading
+  -- and starts being a control.
+  seam_band = 10,
+  seam_rail = 2.5,
+  seam_rail_hot = 5,
+  seam_knob = 9,
   pill_h = 22,
   pill_pad = 8,
   pill_gap = 6,
-  title_max = 230,
+  title_min = 90, -- below this the title cannot say anything useful, so something else gives
   chip_pad_x = 9, -- the hover timestamp and the track toast
   chip_h = 22,
   chip_lift = 8,
   spinner = 15,
-  fs_title = 12,
+  fs_title = 12.5,
   fs_time = 11,
   fs_label = 9.5,
   fs_value = 10,
@@ -114,10 +130,12 @@ local FRAME = 1 / 12
 -- How long a track change stays named above the bar.
 local TOAST_FOR = 2.2
 
--- What gets given up, in order, when the row will not fit the window. The title goes first
--- because it is the only thing here that is not a control; the transport's own core — play, seek,
--- the clocks, fullscreen and the way out — is never dropped.
-local FIT_ORDER = { 'title', 'playlist', 'labels', 'volume', 'chapters' }
+-- What gets given up, in order, when the row will not fit the window. The words on the pills go
+-- first — the counts still say what they are — then the volume slider, whose button remains, then
+-- the playlist and chapter steps. The title is not on the list because it does not have to be: it
+-- takes whatever the row has left over, so a narrow window shortens it rather than dropping it,
+-- and it is the last thing to disappear because by then there is nothing left to give it.
+local FIT_ORDER = { 'labels', 'volume', 'playlist', 'chapters' }
 
 -- ---------------------------------------------------------------------------------------------
 -- Small helpers
@@ -163,6 +181,10 @@ end
 -- ---------------------------------------------------------------------------------------------
 
 local DRAW_SCALE = 8
+-- The \p level that divides by that, which \clip has to be told separately: a clip path is written
+-- in the same eighths as the shape it came from, but it carries its own scale rather than
+-- inheriting the one the drawing is under.
+local DRAW_SCALE_TAG = 4
 local function q(v)
   return string.format('%d', math.floor(v * DRAW_SCALE + 0.5))
 end
@@ -524,7 +546,10 @@ local function layout()
     h = u(D.bar_h),
   }
   L.bar.y = H - u(D.float) - L.bar.h
-  L.mid = L.bar.y + L.bar.h / 2
+  -- The row is centred in what the seam leaves, not in the slab: the seam owns the top strip, and
+  -- controls centred on the slab's own midline would sit under it.
+  L.row_top = L.bar.y + u(D.seam_band)
+  L.mid = L.row_top + (L.bar.h - u(D.seam_band)) / 2
 
   -- Everything the row needs to know about the file, gathered once.
   local duration = mp.get_property_number('duration') or 0
@@ -544,7 +569,9 @@ local function layout()
   L.buffering = mp.get_property_bool('paused-for-cache')
     or (mp.get_property_bool('core-idle') and not L.paused and L.seekable)
 
-  L.title_tags = string.format('\\fn%s\\fs%.1f%s', FONT_BODY, u(D.fs_title), colour_tags(TEXT))
+  -- The title is context, not content: what is playing is on the screen behind this. So it is set
+  -- in the dim of a caption rather than the white of something to be read.
+  L.title_tags = string.format('\\fn%s\\fs%.1f%s', FONT_DISPLAY, u(D.fs_title), colour_tags(DIM))
   L.time_tags = string.format('\\fn%s\\fs%.1f%s', FONT_MONO, u(D.fs_time), colour_tags(DIM))
   L.label_tags = string.format(
     '\\fn%s\\fs%.1f\\fsp%.2f', FONT_DISPLAY, u(D.fs_label), u(D.fs_label) * 0.09
@@ -589,19 +616,12 @@ local function layout()
       items[#items + 1] = { w = u(v) }
     end
 
-    if feats.title then
-      local text, w = ellipsize(
-        L.title_full, L.title_tags,
-        math.min(u(D.title_max), L.bar.w * 0.24), W, H
-      )
-      if w > 0 then
-        put({ kind = 'title', text = text, w = w })
-        space(D.group)
-      end
-    end
-
-    -- The transport, in the order every transport has had them: out through the playlist, in
-    -- through the chapters, play in the middle.
+    -- The transport first, at the end of the row nearest the corner the pointer comes from. It is
+    -- the thing that gets pressed; everything after it is something you look at, adjust once, or
+    -- reach for on the way out.
+    --
+    -- In the order every transport has had them: out through the playlist, in through the
+    -- chapters, play in the middle.
     if feats.playlist then
       put({ kind = 'button', id = 'pl-prev', w = u(D.btn) })
       space(D.gap)
@@ -625,18 +645,24 @@ local function layout()
     end
 
     space(D.group)
-    -- No id: the elapsed clock is the one caption on the row, and nothing happens if it is
+    -- The two clocks read as one thing now that the seek bar is not between them: elapsed, a
+    -- divider, then the total or what is left. No id on the first: nothing happens if it is
     -- clicked, so it must not light up under the pointer as though something would.
     put({ kind = 'clock', text = L.elapsed, w = clock_w, align = 6 })
-    space(D.gap)
-    put({ kind = 'seek', id = 'seek', flex = true })
-    space(D.gap)
+    space(D.pill_gap)
+    put({ kind = 'divider', w = u(1) })
+    space(D.pill_gap)
     put({ kind = 'clock', id = 'clock', text = L.right_time, w = clock_w, align = 4 })
+    space(D.group)
+
+    -- Whatever the row does not spend goes here, so a long film gets a long line to be named on
+    -- and the slack sits in the middle of the bar rather than at one end of it.
+    put({ kind = 'title', flex = true })
     space(D.group)
 
     put({ kind = 'pill', id = 'audio', text = 'AUDIO', value = L.audio.text,
           labelled = feats.labels, w = pill_width('AUDIO', L.audio.text, feats.labels) })
-    space(D.pill_gap)
+    space(D.group)
     put({ kind = 'pill', id = 'subs', text = 'SUBS', value = L.sub.text,
           labelled = feats.labels, w = pill_width('SUBS', L.sub.text, feats.labels) })
     space(D.group)
@@ -658,39 +684,59 @@ local function layout()
     return items, L.bar.w - 2 * u(D.pad_x) - fixed
   end
 
-  local feats = { title = true, playlist = true, labels = true, volume = true, chapters = true }
+  local feats = { playlist = true, labels = true, volume = true, chapters = true }
   local items, slack = build(feats)
   for _, giving_up in ipairs(FIT_ORDER) do
-    if slack >= u(D.seek_min) then break end
+    -- Room for the title to say anything at all is what the row is trying to keep. Below that it
+    -- gives something up instead of squeezing everything.
+    if slack >= u(D.title_min) then break end
     feats[giving_up] = false
     items, slack = build(feats)
   end
   L.items = items
 
-  -- Place them. Everything is centred on the row's midline; only the seek bar has a height of its
-  -- own, and that is the invisible target around a 4-unit rail, not the rail itself.
+  -- Place them. Everything is centred on the row's midline; only the volume slider has a height of
+  -- its own, and that is the invisible target around a 4-unit rail, not the rail itself.
   local x = L.bar.x + u(D.pad_x)
   regions = {}
   for _, it in ipairs(items) do
     if it.flex then it.w = math.max(0, slack) end
     it.x = x
-    if it.kind == 'seek' or it.kind == 'volume' then
-      it.h = u(D.btn)
-    elseif it.kind == 'pill' then
+    if it.kind == 'pill' then
       it.h = u(D.pill_h)
     else
       it.h = u(D.btn)
     end
     it.y = L.mid - it.h / 2
     x = x + it.w
+    -- The title only knows how much line it has once the row has been laid out, so it is cut to
+    -- length here rather than at build time.
+    if it.kind == 'title' then
+      it.text = ellipsize(L.title_full, L.title_tags, it.w, W, H)
+    end
     -- Only what can be acted on gets a hit box, so a disabled control neither lights up nor fires.
     local live = it.id ~= nil
-    if it.id == 'seek' and not L.seekable then live = false end
     if (it.id == 'pl-prev' or it.id == 'pl-next') and L.playlist < 2 then live = false end
     if (it.id == 'ch-prev' or it.id == 'ch-next') and #L.chapters == 0 then live = false end
     it.live = live
     if live and it.w > 0 then regions[#regions + 1] = it end
   end
+
+  -- The seam. It is not in the row and never was one control among others: it runs the width of
+  -- the slab along its top edge, over the same span the row is padded to, so the line and the
+  -- controls under it share their ends. Added to the items last so it draws over the glass, and
+  -- to the regions last so it wins any hit it is in — nothing else reaches into the top strip.
+  L.seam = {
+    kind = 'seam',
+    id = 'seek',
+    x = L.bar.x + u(D.pad_x),
+    y = L.bar.y,
+    w = L.bar.w - 2 * u(D.pad_x),
+    h = u(D.seam_band),
+    live = L.seekable,
+  }
+  items[#items + 1] = L.seam
+  if L.seam.live and L.seam.w > 0 then regions[#regions + 1] = L.seam end
 
   slab = L.bar
   return L
@@ -829,9 +875,13 @@ local function icon_button(out, it, s, glyph, opts)
   out[#out + 1] = shape(fill(colour, alpha), glyph(ox, oy, s))
 end
 
--- A rail with a fill and, while it is wanted, a handle. At rest the fill alone says the position:
--- a dot parked on the line is one more thing sitting on the picture.
-local function draw_rail(out, it, s, frac, want_knob, extras)
+-- The volume slider, and the only rail left on the bar now that the seam has the progress.
+--
+-- Grey at rest and steel only while it is being used. Steel is what this app gives the lit thing,
+-- and a volume permanently lit competes with the seam — which is the line that actually matters —
+-- for the eye. The handle appears for the same reason it does up there: a dot parked on a line is
+-- one more thing sitting on the picture.
+local function draw_volume(out, it, s, frac, on)
   local rail_h = D.rail * s
   local ry = it.y + (it.h - rail_h) / 2
   local radius = rail_h / 2
@@ -839,12 +889,14 @@ local function draw_rail(out, it, s, frac, want_knob, extras)
     fill(INK, ALPHA_GROOVE) .. hairline(1, WHITE, ALPHA_EDGE),
     rrect(it.x, ry, it.w, rail_h, radius)
   )
-  if extras then extras(ry, rail_h) end
   local filled = clamp(frac, 0, 1) * it.w
   if filled > 0 then
-    out[#out + 1] = shape(fill(STEEL, OPAQUE), rrect(it.x, ry, filled, rail_h, radius))
+    out[#out + 1] = shape(
+      fill(on and STEEL or DIM_2, OPAQUE),
+      rrect(it.x, ry, filled, rail_h, radius)
+    )
   end
-  if want_knob then
+  if on then
     local k = D.knob * s
     out[#out + 1] = shape(
       fill(STEEL_HOT, OPAQUE),
@@ -884,44 +936,98 @@ local function draw_slab(out, L)
     fill(GUN, ALPHA_GUN) .. hairline(1, WHITE, ALPHA_EDGE),
     rrect(b.x, b.y, b.w, b.h, r)
   )
-  local bands = 3
-  local band_h = b.h / bands
-  for i = 0, bands - 1 do
-    -- --sheen runs from 0.055 to nothing; each band takes the opacity at its own middle.
-    local opacity = 0.055 * (1 - (i + 0.5) / bands)
-    local top = i == 0 and r or 0
-    out[#out + 1] = shape(
-      fill(WHITE, A(opacity)),
-      rrect4(b.x, b.y + i * band_h, b.w, band_h, top, top, 0, 0)
-    )
-  end
+  -- --sheen, which is a linear-gradient in CSS and has no equivalent here at all.
+  --
+  -- It was three stacked bands of falling opacity, and it looked like three stacked bands: two
+  -- hard steps straight across the glass. Worse, the top band drew its own rounded corners over
+  -- the slab's, and two arcs of slightly different radius on the same corner read as a corner
+  -- drawn twice.
+  --
+  -- A blur is the gradient. One white block is laid over the top of the slab and blurred, so what
+  -- falls inside is its soft lower edge — light at the top, gone by halfway down, with nothing
+  -- anywhere for the eye to catch. The block is drawn wider and taller than the slab so its other
+  -- three edges blur outside it, and the whole thing is clipped back to the slab's own path, which
+  -- is also how the corners stop being a question: there is exactly one rounded rectangle here now
+  -- and the sheen is a fill inside it.
+  local path = rrect(b.x, b.y, b.w, b.h, r)
+  local reach = 13 * s -- how far down the light carries before the blur has eaten it
+  local soft = 11 * s
+  out[#out + 1] = shape(
+    fill(WHITE, A(0.06))
+      .. string.format('\\blur%.1f\\clip(%d, %s)', soft, DRAW_SCALE_TAG, path),
+    rect(b.x - soft * 2, b.y - b.h, b.w + soft * 4, b.h + reach)
+  )
 end
 
-local function draw_seek(out, L, it)
+-- The seam.
+--
+-- styles.css says the one thing in this app allowed to be memorable is the lit edge where the
+-- chrome stops and the picture starts, and that it is the app's only real boundary. This is that
+-- edge: the top of the slab, unlit ahead of the playhead and lit steel behind it, with a soft
+-- throw of light under the lit part. So the bar's most important control is also the one piece of
+-- the app's own identity it can carry — and the row underneath gets its width back.
+--
+-- At rest it is a hairline and reads as a reading. Under the pointer it thickens, takes a handle,
+-- and shows its chapter marks: only then is it an instrument, and only then does it need to be.
+local function draw_seam(out, L, it)
   local s = L.s
-  local frac = L.seekable and clamp(L.pos / L.duration, 0, 1) or 0
-  draw_rail(out, it, s, frac, L.seekable and (hovered(it) or drag == 'seek'), function(ry, rail_h)
-    if not L.seekable then return end
-    -- What the demuxer has already fetched, laid into the groove behind the fill.
-    for _, range in ipairs(cached_ranges()) do
-      local x0 = it.x + clamp(range.from / L.duration, 0, 1) * it.w
-      local x1 = it.x + clamp(range.to / L.duration, 0, 1) * it.w
-      if x1 - x0 > 0.5 then
-        out[#out + 1] = shape(fill(WHITE, ALPHA_CACHE), rect(x0, ry, x1 - x0, rail_h))
-      end
+  local hot = it.live and (hovered(it) or drag == 'seek')
+  local th = (hot and D.seam_rail_hot or D.seam_rail) * s
+  local ry = it.y + it.h / 2 - th / 2
+  local r = th / 2
+  local frac = it.live and clamp(L.pos / L.duration, 0, 1) or 0
+
+  -- Ahead of the playhead: a groove cut into the glass, edged with the same hairline of light
+  -- every other surface in the app is edged with. It needs both halves of that. Drawn in white
+  -- alone it read nearly as bright as the steel behind the playhead, and a progress line whose two
+  -- halves look alike says nothing; drawn dark alone it disappeared against a dark film, and the
+  -- opening minute of one looked like a stray dot in the corner rather than a line just begun.
+  -- The dark carries it over a bright frame and the hairline carries it over a black one.
+  out[#out + 1] = shape(
+    fill(INK, A(0.45)) .. hairline(1, WHITE, ALPHA_EDGE),
+    rrect(it.x, ry, it.w, th, r)
+  )
+  if not it.live then return end
+
+  -- What the demuxer has already fetched. Over a network this is the difference between "it
+  -- stalled" and "it is about to".
+  for _, range in ipairs(cached_ranges()) do
+    local x0 = it.x + clamp(range.from / L.duration, 0, 1) * it.w
+    local x1 = it.x + clamp(range.to / L.duration, 0, 1) * it.w
+    if x1 - x0 > 0.5 then
+      out[#out + 1] = shape(fill(WHITE, ALPHA_CACHE), rect(x0, ry, x1 - x0, th))
     end
-    -- Chapter marks. Drawn in white rather than in the tint because they have to be legible over
-    -- both halves of the rail, and only white is lighter than the fill and darker than nothing.
+  end
+
+  local filled = frac * it.w
+  if filled > 0 then
+    -- --steel-glow, which ASS has no gradient for: a blurred copy of the lit part sitting under
+    -- it. This is what makes the line read as lit rather than merely coloured.
+    out[#out + 1] = shape(
+      fill(STEEL, A(hot and 0.5 or 0.3)) .. string.format('\\blur%.1f', 5 * s),
+      rrect(it.x, ry - s, filled, th + 2 * s, r)
+    )
+    out[#out + 1] = shape(fill(STEEL, OPAQUE), rrect(it.x, ry, filled, th, r))
+  end
+
+  if hot then
+    -- Chapter marks, and the handle over them. White rather than the tint: it has to be legible
+    -- over both halves of the line, and only white is lighter than the fill and darker than the
+    -- unlit edge.
     for _, ch in ipairs(L.chapters) do
       if type(ch.time) == 'number' and ch.time > 0 and ch.time < L.duration then
         local cx = it.x + (ch.time / L.duration) * it.w
-        out[#out + 1] = shape(
-          fill(WHITE, ALPHA_MARK),
-          rect(cx - 0.75 * s, ry - 1.5 * s, 1.5 * s, rail_h + 3 * s)
-        )
+        out[#out + 1] = shape(fill(WHITE, ALPHA_MARK), rect(cx - 0.75 * s, ry, 1.5 * s, th))
       end
     end
-  end)
+    local k = D.seam_knob * s
+    local kx, ky = it.x + filled - k / 2, ry + th / 2 - k / 2
+    out[#out + 1] = shape(
+      fill(STEEL, A(0.55)) .. string.format('\\blur%.1f', 4 * s),
+      rrect(kx - s, ky - s, k + 2 * s, k + 2 * s, k / 2 + s)
+    )
+    out[#out + 1] = shape(fill(STEEL_HOT, OPAQUE), rrect(kx, ky, k, k, k / 2))
+  end
 end
 
 local function draw(L)
@@ -931,7 +1037,9 @@ local function draw(L)
 
   for _, it in ipairs(L.items) do
     if it.kind == 'title' then
-      out[#out + 1] = label(it.x, L.mid, 4, L.title_tags, it.text)
+      -- Centred in the slack rather than left-aligned against it: what is playing is named in the
+      -- middle of the bar, and a short title does not leave a hole where the rest of the line was.
+      out[#out + 1] = label(it.x + it.w / 2, L.mid, 5, L.title_tags, it.text)
     elseif it.kind == 'clock' then
       local on = it.live and hovered(it)
       out[#out + 1] = label(
@@ -940,10 +1048,15 @@ local function draw(L)
           colour_tags(on and STEEL_HOT or DIM)),
         it.text
       )
-    elseif it.kind == 'seek' then
-      draw_seek(out, L, it)
+    elseif it.kind == 'seam' then
+      draw_seam(out, L, it)
+    elseif it.kind == 'divider' then
+      -- Between the two clocks: a hairline the height of a digit, which says they are two
+      -- readings of one thing without spending a character on a slash.
+      local h = D.fs_time * s
+      out[#out + 1] = shape(fill(WHITE, ALPHA_EDGE_STRONG), rect(it.x, L.mid - h / 2, it.w, h))
     elseif it.kind == 'volume' then
-      draw_rail(out, it, s, L.volume / 100, hovered(it) or drag == 'volume')
+      draw_volume(out, it, s, L.volume / 100, hovered(it) or drag == 'volume')
     elseif it.kind == 'spinner' then
       -- A ring of steel with one lit quarter, turning: the same shape player.css spins in CSS,
       -- and the only thing on the bar that says the picture is still coming.
@@ -953,30 +1066,44 @@ local function draw(L)
       out[#out + 1] = shape(fill(STEEL, ALPHA_STEEL_WASH), arc(cx, cy, r, t, 0, 2 * math.pi))
       out[#out + 1] = shape(fill(STEEL, OPAQUE), arc(cx, cy, r, t, a, a + math.pi / 2))
     elseif it.kind == 'pill' then
+      -- No box at rest. Two bordered rectangles sitting on the glass outweighed the transport,
+      -- which is backwards — picking a track is something you do once a film. The box is the
+      -- hover state and nothing else, the same wash every other control lights with.
       local on = hovered(it)
-      out[#out + 1] = shape(
-        fill(STEEL, on and ALPHA_STEEL_WASH or A(0))
-          .. hairline(1, on and STEEL or WHITE, on and ALPHA_STEEL_EDGE or ALPHA_EDGE),
-        rrect(it.x, it.y, it.w, it.h, D.radius_sm * s)
-      )
+      if on then
+        out[#out + 1] = shape(
+          fill(STEEL, ALPHA_STEEL_WASH) .. hairline(1, STEEL, ALPHA_STEEL_EDGE),
+          rrect(it.x, it.y, it.w, it.h, D.radius_sm * s)
+        )
+      end
       if it.labelled then
+        -- The count is the reading; the word is the caption on it. So the count is set in the
+        -- brighter of the two, which is the other way round from how this started.
         out[#out + 1] = label(
           it.x + D.pill_pad * s, L.mid, 4,
-          L.label_tags .. colour_tags(on and STEEL or DIM), it.text
+          L.label_tags .. colour_tags(on and STEEL or DIM_2), it.text
         )
         out[#out + 1] = label(
           it.x + it.w - D.pill_pad * s, L.mid, 6,
-          L.value_tags .. colour_tags(DIM_2), it.value
+          L.value_tags .. colour_tags(on and STEEL_HOT or DIM), it.value
         )
       else
         out[#out + 1] = label(
           it.x + it.w / 2, L.mid, 5,
-          L.value_tags .. colour_tags(on and STEEL or DIM), it.value
+          L.value_tags .. colour_tags(on and STEEL_HOT or DIM), it.value
         )
       end
     elseif it.kind == 'button' then
       if it.id == 'play' then
-        icon_button(out, it, s, L.paused and glyph_play or glyph_pause, {})
+        -- The one control on the row that is always lit. Everything else here is grey until it is
+        -- aimed at; this is the button the bar exists for, and a strip of identical grey glyphs
+        -- gives the eye nowhere to land.
+        out[#out + 1] = shape(
+          fill(STEEL, A(0.22)),
+          rrect(it.x, it.y, it.w, it.h, D.radius_sm * s)
+        )
+        icon_button(out, it, s, L.paused and glyph_play or glyph_pause,
+          { colour = STEEL_HOT, wash = STEEL, wash_alpha = A(0.34) })
       elseif it.id == 'ch-prev' then
         icon_button(out, it, s, function(x, y, k) return glyph_chapter(x, y, k, -1) end, {})
       elseif it.id == 'ch-next' then
@@ -1003,7 +1130,7 @@ local function draw(L)
   -- Above the bar: where the pointer is aiming on the seek bar, and what the last track change
   -- turned out to be.
   for _, it in ipairs(L.items) do
-    if it.kind == 'seek' and it.live and (hovered(it) or drag == 'seek') and it.w > 0 then
+    if it.kind == 'seam' and it.live and (hovered(it) or drag == 'seek') and it.w > 0 then
       local frac = clamp((mouse.x - it.x) / it.w, 0, 1)
       local at = frac * L.duration
       local text = fmt_time(at)
@@ -1019,7 +1146,7 @@ local function draw(L)
   end
   if toast_text and mp.get_time() < toast_until then
     chip(out, L, L.bar.x + L.bar.w * 0.5, toast_text,
-      string.format('\\fn%s\\fs%.1f%s', FONT_BODY, L.s * D.fs_chip, colour_tags(TEXT)))
+      string.format('\\fn%s\\fs%.1f%s', FONT_DISPLAY, L.s * D.fs_chip, colour_tags(TEXT)))
   end
 
   return table.concat(out, '\n')
