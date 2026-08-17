@@ -159,10 +159,14 @@ class Player extends EventEmitter {
     // The frame changes shape here — a fullscreen window has no resize border — so the measured
     // margin no longer applies. Drop it and let it be measured again for the new shape.
     this.frameInset = { w: 0, h: 0 };
-    setTimeout(() => {
-      this.layout();
-      this.calibrate().catch(() => {});
-    }, 300);
+    // Re-place it more than once. Going in or out of fullscreen is not instant, and the bounds
+    // Electron reports lag behind it, so a single pass a fixed time later can still read the old
+    // size — which leaves the picture covering part of the screen with the page showing through
+    // the rest. Laying out repeatedly costs nothing once the size has settled.
+    [0, 150, 400, 800].forEach((delay) => {
+      setTimeout(() => this.layout(), delay);
+    });
+    setTimeout(() => this.calibrate().catch(() => {}), 900);
   }
 
   static available() {

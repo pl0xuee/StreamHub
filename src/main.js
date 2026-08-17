@@ -64,6 +64,32 @@ const { JellyfinApi } = require('./jellyfin-api');
 // embedded — see player.js. Playback works; it just is not inside the app.
 
 
+// Name the keyring to use, rather than letting Chromium work it out each launch.
+//
+// Cookies — the logins — are encrypted with a key kept in the desktop's secret store, and the
+// ciphertext records which one was used: v11 for a real key from the keyring, v10 for the
+// hardcoded fallback. Chromium picks the backend by sniffing the desktop at startup. If that
+// sniff ever comes out differently, the key it goes looking for is not the key the cookies were
+// written with, they cannot be decrypted, and they are dropped — which the user experiences as
+// being silently signed out of the services that had been signed in.
+//
+// Only some services are affected, which is what makes it look arbitrary: measured here, the
+// YouTube partition holds v11 cookies and the Twitch one holds none, and it is YouTube that gets
+// lost. So the backend is stated outright instead of being detected. An explicit --password-store
+// on the command line still wins, for anyone who needs to override it.
+if (process.platform === 'linux' && !process.argv.some((a) => a.startsWith('--password-store'))) {
+  const desktop = `${process.env.XDG_CURRENT_DESKTOP || ''}`.toLowerCase();
+  let store = null;
+  if (desktop.includes('kde')) {
+    store = process.env.KDE_SESSION_VERSION === '6' ? 'kwallet6' : 'kwallet5';
+  } else if (/gnome|unity|cinnamon|mate|xfce/.test(desktop)) {
+    store = 'gnome-libsecret';
+  }
+  // Nothing recognised means nothing is pinned: Chromium's own detection is still a better guess
+  // than a wrong answer stated confidently.
+  if (store) app.commandLine.appendSwitch('password-store', store);
+}
+
 // Only one copy of the app may run at a time, and this has to be settled before anything else:
 // Chromium's on-disk session storage assumes a single process owns the profile. Two instances
 // sharing one userData dir fight over the cookie store, the quota database and the service-worker
@@ -607,8 +633,12 @@ function createWindow() {
 
   layout();
   baseWindow.on('resize', layout);
-  baseWindow.on('enter-full-screen', layout);
-  baseWindow.on('leave-full-screen', layout);
+  // Settled, not immediate, for the same reason maximising is: Electron's cached bounds lag the
+  // window manager through the transition, so a single layout here sizes the video to the window
+  // as it was *before* it went fullscreen. The picture then covers the top of the screen and the
+  // page shows through underneath it.
+  baseWindow.on('enter-full-screen', layoutSettled);
+  baseWindow.on('leave-full-screen', layoutSettled);
   baseWindow.on('maximize', layoutSettled);
   baseWindow.on('unmaximize', layoutSettled);
 
