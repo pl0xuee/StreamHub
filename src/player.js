@@ -433,6 +433,13 @@ class Player extends EventEmitter {
       this.reassertBounds();
       // Once there is a picture, mpv can tell us how big its window really is.
       this.calibrate().catch(() => {});
+      // Not embedded: make sure the window mpv opened for itself is actually filling the screen.
+      // Asking for it at startup is not enough — mpv opens its window while idle, before there is
+      // any video, and it can settle at its default size and stay there, which leaves a small
+      // black rectangle sitting over the page with the controls in it.
+      if (!this.embedded && this.mpv) {
+        this.mpv.setProperty('fullscreen', true).catch(() => {});
+      }
       // Say how to leave. While a film is playing mpv covers the content area and the sidebar is
       // hidden, so there is nothing on screen suggesting a way back — and the key that does it is
       // not one anybody would guess at. Shown once, briefly, as playback starts.

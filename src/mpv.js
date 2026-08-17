@@ -268,8 +268,10 @@ class Mpv extends EventEmitter {
       // Keep the window up while idle, so there is never a hole where the page shows through.
       '--force-window=yes',
       '--keep-open=no',
-      // We are inside another app's window; mpv must not try to own the screen.
-      '--no-border',
+      // Inside another app's window, mpv must not try to own the screen. When it has a window of
+      // its own instead this is dropped: a borderless top-level window is one the user cannot
+      // move or close by hand, and some window managers will not fullscreen it properly either.
+      ...(this.wid !== undefined && this.wid !== null ? ['--no-border'] : []),
       '--fullscreen=no',
       // Quiet, but not silent: errors still reach the log, which is how a failed direct play
       // gets diagnosed.
