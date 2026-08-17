@@ -1,0 +1,468 @@
+/* The player OSD — the controls StreamHub draws over mpv.
+ *
+ * mpv puts its picture in a native child window of ours, and a native child always draws above the
+ * page beneath it. So there is no video element here to hang controls on and no player UI from the
+ * site to keep: this bar is the whole player interface, and everything behind it is film.
+ *
+ * Same material as the sidebar, restated here rather than shared because this is its own document
+ * (as setup.css is) — only the tokens this page uses are repeated; if the palette in styles.css
+ * moves, these move with it. No `backdrop-filter`: the picture is a different WebContents, so there
+ * is nothing there for Chromium to blur, and a rule that silently does nothing is worse than none.
+ * The transparency is paid for in darkness instead, exactly as the chrome pays for it.
+ */
+
+:root {
+  --gun: rgba(18, 21, 28, 0.78);
+  --gun-raised: rgba(24, 28, 37, 0.9);
+  --gun-hover: rgba(86, 98, 116, 0.28);
+  --card: rgba(255, 255, 255, 0.045);
+  --edge: rgba(255, 255, 255, 0.075);
+  --edge-strong: rgba(255, 255, 255, 0.13);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 96px);
+
+  --text: #eef1f6;
+  --dim: #c2cbd8;
+  --dim-2: #a6b1c1;
+
+  --steel: #9db2c8;
+  --steel-hot: #d6e2ef;
+  --steel-wash: rgba(157, 178, 200, 0.16);
+  --steel-edge: rgba(157, 178, 200, 0.34);
+  --steel-glow: rgba(157, 178, 200, 0.5);
+
+  --exit: #c94a52;
+
+  --lift: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --lift-high: 0 28px 70px rgba(0, 0, 0, 0.62), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+  --float: 9px;
+  --radius-lg: 16px;
+  --radius: 11px;
+  --radius-sm: 8px;
+  --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-move: 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+
+  --font-display: "Fira Sans Condensed", "Archivo Narrow", "Roboto Condensed",
+    "Liberation Sans Narrow", "Segoe UI", system-ui, sans-serif;
+  --font-body: Inter, "Adwaita Sans", "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Adwaita Mono", "JetBrains Mono", Hack, "DejaVu Sans Mono", "Liberation Mono",
+    Consolas, monospace;
+
+  font-family: var(--font-body);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  /* Transparent, so the film shows through everywhere the bar is not. The window's own background
+     is cleared in main.js; both halves are needed, or Chromium paints its base colour first. */
+  background: transparent;
+  color: var(--text);
+  user-select: none;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard focus is "lit", like every other active thing here. */
+:focus-visible {
+  outline: 1px solid var(--steel);
+  outline-offset: 2px;
+}
+
+/* ---- The bar ---- */
+/* A slab of glass laid along the bottom: held off all three edges the same distance the sidebar is
+   held off its own, so the two float on one plane rather than one being a wall built against the
+   window. Wide enough to be the player and no taller than it has to be — everything below the
+   title is one row of controls and one seek bar. */
+.osd {
+  position: fixed;
+  left: var(--float);
+  right: var(--float);
+  bottom: var(--float);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px 13px;
+  /* One whisper of a top sheen over the tint: the light has to come from somewhere for this to
+     read as a pane of glass rather than a grey rectangle. */
+  background: var(--sheen), var(--gun);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift);
+  transition: opacity var(--ease-move), transform var(--ease-move);
+}
+
+/* Out of the way. The bar sits on the picture, so after a few seconds of nobody reaching for it, it
+   leaves — and takes the pointer with it, or a hidden bar would still be swallowing clicks meant
+   for the film. It is only ever allowed to go while something is actually playing: paused, loading,
+   or with a menu open, it stays put (player.js decides; this is only the look of it). */
+body.idle {
+  cursor: none;
+}
+body.idle .osd {
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+}
+
+.osd-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The title is prose, not a heading anyone navigates by, so it is set at body size — and it gives
+   up its tail rather than its line, because a wrapped title would change the height of the bar
+   every time the film changed. */
+.now-playing {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  line-height: 1.3;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Buttons ---- */
+.icon-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease);
+}
+.icon-btn:hover {
+  background: var(--gun-hover);
+  color: var(--steel-hot);
+}
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  pointer-events: none;
+}
+
+/* Stopping is the one destructive thing on the bar, so it is the one control that reddens — and
+   only under the pointer, so the exit sign is never just sitting there lit. */
+.close {
+  font-size: 19px;
+}
+.close:hover {
+  background: var(--exit);
+  color: #fff;
+}
+
+/* Play and pause are one button wearing two faces; which one shows is the whole state. */
+#btn-play .glyph-pause,
+body.playing #btn-play .glyph-play {
+  display: none;
+}
+body.playing #btn-play .glyph-pause {
+  display: block;
+}
+
+/* Muted is drawn rather than dimmed: a crossed-out speaker says "off", a faint one says "quiet". */
+#btn-mute .cross {
+  display: none;
+}
+body.muted #btn-mute .wave {
+  display: none;
+}
+body.muted #btn-mute .cross {
+  display: block;
+}
+body.muted #btn-mute {
+  color: var(--dim-2);
+}
+
+/* ---- Seek ---- */
+.osd-seek {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+/* Every numeral in the app is mono and tabular, so the clock does not jitter as it counts. Both
+   ends hold the width of the longest time they will ever show. */
+.time {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--dim);
+}
+
+/* The slider is mostly reach target: 18px of it catches the pointer, 4px of it is drawn. Scrubbing
+   a film is the one gesture on this bar that has to work first time, and a 4px line is a needle. */
+.seek,
+.vol {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 18px;
+  cursor: pointer;
+  touch-action: none; /* or a drag turns into a scroll gesture before it reaches us */
+}
+.seek {
+  flex: 1;
+  min-width: 0;
+}
+.vol {
+  width: 78px;
+  flex-shrink: 0;
+}
+
+.rail {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  /* Dark, not light: the unplayed part of the film is a groove cut into the glass, and a pale track
+     over a bright frame would vanish into it. */
+  background: rgba(0, 0, 0, 0.42);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+/* How far in you are, in the one lit colour the app has. */
+.rail-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-radius: 2px;
+  background: var(--steel);
+}
+
+/* The handle is only there while it is wanted — at rest the fill alone says the position, and a
+   dot parked on the line is one more thing sitting on the picture. */
+.knob {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  background: var(--steel-hot);
+  box-shadow: 0 0 8px var(--steel-glow);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--ease), transform var(--ease);
+}
+.seek:hover .knob,
+.vol:hover .knob,
+.seek:focus-visible .knob,
+.vol:focus-visible .knob,
+.seek.scrubbing .knob,
+.vol.scrubbing .knob {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ---- The control row ---- */
+.osd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gap {
+  flex: 1;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Loading. A ring of steel with one lit quarter, turning — the same accent as everything else that
+   is doing something, and small enough to sit in the row without pushing it about. */
+.spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0 4px;
+  border: 1.5px solid var(--steel-wash);
+  border-top-color: var(--steel);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+/* `display` is set above by the flex context, and an author rule outranks the UA stylesheet's
+   `[hidden]` — without this the spinner would turn through the entire film. */
+.spinner[hidden] {
+  display: none;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Track pickers ---- */
+.picker {
+  position: relative;
+}
+
+/* Labelled in the marquee face, like every other named control in the app, with what is currently
+   selected riding along in mono beside it — so which audio track is playing is readable without
+   opening the menu. */
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  transition: color var(--ease), border-color var(--ease), background var(--ease);
+}
+.pill:hover,
+.pill[aria-expanded='true'] {
+  color: var(--steel);
+  border-color: var(--steel-edge);
+  background: var(--steel-wash);
+}
+.pill-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.pill-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--dim-2);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A menu sits *on* the glass, so it is the denser tint — something in front of the panel has to
+   read as being in front of it. It opens upwards, because the bar is already at the bottom of the
+   window and there is nowhere below it to go. */
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 10;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius);
+  background: var(--sheen), var(--gun-raised);
+  box-shadow: var(--lift-high);
+  animation: pop 0.13s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.menu[hidden] {
+  display: none;
+}
+/* Everything that appears over the panel arrives the same way: from just under where it lands, and
+   quickly. Enough to say "this came from there" and not enough to wait for. */
+@keyframes pop {
+  from {
+    transform: translateY(-4px) scale(0.985);
+    opacity: 0;
+  }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--steel-wash);
+  color: var(--steel-hot);
+}
+/* The track that is playing, marked the way the sidebar marks the service that is showing: a light
+   beside the row, drawn always and unlit until it is its turn. */
+.menu-item::before {
+  content: "";
+  flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+.menu-item.on::before {
+  background: var(--steel);
+  box-shadow: 0 0 7px var(--steel-glow);
+}
+.menu-item .menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Codec, channels, forced — what tells two English tracks apart. Quiet, because the name is what
+   is being read and this is only what settles a tie. */
+.menu-item .menu-note {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--dim-2);
+}
+
+.menu-empty {
+  padding: 10px 9px;
+  font-size: 12px;
+  color: var(--dim-2);
+}
+
+/* Respect a reduced-motion preference. The bar still leaves and still comes back — that is a state,
+   not a decoration — it simply goes at once instead of sliding, and the spinner holds still while
+   the ring alone says something is loading. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .spinner {
+    border-top-color: var(--steel);
+  }
+}

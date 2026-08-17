@@ -707,6 +707,8 @@ const theaterEl = document.getElementById('chk-theater');
 const twitchTheaterEl = document.getElementById('chk-twitch-theater');
 const autoHideEl = document.getElementById('chk-autohide');
 const glassEl = document.getElementById('chk-glass');
+const mpvEl = document.getElementById('chk-mpv');
+const mpvSubEl = document.getElementById('sub-mpv');
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -800,6 +802,14 @@ function renderSheets() {
   twitchTheaterEl.checked = Boolean(state.enhance && state.enhance.twitchTheater);
   autoHideEl.checked = state.autoHideSidebar !== false;
   glassEl.checked = state.glassSidebar !== false;
+  // With no mpv on the machine there is nothing to switch on: say so in place of the
+  // explanation rather than offering a tick that would quietly do nothing.
+  const hasMpv = state.mpvAvailable === true;
+  mpvEl.checked = hasMpv && state.mpvPlayback !== false;
+  mpvEl.disabled = !hasMpv;
+  if (!hasMpv && mpvSubEl) {
+    mpvSubEl.textContent = 'mpv is not installed — Jellyfin plays in the browser player until it is';
+  }
   trayEl.checked = state.minimizeToTray === true;
   renderUpdate();
   renderRemoved(state.removed || []);
@@ -898,6 +908,7 @@ async function init() {
   );
   autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
   glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));
+mpvEl.addEventListener('change', () => window.shell.setMpvPlayback(mpvEl.checked));
   trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
 
   // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the

@@ -46,6 +46,11 @@ function cleanSettings(raw) {
     sidebarCollapsed: s.sidebarCollapsed === true,
     minimizeToTray: s.minimizeToTray === true,
     glassSidebar: s.glassSidebar !== false,
+    // Play Jellyfin through mpv rather than the browser player. Defaults on, like the other
+    // behaviour switches: a config written before this shipped should get the better playback,
+    // and the switch is there for when a machine's mpv misbehaves. Whether it can actually be
+    // honoured is a separate question — main.js also requires an mpv to exist.
+    mpvPlayback: s.mpvPlayback !== false,
     // Defaults on, so an absent key (a config written before this shipped) keeps the behaviour.
     // `dimWhilePlaying` is what this was called when the sidebar faded rather than slid away, so a
     // config written before the rename still carries the user's choice: honour it.

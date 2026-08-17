@@ -61,6 +61,9 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   Leaving theater mode on one stream lasts until you open the next. On by default; the switch is
   in Settings.
 - **Your own Jellyfin server** — see below.
+- **Jellyfin plays through mpv** — no DRM is involved on your own server, so a real player can
+  take the original file instead of the browser asking the server to transcode it. Needs mpv
+  installed; single view only; the switch is in Settings.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
 - **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
@@ -100,6 +103,62 @@ From then on it is an ordinary service: its own session, its own login, grid pan
   not override that. Use plain `http` on your own network, or give the server a real certificate.
 - No DRM is involved here — this is your own server, so quality is whatever it serves and the
   ~720p Widevine ceiling above does not apply.
+
+### Playing through mpv
+
+Because the server is yours and no DRM stands in the way, StreamHub can hand the file to
+[mpv](https://mpv.io) instead of playing it in the browser. MKV, H.265/HEVC, DTS and TrueHD
+audio, PGS and VOBSUB image subtitles and 10-bit video all direct-play that way. The browser
+player cannot decode any of them, so it makes the server transcode instead — burning CPU on the
+server and losing quality on the way.
+
+Press play and mpv takes over the content area in its own window; the sidebar steps aside for
+the duration, the same way it does when a site goes fullscreen. Stop, and you are back on the
+page you were on.
+
+The controls are drawn by mpv rather than by StreamHub's glass chrome, and mpv's usual keys work
+— space to pause, arrows to seek, `f` for fullscreen.
+
+**`Esc` takes you back to the library.** So does `q`, which is rebound here: in a standalone mpv
+it would end the process, and while a film is playing mpv covers the whole content area with the
+sidebar stepped aside, so that key is the way out rather than the way to quit. In fullscreen,
+`Esc` leaves fullscreen first and returns to the library on a second press.
+
+Where you stopped is reported back to the server, so an item keeps its resume point, shows up
+under Continue Watching, and is marked played when it reaches the end.
+
+It needs mpv installed:
+
+| Distro | |
+| --- | --- |
+| Arch / CachyOS | `sudo pacman -S mpv` |
+| Debian / Ubuntu | `sudo apt install mpv` |
+| Fedora | `sudo dnf install mpv` |
+
+If mpv is missing, Jellyfin quietly falls back to the browser player. There is a switch in
+Settings — "Play Jellyfin through mpv" — to turn it off; turning it off reloads the Jellyfin
+view.
+
+Honest caveats:
+
+- **Single view only.** In grid mode Jellyfin keeps the browser player. One mpv window cannot be
+  tiled into four panes.
+- **The glass chrome cannot float over the video.** An Electron window cannot be composited
+  above the window mpv renders into — this was tried, and it does not work. That is why the
+  controls are mpv's rather than the app's.
+- **It runs on X11, on a Wayland session too.** mpv can only be handed a window to draw into on
+  X11 — it has no such support on Wayland — so the app asks for the X11 backend at launch and
+  XWayland hosts it. This is why `npm start` and the packaged launcher both pass
+  `--ozone-platform=x11`; started some other way without it, Jellyfin playback has nowhere to
+  draw and simply never appears.
+
+  Worth knowing what that costs, because it applies to the whole app and not just Jellyfin: under
+  X11 any other X client on your machine can read your keystrokes, including the ones you type
+  into a service's sign-in page. Wayland isolates applications from each other in a way X11 never
+  did. On a desktop where you trust everything you have installed this changes nothing in
+  practice, and it is the same exposure as running any X11 browser — but it is a step back from a
+  pure Wayland session, taken to make playback possible at all.
+- Linux only, like the rest of the app.
 
 ## Ad blocking
 

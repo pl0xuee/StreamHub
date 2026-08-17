@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!--
+  NOT WIRED UP. Nothing loads this page.
+
+  It draws the player controls in Electron, over the video — which cannot work here: no Electron
+  window composites above the window mpv renders into. The controls that actually run are drawn by
+  mpv itself, in src/mpv-osc.lua, which is this design restated in ASS drawing commands. See the
+  note at the top of player.js for the full reasoning.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Nothing here loads from anywhere: mpv is driven by the main process over its own socket,
+         so this page never reaches off disk. `unsafe-inline` is for styles only, and only because
+         the seek and volume fills are painted from script — the same allowance the sidebar and the
+         setup page already take. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <title>Player</title>
+    <link rel="stylesheet" href="player.css" />
+  </head>
+  <body>
+    <!-- mpv renders into a native child window of our own, so Jellyfin's player OSD cannot be drawn
+         over it and this bar is the only set of controls there is. It is the same slab of glass the
+         sidebar is — held off the window's edges, rounded, lifted by a shadow — laid along the
+         bottom, where every player in the world puts its controls. -->
+    <section id="osd" class="osd" aria-label="Player controls">
+      <div class="osd-head">
+        <!-- What is playing. It is the only thing on the bar that says which film this is, so it
+             gets the whole line and gives up nothing but its own tail. -->
+        <h1 id="title" class="now-playing">Nothing playing</h1>
+        <!-- Leaving is the destructive act here — it stops playback and throws the picture away —
+             so this is the one control allowed the exit red, and only once it is aimed at. -->
+        <button
+          id="btn-close"
+          class="icon-btn close"
+          type="button"
+          title="Stop and go back to the library (Esc)"
+          aria-label="Stop and go back to the library"
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="osd-seek">
+        <span id="elapsed" class="time">0:00</span>
+        <!-- Not an <input type="range">: the track, the fill and the knob all have to carry the
+             glass treatment, and a range input cannot be styled that far without vendor pseudo
+             elements that differ per platform. It is a real slider to anything reading the page —
+             role, bounds, a spoken value, and its own arrow keys. -->
+        <div
+          id="seek"
+          class="seek"
+          role="slider"
+          tabindex="0"
+          aria-label="Position"
+          aria-valuemin="0"
+          aria-valuemax="0"
+          aria-valuenow="0"
+          aria-valuetext="0:00 of 0:00"
+        >
+          <div class="rail">
+            <div id="seek-fill" class="rail-fill"></div>
+            <div id="seek-knob" class="knob"></div>
+          </div>
+        </div>
+        <span id="duration" class="time">0:00</span>
+      </div>
+
+      <div class="osd-row">
+        <button id="btn-play" class="icon-btn" type="button" title="Play (Space)" aria-label="Play">
+          <svg class="glyph-play" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 2.6v10.8L13.2 8z" />
+          </svg>
+          <svg class="glyph-pause" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.6 2.6h3.2v10.8H3.6zM9.2 2.6h3.2v10.8H9.2z" />
+          </svg>
+        </button>
+
+        <!-- The picture is still coming. Sits beside the transport rather than over the frame,
+             because a spinner in the middle of the screen is the one thing guaranteed to be in
+             the way of what you are waiting for. -->
+        <span id="spinner" class="spinner" role="status" aria-label="Loading" hidden></span>
+
+        <div class="volume">
+          <button id="btn-mute" class="icon-btn" type="button" title="Mute" aria-label="Mute">
+            <svg class="glyph-volume" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 6h2.4L8.8 3v10L5.4 10H3z" />
+              <path
+                class="wave"
+                d="M10.6 5.6a3.4 3.4 0 0 1 0 4.8M12.5 3.7a6 6 0 0 1 0 8.6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+              <path
+                class="cross"
+                d="M11 6l4 4M15 6l-4 4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <div
+            id="volume"
+            class="vol"
+            role="slider"
+            tabindex="0"
+            aria-label="Volume"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="100"
+            aria-valuetext="100%"
+          >
+            <div class="rail">
+              <div id="vol-fill" class="rail-fill"></div>
+              <div id="vol-knob" class="knob"></div>
+            </div>
+          </div>
+        </div>
+
+        <span class="gap"></span>
+
+        <!-- The two things mpv can do that the browser player could not: pick any audio track in
+             the file, and any subtitle track including the image ones. They are menus rather than
+             cycling buttons, so what is in the file is visible without clicking through it. -->
+        <div class="picker">
+          <button
+            id="btn-audio"
+            class="pill"
+            type="button"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="menu-audio"
+          >
+            <span class="pill-label">Audio</span>
+            <span id="audio-value" class="pill-value">—</span>
+          </button>
+          <div id="menu-audio" class="menu" role="menu" aria-label="Audio track" hidden></div>
+        </div>
+
+        <div class="picker">
+          <button
+            id="btn-subs"
+            class="pill"
+            type="button"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="menu-subs"
+          >
+            <span class="pill-label">Subtitles</span>
+            <span id="subs-value" class="pill-value">—</span>
+          </button>
+          <div id="menu-subs" class="menu" role="menu" aria-label="Subtitle track" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <script src="player.js"></script>
+  </body>
+</html>

@@ -134,11 +134,29 @@ function identityArg() {
   })}`;
 }
 
+// What the Jellyfin preload needs to decide whether to bridge anything: the origin of the server
+// the user actually configured.
+//
+// Handed over the same way as identityArg, and for the same reason — that view is sandboxed and
+// cannot require a local module. The origin rather than the full URL because that is what the
+// check is against: a server under a reverse-proxy path still serves its client from one origin,
+// and a page that has wandered off it is no longer the server we agreed to trust.
+function jellyfinArg(serverUrl) {
+  let origin = '';
+  try {
+    origin = new URL(serverUrl).origin;
+  } catch {
+    origin = '';
+  }
+  return `--streamhub-jellyfin=${JSON.stringify({ origin })}`;
+}
+
 module.exports = {
   DEFAULT_SERVICES,
   needsSetup,
   normalizeServerUrl,
   identityArg,
+  jellyfinArg,
   CHROME_UA,
   CHROME_MAJOR,
   CHROME_BRANDS,

@@ -8,7 +8,9 @@
   "private": true,
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
-    "start": "electron .",
+    "start": "electron . --ozone-platform=x11",
+    "check": "node build/check-shell.js",
+    "stage:mpv": "bash build/stage-mpv.sh",
     "build": "electron-builder --linux AppImage",
     "build:pacman": "electron-builder --linux pacman",
     "build:win": "electron-builder --win nsis"
@@ -31,12 +33,25 @@
       "assets/**/*"
     ],
     "afterPack": "build/afterPack.js",
+    "extraResources": [
+      {
+        "from": "build/mpv-staging",
+        "to": "mpv",
+        "filter": [
+          "**/*",
+          "!.gitkeep"
+        ]
+      }
+    ],
     "linux": {
       "target": [
         "AppImage"
       ],
       "category": "AudioVideo",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "executableArgs": [
+        "--ozone-platform=x11"
+      ]
     },
     "appImage": {
       "artifactName": "${productName}.AppImage"

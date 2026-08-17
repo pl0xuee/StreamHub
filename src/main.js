@@ -25,6 +25,19 @@ const { adblocker } = require('./adblock');
 const { cleanEnhance } = require('./enhance');
 const { Mpris } = require('./mpris');
 const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
+const { Player } = require('./player');
+const { jellyfinShellJs } = require('./jellyfin-shell');
+const { JellyfinApi } = require('./jellyfin-api');
+
+// NOTE: StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot
+// work: mpv renders into a window the app owns, and mpv can only be handed a window that way on
+// X11 — it has no --wid support on Wayland and none is planned.
+//
+// That flag cannot be set from here. Electron chooses its display backend before this file runs,
+// so `app.commandLine.appendSwitch('ozone-platform', ...)` is simply ignored — tested. It lives
+// where it is actually read: the `start` script and electron-builder's executableArgs, both in
+// package.json. If playback ever silently fails to appear, check that first — and see the guard
+// in player.js, which turns that case into a message rather than a black rectangle.
 
 // Only one copy of the app may run at a time, and this has to be settled before anything else:
 // Chromium's on-disk session storage assumes a single process owns the profile. Two instances
@@ -143,9 +156,21 @@ let pendingUpdate = null; // version string of a newer release we already know a
 let tray = null;
 let quitting = false; // distinguishes a real quit from a close-to-tray
 let sleepBlockerId = null; // powerSaveBlocker id held while something is playing
-let mediaPlaying = false; // is any view playing right now — drives the sidebar's house lights
+let mediaPlaying = false; // is anything playing right now — drives the sidebar's house lights
+// The two things that can be playing, tracked apart so neither can cancel the other out: a
+// site's own <video> in a service view, and mpv on the Jellyfin player. See reportPlaying.
+let viewsPlaying = false;
+let mpvPlaying = false;
 let saveWindowTimer = null;
 let mpris = null; // Linux system media controls (KDE panel, lock screen)
+// mpv, and the window it draws into, for Jellyfin. Made on first play and kept afterwards —
+// see player.js for why the video gets a window of its own rather than sharing the main one.
+let jellyfinPlayer = null;
+// Telling the server where we have got to. jellyfin-web reports for players it runs itself, but
+// mpv is another process and the page cannot see its position — so without this an item has no
+// resume point and never gets marked watched. Built when a play starts, from credentials the
+// page hands over, so it follows whatever server and account the user is signed in to.
+let jellyfinApi = null;
 
 function layout() {
   const { width, height } = baseWindow.getContentBounds();
@@ -154,6 +179,9 @@ function layout() {
   // runs the full width and the sidebar floats over it.
   viewManager.sidebarWidth = dockInsetWidth;
   viewManager.layout(width, height);
+  // The player's window is a separate top-level window, so it is positioned in screen
+  // coordinates and has to be told to follow rather than being laid out by the parent.
+  if (jellyfinPlayer) jellyfinPlayer.layout();
 }
 
 // Hold the display awake while a service is playing. Watching a film is the one time a
@@ -196,6 +224,40 @@ async function onPlaybackChange(playing) {
   mpris.update({ playing, title, service: service ? service.name : '' });
 }
 
+// Lay out now, and again once the window manager has settled.
+//
+// Maximising is not synchronous, and Electron's cached bounds lag behind it: with the window
+// already carrying _NET_WM_STATE_MAXIMIZED_HORZ/VERT, getContentBounds() still reported the size
+// the window had *before* it was maximised — verified on KDE/X11. Laying out on that stale number
+// leaves every view sized to a window that no longer exists, with the page filling part of a
+// wider frame and a band of empty background beside it, until something else forces a layout.
+//
+// There is no event for "the window manager has finished", so this re-reads a moment later. The
+// repeats are cheap — layout() only sets bounds — and idempotent once the size has settled.
+function layoutSettled() {
+  layout();
+  setTimeout(layout, 50);
+  setTimeout(layout, 300);
+}
+
+// Two unrelated things want the sidebar out of the way: a site that has gone HTML-fullscreen, and
+// mpv covering the content area. Neither may simply set the visibility, for the same reason the
+// playing flags below are kept apart — whichever spoke last would win. A site in fullscreen while
+// Jellyfin stops (its page does that on navigation) would otherwise put the sidebar back, floating
+// over a film that still owns the whole window.
+let siteFullscreen = false;
+
+function updateChromeVisible() {
+  if (!chromeView || chromeView.webContents.isDestroyed()) return;
+  chromeView.setVisible(!(siteFullscreen || mpvPlaying));
+}
+
+// Something is playing if either source says so. Both call this instead of onPlaybackChange
+// directly, so the inhibitor and the media controls see the union rather than the last opinion.
+function reportPlaying() {
+  return onPlaybackChange(viewsPlaying || mpvPlaying);
+}
+
 // Remember the window's geometry. Debounced: resize and move fire continuously while the
 // user drags, and this writes a file.
 function rememberWindowLater() {
@@ -227,6 +289,10 @@ function statePayload() {
     lastServiceId: config.lastServiceId,
     minimizeToTray: config.settings.minimizeToTray === true,
     glassSidebar: config.settings.glassSidebar !== false,
+    mpvPlayback: config.settings.mpvPlayback !== false,
+    // Whether there is an mpv to run at all. The checkbox is disabled without one, since ticking
+    // it would silently do nothing — the Jellyfin view falls back to the browser player.
+    mpvAvailable: Player.available(),
     autoHideSidebar: config.settings.autoHideSidebar !== false,
     // Only the opening value — after this it is pushed on the 'playback' channel above.
     playing: mediaPlaying,
@@ -365,7 +431,9 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   });
-  if (saved.maximized) baseWindow.maximize();
+  // NOTE: restoring a maximised window happens further down, once the layout listeners exist.
+  // Maximising here would resize the window before anything is listening, and the new size would
+  // never reach the views.
 
   chromeView = new WebContentsView({
     webPreferences: {
@@ -382,7 +450,94 @@ function createWindow() {
 
   viewManager = new ViewManager(baseWindow, SIDEBAR_WIDTH);
   // Playing/stopping drives both the display-sleep inhibitor and the system media controls.
-  viewManager.onPlaybackChange = onPlaybackChange;
+  // Two things can be playing now — a site's own <video>, and mpv — and they report separately,
+  // so combine them rather than letting whichever spoke last win. Otherwise stopping a Jellyfin
+  // item releases the screen-sleep inhibitor while a stream is still running in a grid pane.
+  viewManager.onPlaybackChange = (on) => {
+    viewsPlaying = on;
+    return reportPlaying();
+  };
+  viewManager.mpvPlayback = config.settings.mpvPlayback !== false && Player.available();
+
+  jellyfinPlayer = new Player({
+    baseWindow,
+    // Where the video belongs. Only interesting once the grid is tiling more than one thing: on
+    // its own, the Jellyfin view already fills the content area, and null says exactly that.
+    // Otherwise mpv would cover the whole window and hide the services beside it.
+    paneBounds: () => {
+      if (!gridMode || gridPanes.length < 2 || !viewManager) return null;
+      const service = jellyfinService();
+      if (!service) return null;
+      const view = viewManager.viewsForService(service.id)[0];
+      if (!view) return null;
+      const b = view.getBounds();
+      return b && b.width && b.height ? b : null;
+    },
+  });
+  // While mpv is up it owns the content area outright. The chrome goes for the same reason it
+  // goes when a site enters fullscreen — a strip of sidebar over the film is the one thing left
+  // on screen that is not the film — and in this case it could not be drawn over the video
+  // anyway; see the note in player.js.
+  jellyfinPlayer.on('active', (on, was) => {
+    mpvPlaying = on;
+    updateChromeVisible();
+    reportPlaying();
+    sendToJellyfin({ type: on ? 'playing' : 'stopped' });
+
+    // Stopping is the report that must not be missed: it is what writes the resume point, and
+    // what tells the server to tear down anything it had set up for this session.
+    //
+    // Read the position off the player that raised this, not off the module-level one: closing
+    // the window destroys the player and clears that reference before mpv has finished exiting,
+    // so by the time this runs it can already be null — which threw, and lost the resume point
+    // for whatever was playing when the app was closed.
+    const player = jellyfinPlayer;
+    if (!on && jellyfinApi && was && was.itemId && player) {
+      jellyfinApi
+        .reportStopped({
+          itemId: was.itemId,
+          mediaSourceId: was.mediaSourceId,
+          positionSeconds: player.state.positionSeconds,
+        })
+        .catch(() => {});
+    }
+  });
+
+  // Where we have got to, on a timer. This is what "Continue Watching" is built from, so it goes
+  // to the server as well as to the page.
+  jellyfinPlayer.on('position', (state, current) => {
+    sendToJellyfin({ type: 'timeupdate', ...state });
+    if (!jellyfinApi || !current || !current.itemId) return;
+    jellyfinApi
+      .reportProgress({
+        itemId: current.itemId,
+        mediaSourceId: current.mediaSourceId,
+        positionSeconds: state.positionSeconds,
+        isPaused: state.paused,
+        audioStreamIndex: current.audioIndex,
+        subtitleStreamIndex: current.subtitleIndex,
+      })
+      .catch(() => {});
+  });
+
+  jellyfinPlayer.on('finished', (reason, current) => {
+    if (reason !== 'eof') return;
+    sendToJellyfin({ type: 'ended' });
+    // Watched to the end. Jellyfin can infer this from a stop report near the runtime, but mpv's
+    // last position is often a second or two short of its threshold, which leaves an episode
+    // sitting at 99% instead of greying out.
+    if (jellyfinApi && current && current.itemId) {
+      jellyfinApi.markPlayed(current.itemId).catch(() => {});
+    }
+  });
+  jellyfinPlayer.on('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[jellyfin] player:', err && err.message);
+    // Tell the page as well. jellyfin-web opened a playback session when it handed the item over,
+    // and if it is never told the playback failed it leaves that session open and goes on showing
+    // the item as playing.
+    sendToJellyfin({ type: 'error', message: (err && err.message) || 'playback failed' });
+  });
   viewManager.glass = config.settings.glassSidebar !== false;
   // Raising a service view puts it above the chrome; this puts the chrome back on top.
   viewManager.onStackChange = () => {
@@ -393,7 +548,8 @@ function createWindow() {
   // A site in fullscreen owns the window outright — a strip of sidebar floating over it would be
   // the one thing left on screen that isn't the film.
   viewManager.onFullscreenChange = (on) => {
-    if (chromeView && !chromeView.webContents.isDestroyed()) chromeView.setVisible(!on);
+    siteFullscreen = on;
+    updateChromeVisible();
   };
   // Ctrl+K pressed inside a service view: the page owns the keystroke, so views.js takes this one
   // chord back and hands it here.
@@ -407,6 +563,24 @@ function createWindow() {
   baseWindow.on('resize', layout);
   baseWindow.on('enter-full-screen', layout);
   baseWindow.on('leave-full-screen', layout);
+  baseWindow.on('maximize', layoutSettled);
+  baseWindow.on('unmaximize', layoutSettled);
+
+  // Only now restore a maximised window, with the listeners above in place to catch the size it
+  // lands on. Doing it at construction meant the window grew before anything was watching: every
+  // view kept the size the window was *created* at, and the app sat with the page filling part of
+  // a wider window until something else happened to force a layout — hiding the sidebar, say.
+  // The saved width is the restored-down size, so it is genuinely smaller than the screen.
+  if (saved.maximized) {
+    baseWindow.maximize();
+    layoutSettled();
+  }
+
+  // Moving the window does not change the layout of anything inside it, but the player's window
+  // is a sibling in screen coordinates — without this it stays where the window used to be.
+  baseWindow.on('move', () => {
+    if (jellyfinPlayer) jellyfinPlayer.layout();
+  });
 
   baseWindow.on('resize', rememberWindowLater);
   baseWindow.on('move', rememberWindowLater);
@@ -433,6 +607,13 @@ function createWindow() {
 
   baseWindow.on('closed', () => {
     baseWindow = null;
+    // The player holds a child window and an mpv process. Neither is reachable once this window
+    // is gone, and an mpv whose parent window died ignores SIGTERM, so it has to be let go here
+    // rather than left to the process exit.
+    if (jellyfinPlayer) {
+      jellyfinPlayer.destroy().catch(() => {});
+      jellyfinPlayer = null;
+    }
   });
 }
 
@@ -594,6 +775,220 @@ ipcMain.on('set-chrome-region', (_e, region, inset) => {
   chromeRegion = region;
   dockInsetWidth = nextInset;
   layout();
+});
+
+// ---------------------------------------------------------------------------------------------
+// The Jellyfin native player.
+//
+// Only the Jellyfin view may reach any of this. The check is against the live view rather than
+// the sender's URL, because the shell is installed from a preload at document start, when the
+// webContents may still be reporting about:blank — matching the webContents itself is both
+// stricter and not dependent on that timing.
+const JELLYFIN_TICKS_PER_SECOND = 10000000;
+
+function jellyfinService() {
+  return config.services.find((s) => s.selfHosted && s.url);
+}
+
+// The origin of the server the user actually configured. Everything the page claims about where
+// its server is has to be measured against this rather than believed.
+function jellyfinOrigin() {
+  const service = jellyfinService();
+  if (!service || !service.url) return null;
+  try {
+    return new URL(service.url).origin;
+  } catch {
+    return null;
+  }
+}
+
+function fromJellyfinView(event) {
+  const sender = event && event.sender;
+  if (!sender || sender.isDestroyed() || !viewManager) return false;
+  const service = jellyfinService();
+  if (!service) return false;
+  const isTheView = viewManager
+    .viewsForService(service.id)
+    .some((v) => v.webContents && !v.webContents.isDestroyed() && v.webContents.id === sender.id);
+  if (!isTheView) return false;
+
+  // The right view is not yet the right *frame*. A webContents is one object for every frame in
+  // it, so on its own the check above accepts a subframe just as readily as the page itself —
+  // and a Jellyfin view that has been navigated elsewhere could hold the real server in an
+  // iframe, putting a live bridge inside a document tree someone else controls.
+  //
+  // So: the top frame only, and where its origin can be read, it has to be the configured one.
+  // The origin is deliberately not required when it cannot be read yet: the shell is fetched
+  // from a preload at document start, when the frame may still be reporting about:blank, and
+  // refusing that would stop the feature working at all. The preload does its own origin check
+  // before exposing anything, so this is the second lock rather than the only one.
+  const frame = event.senderFrame;
+  if (!frame) return true;
+  if (frame.parent) return false;
+  let origin = null;
+  try {
+    origin = new URL(frame.url).origin;
+  } catch {
+    return true; // no readable URL yet — document start
+  }
+  if (origin !== 'null' && (origin.startsWith('http:') || origin.startsWith('https:'))) {
+    return origin === jellyfinOrigin();
+  }
+  return true;
+}
+
+// Push player state back to the page, so jellyfin-web's own progress reporting and UI follow
+// what mpv is actually doing.
+function sendToJellyfin(event) {
+  const service = jellyfinService();
+  if (!service || !viewManager) return;
+  for (const view of viewManager.viewsForService(service.id)) {
+    const wc = view.webContents;
+    if (wc && !wc.isDestroyed()) wc.send('jellyfin-event', event);
+  }
+}
+
+// The shell source, handed to the preload synchronously because the page reads window.NativeShell
+// while it boots and there is no later point to wait at. Not passed on the command line: it is
+// far too big for argv.
+// Built once. Every frame on the page asks for this over a *blocking* channel, so rebuilding
+// ~37KB of source per request lets a page with many frames stall the main process; and the answer
+// depends only on the machine's name and the app version, neither of which changes while running.
+let jellyfinShellSource = null;
+
+ipcMain.on('jellyfin-shell-source', (event) => {
+  if (!fromJellyfinView(event)) {
+    event.returnValue = null;
+    return;
+  }
+  if (jellyfinShellSource === null) {
+    jellyfinShellSource = jellyfinShellJs({ deviceName: os.hostname(), appVersion: APP_VERSION });
+  }
+  event.returnValue = jellyfinShellSource;
+});
+
+ipcMain.handle('jellyfin-player', async (event, method, payload) => {
+  if (!fromJellyfinView(event) || !jellyfinPlayer) return null;
+  const p = payload || {};
+  try {
+    switch (method) {
+      case 'play': {
+        // Only a media URL from the server the user configured.
+        //
+        // Everything here arrives from a web page. mpv opens whatever it is handed, so an
+        // unchecked URL is an unchecked file open: file:// or a bare path would display any file
+        // the user can read, and the replies to getState and the track calls would report back
+        // whether it exists and how long it is. A non-media URL falls through to mpv's ytdl hook,
+        // which runs yt-dlp against an address of the page's choosing.
+        //
+        // The page has no business naming anything but a stream on its own server, so that is all
+        // it may name.
+        const expected = jellyfinOrigin();
+        let target = null;
+        try {
+          target = new URL(String(p.url || ''));
+        } catch {
+          return false;
+        }
+        if (!expected || target.origin !== expected) return false;
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+        const startSeconds = Number(p.startPositionTicks || 0) / JELLYFIN_TICKS_PER_SECOND;
+        // audioIndex/subtitleIndex are Jellyfin's stream numbering, not mpv's track ids; the
+        // player maps them once the file is open. See trackIdForStreamIndex in player.js.
+        // Credentials travel with each play rather than being held once: the user can sign out,
+        // change account or repoint the server without the app restarting.
+        const service = jellyfinService();
+        if (service && service.url && p.server && p.server.token) {
+          const opts = {
+            // The configured address, never the one the page names. Reports go out from the main
+            // process with an Authorization header, which is a request no web page can make
+            // across origins on its own — letting the page choose the destination would hand it
+            // exactly that, aimed anywhere it liked, including this machine and the local network.
+            serverUrl: service.url,
+            token: p.server.token,
+            userId: p.server.userId,
+            // The id jellyfin-web identifies itself with, so these reports join the session it
+            // already opened. Sent empty, the server refuses to open one at all.
+            deviceId: p.server.deviceId,
+            deviceName: os.hostname(),
+            version: APP_VERSION,
+          };
+          if (jellyfinApi) jellyfinApi.update(opts);
+          else jellyfinApi = new JellyfinApi(opts);
+        }
+
+        const started = await jellyfinPlayer.play(p.url, {
+          startSeconds: Number.isFinite(startSeconds) ? startSeconds : 0,
+          headers: p.headers,
+          title: p.title,
+          audioIndex: p.audioIndex,
+          subtitleIndex: p.subtitleIndex,
+          meta: {
+            itemId: p.itemId,
+            mediaSourceId: p.mediaSourceId,
+            audioIndex: p.audioIndex,
+            subtitleIndex: p.subtitleIndex,
+          },
+        });
+
+        // Tell the server we are playing. Failing this must not stop playback — the film still
+        // plays, it just will not show as a session — so it is fired and not awaited on.
+        if (started && jellyfinApi && p.itemId) {
+          jellyfinApi
+            .reportStart({
+              itemId: p.itemId,
+              mediaSourceId: p.mediaSourceId,
+              positionSeconds: Number.isFinite(startSeconds) ? startSeconds : 0,
+              audioStreamIndex: p.audioIndex,
+              subtitleStreamIndex: p.subtitleIndex,
+            })
+            .catch(() => {});
+        }
+        return started;
+      }
+      // NOTE: every one of these is `return await`, deliberately. A bare `return somePromise`
+      // inside a try settles *after* the try/catch has been left, so a rejection escapes the
+      // catch below and rejects the ipcMain.handle instead — the exact thing that comment says
+      // must never happen. Awaiting first keeps the failure inside the block.
+      case 'pause':
+        return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.pause() : null;
+      case 'unpause':
+        return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.play() : null;
+      case 'stop':
+        return await jellyfinPlayer.stop();
+      case 'seek':
+        return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.seek(Number(p.seconds) || 0) : null;
+      case 'setVolume':
+        return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.setVolume(Number(p.volume)) : null;
+      case 'setMuted':
+        return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.setMuted(Boolean(p.muted)) : null;
+      // The page speaks Jellyfin stream indices here too, so these go through the same mapping
+      // as the initial selection rather than being passed to mpv as if they were track ids.
+      case 'setAudioTrack': {
+        if (!jellyfinPlayer.mpv) return null;
+        const id = await jellyfinPlayer.trackIdForStreamIndex('audio', p.id);
+        return id === null ? null : await jellyfinPlayer.mpv.setAudioTrack(id);
+      }
+      case 'setSubtitleTrack': {
+        if (!jellyfinPlayer.mpv) return null;
+        if (p.id === null || Number(p.id) < 0) {
+          return await jellyfinPlayer.mpv.setSubtitleTrack(null);
+        }
+        const id = await jellyfinPlayer.trackIdForStreamIndex('sub', p.id);
+        return id === null ? null : await jellyfinPlayer.mpv.setSubtitleTrack(id);
+      }
+      case 'getState':
+        return { ...jellyfinPlayer.state, active: jellyfinPlayer.isActive() };
+      default:
+        return null;
+    }
+  } catch (err) {
+    // A failed player call must never reject into the page: jellyfin-web would surface it as a
+    // playback error and tear the session down, when the right outcome is usually a no-op.
+    // eslint-disable-next-line no-console
+    console.warn('[jellyfin] player call failed:', method, err && err.message);
+    return null;
+  }
 });
 
 ipcMain.on('toggle-sidebar', () => {
@@ -791,6 +1186,43 @@ ipcMain.handle('set-server-url', (event, serviceId, input) => {
 // touched, so pointing it at the same server again picks up exactly where it left off.
 ipcMain.on('change-server', (_e, serviceId) => {
   applyServerUrl(serviceId, '');
+});
+
+// Play Jellyfin through mpv, or leave it to the browser player.
+//
+// Unlike the glass switch above, this one cannot be applied in place: which preload a view
+// carries — and so whether jellyfin-web is offered a native player at all — is fixed when the
+// view is constructed. So the Jellyfin views are torn down and rebuilt, exactly as changing the
+// server address does. The login is untouched, because that lives in the session partition
+// rather than the view.
+ipcMain.handle('set-mpv-playback', async (_e, on) => {
+  config.settings.mpvPlayback = on === true;
+  viewManager.mpvPlayback = config.settings.mpvPlayback && Player.available();
+
+  // Whatever is playing was started by the view about to be destroyed, so stop it first rather
+  // than leaving mpv covering a page that no longer exists.
+  // Let mpv go entirely, not just stop it. stop() deliberately keeps the process alive and idle
+  // so the next item starts quickly — but the user has just said they do not want mpv used, and
+  // leaving it holding the GPU for the rest of the session is not what that means.
+  // Kept, not discarded: destroy() releases the process and the window but leaves the object
+  // usable, and it is only ever built once at startup — dropping the reference here would leave
+  // nothing to play with if the setting were turned back on.
+  if (jellyfinPlayer) await jellyfinPlayer.destroy().catch(() => {});
+
+  const service = jellyfinService();
+  if (service) {
+    viewManager.destroyView(service.id);
+    if (gridMode && gridPanes.some((p) => p.serviceId === service.id)) {
+      const tiles = reconcileGrid();
+      if (tiles.length) viewManager.showGrid(tiles);
+    } else if (activeServiceId === service.id) {
+      viewManager.show(service);
+    }
+  }
+
+  persist();
+  broadcast();
+  return config.settings.mpvPlayback;
 });
 
 ipcMain.handle('set-glass-sidebar', (_e, on) => {
@@ -1279,4 +1711,12 @@ app.on('will-quit', () => {
   setPlaybackInhibitor(false); // never leave the display-sleep inhibitor held after we exit
   destroyTray();
   if (mpris) mpris.stop(); // drop the bus name, or the panel keeps a dead player around
+  // Take mpv with us. It is a separate process, so quitting mid-film otherwise leaves it playing
+  // audio with no window and no way to reach it — and an mpv whose parent window has gone ignores
+  // SIGTERM, so it survives until the next launch sweeps it. The quit sequence will not wait for
+  // this to finish, but the socket write that asks mpv to exit goes out before the first await.
+  if (jellyfinPlayer) {
+    jellyfinPlayer.destroy().catch(() => {});
+    jellyfinPlayer = null;
+  }
 });

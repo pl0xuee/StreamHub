@@ -9,6 +9,7 @@ const {
   CH_PLATFORM,
   isGoogleAuthHost,
   identityArg,
+  jellyfinArg,
   needsSetup,
 } = require('./services');
 const { adblocker } = require('./adblock');
@@ -294,6 +295,9 @@ class ViewManager {
     this.enhance = {}; // per-site cosmetic tweaks, from the user's settings (see enhance.js)
     this.onPlaybackChange = () => {}; // set by main.js
     this.glass = true; // service views run the full window width, with the chrome floating over them
+    // Whether the Jellyfin view is built with the native-player bridge. Read when a view is
+    // constructed (see ensureView), so main.js rebuilds those views when the setting changes.
+    this.mpvPlayback = false;
     // main.js owns the view stack: it re-raises the chrome after we raise a service view, and hides
     // it entirely while a site is in fullscreen. ViewManager does not know what the chrome is, only
     // that something has to be told.
@@ -359,6 +363,15 @@ class ViewManager {
     // fixed when it is made, so main.js rebuilds these views once an address is saved rather
     // than navigating them — see applyServerUrl there.
     const setup = needsSetup(service);
+    // A self-hosted service that already has an address is the Jellyfin view proper, and it is
+    // the one remote page in the app given a bridge — so that jellyfin-web can hand playback to
+    // mpv instead of decoding in Chromium. See jellyfin-preload.js for why that exception is
+    // safe here and nowhere else.
+    //
+    // Like the setup page, this is decided once when the view is made: a preload cannot be
+    // swapped on a live view, so turning the setting off rebuilds the view rather than
+    // reconfiguring it.
+    const nativePlayer = !setup && Boolean(service.selfHosted && service.url) && this.mpvPlayback;
     const partition = `persist:${this.key(service.id)}`;
     // Set the spoofed UA at the session level so sub-resource requests match too.
     const ses = session.fromPartition(partition);
@@ -379,13 +392,52 @@ class ViewManager {
         // untrusted remote sites stay isolated; they are still driven from the main
         // process via executeJavaScript. The setup page, which is ours, gets the one
         // preload here that does expose something (see setup-preload.js).
-        preload: path.join(__dirname, setup ? 'setup-preload.js' : 'service-preload.js'),
-        additionalArguments: [identityArg()],
+        preload: path.join(
+          __dirname,
+          // eslint-disable-next-line no-nested-ternary
+          setup ? 'setup-preload.js' : nativePlayer ? 'jellyfin-preload.js' : 'service-preload.js',
+        ),
+        additionalArguments: nativePlayer
+          ? [identityArg(), jellyfinArg(service.url)]
+          : [identityArg()],
       },
     });
 
     const wc = view.webContents;
     wc.setUserAgent(CHROME_UA);
+
+    // The Jellyfin shell runs inside the page, and a page throws where the main process cannot
+    // see it — a shell that breaks jellyfin-web's bootstrap looks exactly like a server that is
+    // slow to load. Behind an environment variable so it costs nothing normally:
+    //   STREAMHUB_DEBUG_JELLYFIN=1 npm start
+    if (nativePlayer && process.env.STREAMHUB_DEBUG_JELLYFIN) {
+      // Electron changed this event's shape mid-life: older builds pass positional arguments,
+      // newer ones a single event object. Read whichever arrived.
+      wc.on('console-message', (...args) => {
+        const first = args[0];
+        const structured = first && typeof first === 'object' && 'message' in first;
+        const level = structured ? first.level : args[1];
+        const message = structured ? first.message : args[2];
+        // eslint-disable-next-line no-console
+        console.log(`[jellyfin page:${level}]`, message);
+      });
+      // What size the page actually finished loading at — the number jellyfin-web will have
+      // measured and laid itself out from.
+      wc.on('did-finish-load', () => {
+        // eslint-disable-next-line no-console
+        console.log(`[jellyfin view] finished load at ${JSON.stringify(view.getBounds())}`);
+        wc.executeJavaScript('({w: innerWidth, h: innerHeight})')
+          .then((size) => {
+            // eslint-disable-next-line no-console
+            console.log(`[jellyfin view] page innerWidth=${size.w} innerHeight=${size.h}`);
+          })
+          .catch(() => {});
+      });
+      wc.on('preload-error', (_e, preloadPath, error) => {
+        // eslint-disable-next-line no-console
+        console.error('[jellyfin preload failed]', preloadPath, error && error.message);
+      });
+    }
 
     // Let genuine popups open as real child windows so window.opener/postMessage-based
     // sign-in ("Sign in with Google/Apple", etc.) works — loading them in-place would
@@ -467,6 +519,12 @@ class ViewManager {
 
     view.setVisible(false);
     this.win.contentView.addChildView(view);
+    // Give it the right size *before* it starts loading. A WebContentsView is born 0x0, and a
+    // client that measures the window as it boots — jellyfin-web lays its whole grid out from
+    // one reading and does not re-measure until something resizes it — will otherwise lay itself
+    // out for the wrong width and stay that way. Sizing after the load has begun is a race
+    // against the page's own startup; this is not.
+    this.sizeView(view);
     this.loadService(view, service);
 
     // Remember what this view is, so the service-wide operations below (destroy on removal,
@@ -550,6 +608,13 @@ class ViewManager {
   show(service) {
     const view = this.ensureView(service);
     this.setVisibleSet([view], view);
+    // Size it now. Bounds come only from layout(), and layout() skips any view that was not yet
+    // the active one when it last ran — so the first view shown after startup would otherwise
+    // keep whatever bounds it was born with until something else happened to trigger a layout.
+    // In practice that meant "until the sidebar was hidden for the first time", which is a long
+    // time to show a page at the wrong size, and worst for a client like jellyfin-web that
+    // measures the window once as it boots and lays itself out from that.
+    this.relayout();
     return view;
   }
 
@@ -563,6 +628,23 @@ class ViewManager {
     // tiles carry a suffixed id and so get views of their own.
     const views = panes.slice(0, 4).map((p) => this.ensureView(p.service, p.paneId));
     this.setVisibleSet(views, views[0]);
+    this.relayout(); // see show(): a newly tiled pane has no bounds until a layout runs
+  }
+
+  // Re-apply the last known window size. Harmless before the first real layout, since layout()
+  // ignores an empty size.
+  relayout() {
+    this.layout(this.bounds.width, this.bounds.height);
+  }
+
+  // The rectangle a single full-area view occupies, applied to one view. Used for a view that is
+  // not on screen yet and so has no place in the tiling, purely so it loads at the size it will
+  // be shown at. Grid tiling still comes from layout().
+  sizeView(view) {
+    const { width, height } = this.bounds;
+    if (!width || !height) return;
+    const x = this.glass ? 0 : this.sidebarWidth;
+    view.setBounds({ x, y: 0, width: Math.max(0, width - x), height });
   }
 
   layout(width, height) {
@@ -582,6 +664,13 @@ class ViewManager {
     if (!views.length) return;
     const rects = gridRects(views.length, x, 0, areaW, height, GRID_GAP, this.gridLayout);
     views.forEach((v, i) => v.setBounds(rects[i]));
+    if (process.env.STREAMHUB_DEBUG_JELLYFIN) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[layout] window=${width}x${height} glass=${this.glass} x=${x} ` +
+          `panes=${views.length} rects=${JSON.stringify(rects)}`,
+      );
+    }
   }
 
   // Re-tile the existing panes in a different arrangement. Nothing is reloaded — only the bounds

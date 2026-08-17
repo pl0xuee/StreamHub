@@ -1,3 +1,9 @@
 node_modules/
 dist/
 *.log
+
+# A staged mpv is 100MB+ of binaries copied off the build machine (build/stage-mpv.sh).
+# The directory itself is kept so electron-builder always has an extraResources source to
+# read, empty or not; only what lands inside it is ignored.
+build/mpv-staging/*
+!build/mpv-staging/.gitkeep

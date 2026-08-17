@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('shell', {
   setAutoHideSidebar: (on) => ipcRenderer.invoke('set-auto-hide-sidebar', on),
   // Whether the sidebar is tinted glass over the page, or docked opaque beside it.
   setGlassSidebar: (on) => ipcRenderer.invoke('set-glass-sidebar', on),
+  setMpvPlayback: (on) => ipcRenderer.invoke('set-mpv-playback', on),
   // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
   // renderer could never have seen for itself, forwarded by the main process.
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),
