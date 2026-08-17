@@ -29,15 +29,40 @@ const { Player } = require('./player');
 const { jellyfinShellJs } = require('./jellyfin-shell');
 const { JellyfinApi } = require('./jellyfin-api');
 
-// NOTE: StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot
-// work: mpv renders into a window the app owns, and mpv can only be handed a window that way on
+// StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot work at
+// all: mpv renders into a window the app owns, and mpv can only be handed a window that way on
 // X11 — it has no --wid support on Wayland and none is planned.
 //
-// That flag cannot be set from here. Electron chooses its display backend before this file runs,
-// so `app.commandLine.appendSwitch('ozone-platform', ...)` is simply ignored — tested. It lives
-// where it is actually read: the `start` script and electron-builder's executableArgs, both in
-// package.json. If playback ever silently fails to appear, check that first — and see the guard
-// in player.js, which turns that case into a message rather than a black rectangle.
+// The flag cannot be set from inside the process. Electron picks its display backend before this
+// file runs, so app.commandLine.appendSwitch('ozone-platform', …) is simply ignored — tested. It
+// has to be on the command line, which means the only reliable way to guarantee it is to start
+// again with it.
+//
+// Passing it in the launcher is not enough. electron-builder puts executableArgs in the *desktop
+// entry*, so it reaches the app when it is started from a menu — but an AppImage run straight
+// from the file manager or a terminal, which is exactly how the README says to run it, gets
+// nothing. That shipped as a release where playback failed for anyone who double-clicked the
+// file.
+//
+// So: on a Wayland session, with no platform already chosen, hand the same arguments back to a
+// fresh copy of ourselves with x11 added and stand down. argv carries the flag the second time,
+// which is what stops this repeating. `APPIMAGE` names the image itself rather than the binary
+// unpacked out of it, and relaunching the latter would leave the AppImage's own environment
+// behind.
+// NOTE ON WAYLAND. mpv can only be given a window to draw inside on X11 — it has no --wid support
+// on Wayland — so playback is only embedded in the app when Electron is running on X11. The flag
+// that asks for that has to be on the command line, since Electron chooses its backend before
+// this file runs; it is set in the `start` script and in electron-builder's executableArgs.
+//
+// executableArgs only reaches the *desktop entry*, though, so an AppImage started straight from a
+// file manager or a terminal — which is how the README says to run it — still comes up on
+// Wayland. Restarting ourselves with the flag was tried and does not work: an Electron child
+// spawned from an Electron parent never starts, with or without the parent still alive, and
+// app.relaunch() before the app is ready does nothing at all.
+//
+// So Wayland is not treated as an error. mpv opens a window of its own there instead of being
+// embedded — see player.js. Playback works; it just is not inside the app.
+
 
 // Only one copy of the app may run at a time, and this has to be settled before anything else:
 // Chromium's on-disk session storage assumes a single process owns the profile. Two instances
@@ -498,6 +523,7 @@ function createWindow() {
           itemId: was.itemId,
           mediaSourceId: was.mediaSourceId,
           positionSeconds: player.state.positionSeconds,
+          playSessionId: was.playSessionId,
         })
         .catch(() => {});
     }
@@ -505,6 +531,24 @@ function createWindow() {
 
   // Where we have got to, on a timer. This is what "Continue Watching" is built from, so it goes
   // to the server as well as to the page.
+  // Pausing in mpv's controls is invisible to the page otherwise, so its transport goes on
+  // showing the item as playing. Tell it, and tell the server, without waiting for the tick.
+  jellyfinPlayer.on('paused', (paused, current) => {
+    sendToJellyfin({ type: paused ? 'paused' : 'playing' });
+    if (!jellyfinApi || !current || !current.itemId) return;
+    jellyfinApi
+      .reportProgress({
+        itemId: current.itemId,
+        mediaSourceId: current.mediaSourceId,
+        positionSeconds: jellyfinPlayer ? jellyfinPlayer.state.positionSeconds : 0,
+        isPaused: paused,
+        playSessionId: current.playSessionId,
+        playMethod: current.playMethod,
+        eventName: paused ? 'pause' : 'unpause',
+      })
+      .catch(() => {});
+  });
+
   jellyfinPlayer.on('position', (state, current) => {
     sendToJellyfin({ type: 'timeupdate', ...state });
     if (!jellyfinApi || !current || !current.itemId) return;
@@ -516,6 +560,8 @@ function createWindow() {
         isPaused: state.paused,
         audioStreamIndex: current.audioIndex,
         subtitleStreamIndex: current.subtitleIndex,
+        playSessionId: current.playSessionId,
+        playMethod: current.playMethod,
       })
       .catch(() => {});
   });
@@ -928,6 +974,11 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
             mediaSourceId: p.mediaSourceId,
             audioIndex: p.audioIndex,
             subtitleIndex: p.subtitleIndex,
+            // Carried so the progress and stop reports can name the same session the server
+            // opened. Without it the server is never told this playback ended, and a transcode
+            // it started for us keeps running after the user has walked away.
+            playSessionId: p.playSessionId,
+            playMethod: p.playMethod,
           },
         });
 
@@ -941,6 +992,8 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
               positionSeconds: Number.isFinite(startSeconds) ? startSeconds : 0,
               audioStreamIndex: p.audioIndex,
               subtitleStreamIndex: p.subtitleIndex,
+              playSessionId: p.playSessionId,
+              playMethod: p.playMethod,
             })
             .catch(() => {});
         }

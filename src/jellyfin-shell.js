@@ -338,6 +338,20 @@ function jellyfinShellJs(options) {
       const raw = opts.url || source.TranscodingUrl || source.Path || null;
       if (!raw) return null;
 
+      // Which of the two the server gave us, and the session it opened to give it.
+      //
+      // Both have to travel with every report. Without the session id the server is never told
+      // that this particular playback ended, so a transcode it started for us goes on running
+      // after the user has stopped watching — an ffmpeg burning their CPU with nobody there. And
+      // reporting DirectPlay for a stream that is really being transcoded misdescribes it on the
+      // dashboard, which is the one place they would look to find out.
+      //
+      // static=true is the marker for the untouched file; a transcode is served from a different
+      // endpoint entirely, so its absence is what identifies one.
+      const transcoding =
+        raw === source.TranscodingUrl || !/[?&]static=true/i.test(String(raw));
+      const playSessionId = opts.playSessionId || source.PlaySessionId || null;
+
       // mpv is a separate process with no notion of the page's location, and the server may sit
       // under a path on a reverse proxy, so every URL leaves here absolute. Same reason
       // AppHost.useFullSubtitleUrls is set: relative subtitle URLs would be unresolvable.
@@ -371,6 +385,8 @@ function jellyfinShellJs(options) {
         // query string and all — displayed across the top of the picture.
         title: item.Name || null,
         itemId: item.Id || opts.itemId || null,
+        playSessionId: playSessionId,
+        playMethod: transcoding ? 'Transcode' : 'DirectPlay',
         mediaSourceId: source.Id || opts.mediaSourceId || null,
         startPositionTicks: startTicks,
         audioIndex: audioIndex,

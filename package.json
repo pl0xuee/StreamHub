@@ -50,6 +50,7 @@
       "category": "AudioVideo",
       "icon": "assets/icon.png",
       "executableArgs": [
+        "--no-sandbox",
         "--ozone-platform=x11"
       ]
     },

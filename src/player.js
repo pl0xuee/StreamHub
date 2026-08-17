@@ -58,6 +58,10 @@ class Player extends EventEmitter {
     this.frameInset = { w: 0, h: 0 };
     // Held while a measurement is in flight, so two cannot correct for the same margin.
     this.calibrating = false;
+    // Whether the video can go inside the app's own window. null until the first play
+    // settles it; false on Wayland, where mpv gets a window of its own instead.
+    this.embedded = null;
+    this.wid = 0;
   }
 
   /**
@@ -75,6 +79,7 @@ class Player extends EventEmitter {
    * session, then subtracted from every layout after.
    */
   async calibrate() {
+    if (this.embedded === false) return; // no host being sized, so no margin to measure
     if (!this.mpv || !this.host || this.host.isDestroyed()) return;
     // One at a time. There is a wait in the middle of this, and two callers that can overlap —
     // a file loading, and the delayed re-measure after a fullscreen change. Both would read the
@@ -165,7 +170,11 @@ class Player extends EventEmitter {
   }
 
   isActive() {
-    return Boolean(this.mpv && this.host && !this.host.isDestroyed() && this.host.isVisible());
+    if (!this.mpv) return false;
+    // Not embedded, so there is no host window whose visibility answers this. mpv is kept alive
+    // and idle between items, so its mere existence is not playback — what is loaded is.
+    if (!this.embedded) return Boolean(this.current);
+    return Boolean(this.host && !this.host.isDestroyed() && this.host.isVisible());
   }
 
   // The host window is made once and reused. Destroying it between items would take its X11
@@ -205,6 +214,8 @@ class Player extends EventEmitter {
   // anything cached: the window manager is free to place a window somewhere other than where it
   // was asked, and a stale rectangle leaves the video sitting over empty desktop.
   layout() {
+    // Nothing of ours to place when mpv has a window of its own.
+    if (this.embedded === false) return;
     if (!this.host || this.host.isDestroyed()) return;
     if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
     const content = this.baseWindow.getContentBounds();
@@ -270,31 +281,45 @@ class Player extends EventEmitter {
     { startSeconds = 0, headers, audioIndex, subtitleIndex, title, meta } = {},
   ) {
     const host = this.ensureHost();
-    this.layout();
-    host.showInactive();
-    this.layout(); // again after mapping: the WM may have adjusted it
-    host.focus();
+
+    // Can the video go inside the app at all? Settled once, on the first play.
+    //
+    // The window id mpv would draw into only exists on X11. On Wayland the handle comes back
+    // empty, because mpv has no way to render inside another application's window there. Rather
+    // than refuse — which is what this used to do, and what the 0.5.1 AppImage did to anyone who
+    // launched it by double-clicking instead of from a menu — mpv is given a window of its own
+    // instead. Not embedded, no app chrome around it, but the film plays.
+    if (this.embedded === null) {
+      const handle = host.getNativeWindowHandle();
+      this.wid = handle && handle.length >= 4 ? handle.readUInt32LE(0) : 0;
+      // The handle is not the test. On Wayland it comes back non-zero anyway — a value that is
+      // simply not an X window — and handing that to mpv as --wid kills it outright with
+      // "BadWindow (invalid Window parameter)", which is how this failed the first time.
+      //
+      // So ask what backend is actually in use. Either the X11 platform was asked for explicitly,
+      // or there is no Wayland session to be on in the first place.
+      const askedForX11 = process.argv.some((a) => a === '--ozone-platform=x11');
+      const sessionIsX11 = !process.env.WAYLAND_DISPLAY && Boolean(process.env.DISPLAY);
+      this.embedded = Boolean(this.wid) && (askedForX11 || sessionIsX11);
+      if (!this.embedded) {
+        // eslint-disable-next-line no-console
+        console.warn("[jellyfin] no X11 window to embed into — mpv will open its own window");
+      }
+    }
+
+    // Only put the host on screen when something is going to be drawn into it, and only *before*
+    // mpv starts: it reparents into a window that is already mapped.
+    if (this.embedded) {
+      this.layout();
+      host.showInactive();
+      this.layout(); // again after mapping: the WM may have adjusted it
+      host.focus();
+    }
 
     if (!this.mpv) {
-      // The X11 window id mpv will render into. On a Wayland-backed run there is no such id —
-      // the handle comes back empty — and mpv has no way to draw inside another application's
-      // window at all. Saying so plainly matters: the alternative is an mpv process that starts,
-      // reports no error, plays the audio and shows nothing, which is a miserable thing to
-      // diagnose. See the note at the top of main.js for where the X11 flag is set.
-      const handle = host.getNativeWindowHandle();
-      const wid = handle && handle.length >= 4 ? handle.readUInt32LE(0) : 0;
-      if (!wid) {
-        host.hide();
-        this.emit(
-          'error',
-          new Error(
-            'no X11 window to play into — StreamHub is running on Wayland. ' +
-              'Launch it with --ozone-platform=x11 (see package.json).',
-          ),
-        );
-        return false;
-      }
-      const mpv = new Mpv({ wid });
+      const mpv = this.embedded
+        ? new Mpv({ wid: this.wid })
+        : new Mpv({ extraArgs: ['--fullscreen=yes'] });
       this.mpv = mpv;
       this.wireMpv();
       try {
@@ -418,7 +443,13 @@ class Player extends EventEmitter {
       } else if (name === 'duration' && typeof value === 'number') {
         this.state.durationSeconds = value;
       } else if (name === 'pause') {
-        this.state.paused = Boolean(value);
+        const paused = Boolean(value);
+        const changed = paused !== this.state.paused;
+        this.state.paused = paused;
+        // Say so straight away rather than waiting for the ten-second progress tick. mpv owns the
+        // controls, so pausing there is invisible to the Jellyfin page otherwise, and its own
+        // transport goes on claiming the item is playing.
+        if (changed && this.current) this.emit('paused', paused, this.current);
       } else if (name === 'fullscreen') {
         this.setFullscreen(Boolean(value));
       }
