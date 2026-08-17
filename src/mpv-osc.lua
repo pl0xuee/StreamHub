@@ -113,6 +113,14 @@ local D = {
   pill_pad = 8,
   pill_gap = 6,
   title_min = 90, -- below this the title cannot say anything useful, so something else gives
+  -- The track menus the pills open. A film can carry twenty-seven subtitle tracks, so the list
+  -- has a height it will not grow past and scrolls inside it.
+  menu_row = 26,
+  menu_pad = 6,
+  menu_head = 20,
+  menu_min_w = 190,
+  menu_max_w = 380,
+  menu_gap = 14, -- between a menu's right-hand meta column and the name it belongs to
   chip_pad_x = 9, -- the hover timestamp and the track toast
   chip_h = 22,
   chip_lift = 8,
@@ -393,8 +401,12 @@ local seek_target_until = 0 -- ...and never for longer than this, whatever the f
 local SEEK_LATCH = 2.0 -- how long to keep showing the target before giving up on it
 local SEEK_SETTLE = 0.75 -- how close the file has to get before it is "there"
 local show_remaining = true -- the right-hand clock, toggled by clicking it
+-- The open track menu, or nil. `kind` is mpv's own word for the stream — 'audio' or 'sub' — so it
+-- can be handed straight to the track list and the aid/sid properties without translating.
+local menu = nil
 local toast_text, toast_until = nil, 0
 local slab = nil -- the bar's own rectangle, for deciding whether the pointer is on the glass
+local menu_box = nil -- and an open menu's, which is glass the pointer can be on too
 
 -- The position to draw: where the file is, unless a seek is still on its way somewhere, in which
 -- case it is where that seek was aimed. The latch drops the moment the file gets near enough —
@@ -445,6 +457,46 @@ local function toast(text)
   toast_until = mp.get_time() + TOAST_FOR
 end
 
+-- Opening and closing a track menu.
+--
+-- Two keys are taken for as long as one is open and given straight back afterwards. The wheel is
+-- how a list longer than the window is read, and Escape is how every menu anywhere is dismissed —
+-- but Escape is also how StreamHub leaves a film, so it is only borrowed while there is a menu to
+-- dismiss. Bound the forced way: at the top of a list of twenty-seven subtitles, the wheel must
+-- scroll the list rather than reach mpv's own bindings underneath it.
+local MENU_KEYS = {
+  esc = 'streamhub-osc-menu-esc',
+  up = 'streamhub-osc-menu-up',
+  down = 'streamhub-osc-menu-down',
+}
+
+local function close_menu()
+  if not menu then return end
+  menu = nil
+  for _, name in pairs(MENU_KEYS) do mp.remove_key_binding(name) end
+end
+
+local function scroll_menu(by)
+  if not menu then return end
+  -- Clamped against the real list length at layout time, which is the only place that knows how
+  -- tall the menu came out.
+  menu.scroll = math.max(0, menu.scroll + by)
+  last_input = mp.get_time()
+end
+
+local function open_menu(kind)
+  if menu and menu.kind == kind then
+    close_menu()
+    return
+  end
+  close_menu()
+  menu = { kind = kind, scroll = 0 }
+  last_input = mp.get_time()
+  mp.add_forced_key_binding('ESC', MENU_KEYS.esc, function() close_menu() end)
+  mp.add_forced_key_binding('WHEEL_UP', MENU_KEYS.up, function() scroll_menu(-56) end)
+  mp.add_forced_key_binding('WHEEL_DOWN', MENU_KEYS.down, function() scroll_menu(56) end)
+end
+
 -- ---------------------------------------------------------------------------------------------
 -- Scale
 --
@@ -485,6 +537,16 @@ local function track_state(kind)
     text = count == 0 and '—' or string.format('%s/%d', index and tostring(index) or '-', count),
     track = current,
   }
+end
+
+-- Every track of one kind, in the order the file lists them, which is the order anyone who has
+-- seen this file's tracks anywhere else will expect them in.
+local function tracks_of(kind)
+  local out = {}
+  for _, t in ipairs(mp.get_property_native('track-list') or {}) do
+    if t.type == kind then out[#out + 1] = t end
+  end
+  return out
 end
 
 local function track_name(t)
@@ -578,6 +640,8 @@ local function layout()
   )
   L.value_tags = string.format('\\fn%s\\fs%.1f', FONT_MONO, u(D.fs_value))
   L.chip_tags = string.format('\\fn%s\\fs%.1f%s', FONT_MONO, u(D.fs_chip), colour_tags(TEXT))
+  L.menu_tags = string.format('\\fn%s\\fs%.1f%s', FONT_DISPLAY, u(D.fs_chip), colour_tags(TEXT))
+  L.menu_meta_tags = string.format('\\fn%s\\fs%.1f%s', FONT_MONO, u(D.fs_value), colour_tags(DIM_2))
 
   local title = mp.get_property('media-title')
   if not title or title == '' then title = 'Nothing playing' end
@@ -738,7 +802,91 @@ local function layout()
   items[#items + 1] = L.seam
   if L.seam.live and L.seam.w > 0 then regions[#regions + 1] = L.seam end
 
+  -- The open track menu, if there is one. It is laid out here rather than at draw time because
+  -- its rows are things that can be clicked, and everything clickable has to be in `regions` —
+  -- added after the row so that a menu standing over the bar takes the hits the bar would.
+  L.menu = nil
+  if menu then
+    local rows = {}
+    local anchor = nil
+    for _, it in ipairs(items) do
+      if it.id == (menu.kind == 'audio' and 'audio' or 'subs') then anchor = it end
+    end
+    -- Off first, because it is the one entry that is not a track and the one people go looking
+    -- for. mpv spells it 'no' in aid/sid, which is what the row carries.
+    rows[#rows + 1] = { value = 'no', name = 'Off', meta = '', on = false }
+    local any = false
+    for _, t in ipairs(tracks_of(menu.kind)) do
+      -- The name a person would use on the left; what it is made of on the right. track_name()
+      -- puts the codec in the name, which is right for a one-line toast and wrong here — it came
+      -- out as "ENG (subrip)  subrip", the same fact twice on one row.
+      local name = t.title
+      if not name or name == '' then name = t.lang and t.lang:upper() or nil end
+      if not name then name = 'Track ' .. tostring(t.id) end
+      local bits = {}
+      if t.title and t.lang then bits[#bits + 1] = t.lang:upper() end
+      if t.codec then bits[#bits + 1] = t.codec end
+      if t['demux-channel-count'] then bits[#bits + 1] = t['demux-channel-count'] .. 'ch' end
+      if t.external then bits[#bits + 1] = 'file' end
+      rows[#rows + 1] = {
+        value = tostring(t.id),
+        name = ass_escape(name),
+        meta = table.concat(bits, '  '),
+        on = t.selected == true,
+      }
+      if t.selected then any = true end
+    end
+    rows[1].on = not any
+
+    -- Wide enough for the longest name it holds, within reason; a name past that is cut rather
+    -- than allowed to push the menu across the window.
+    local name_tags = L.menu_tags
+    local meta_tags = L.menu_meta_tags
+    local widest = 0
+    for _, r in ipairs(rows) do
+      local w = text_width(r.name, name_tags, W, H)
+      if r.meta ~= '' then w = w + u(D.menu_gap) + text_width(r.meta, meta_tags, W, H) end
+      if w > widest then widest = w end
+    end
+    local mw = clamp(widest + 2 * u(D.pill_pad) + u(D.menu_row), u(D.menu_min_w), u(D.menu_max_w))
+
+    local row_h = u(D.menu_row)
+    local pad = u(D.menu_pad)
+    local head_h = u(D.menu_head)
+    local bottom = L.bar.y - u(D.chip_lift)
+    local content = head_h + 2 * pad + #rows * row_h
+    -- Never taller than about two thirds of the window: a list that runs from the bar to the top
+    -- of the screen has stopped being a menu over a film and started being a page in front of it,
+    -- and twenty-seven tracks scroll perfectly well in less room than that.
+    local mh = math.min(content, bottom - u(D.float), H * 0.62)
+    local view_y = L.bar.y - u(D.chip_lift) - mh + head_h + pad
+    local view_h = mh - head_h - 2 * pad
+    menu.scroll = clamp(menu.scroll, 0, math.max(0, #rows * row_h - view_h))
+
+    local mx = clamp(anchor and anchor.x or L.bar.x, L.bar.x, L.bar.x + L.bar.w - mw)
+    L.menu = {
+      kind = menu.kind, x = mx, y = bottom - mh, w = mw, h = mh,
+      rows = rows, row_h = row_h, pad = pad, head_h = head_h,
+      view_y = view_y, view_h = view_h, scroll = menu.scroll,
+      scrollable = #rows * row_h > view_h + 0.5,
+    }
+    for i, r in ipairs(rows) do
+      r.y = view_y + (i - 1) * row_h - menu.scroll
+      -- Only what is inside the view can be hit, and a row half out of it is clipped to what can
+      -- be seen of it rather than reaching past the edge of the menu.
+      local top = math.max(r.y, view_y)
+      local bot = math.min(r.y + row_h, view_y + view_h)
+      if bot - top > 4 then
+        regions[#regions + 1] = {
+          id = 'track:' .. menu.kind .. ':' .. r.value,
+          x = mx, y = top, w = mw, h = bot - top, live = true, row = r,
+        }
+      end
+    end
+  end
+
   slab = L.bar
+  menu_box = L.menu
   return L
 end
 
@@ -901,6 +1049,87 @@ local function draw_volume(out, it, s, frac, on)
     out[#out + 1] = shape(
       fill(STEEL_HOT, OPAQUE),
       rrect(it.x + filled - k / 2, ry + rail_h / 2 - k / 2, k, k, k / 2)
+    )
+  end
+end
+
+-- The track menu.
+--
+-- Same material as a menu in the app: denser glass than the panel, because something standing in
+-- front of the panel has to read as being in front of it, with a shadow under it for the same
+-- reason. The pills used to cycle, which meant reaching a subtitle track twenty-six along by
+-- pressing a button twenty-six times and reading the count each time. This is the list.
+--
+-- Rows are clipped to the space between the heading and the bottom edge, so a film with more
+-- tracks than the window is tall scrolls inside the menu rather than running off the screen.
+local function draw_menu(out, L, hovered_id)
+  local m = L.menu
+  if not m then return end
+  local s = L.s
+  local r = D.radius_sm * s
+  out[#out + 1] = shape(
+    fill(INK, A(0.5)) .. string.format('\\blur%.1f', 12 * s),
+    rrect(m.x, m.y + 6 * s, m.w, m.h, r)
+  )
+  out[#out + 1] = shape(
+    fill(GUN_RAISED, ALPHA_RAISED) .. hairline(1, WHITE, ALPHA_EDGE_STRONG),
+    rrect(m.x, m.y, m.w, m.h, r)
+  )
+  out[#out + 1] = label(
+    m.x + D.pill_pad * s, m.y + m.head_h / 2 + m.pad, 4,
+    L.label_tags .. colour_tags(DIM_2), m.kind == 'audio' and 'AUDIO' or 'SUBTITLES'
+  )
+
+  local clip = string.format(
+    '\\clip(%d, %s)', DRAW_SCALE_TAG, rect(m.x, m.view_y, m.w, m.view_h)
+  )
+  for _, row in ipairs(m.rows) do
+    if row.y + m.row_h > m.view_y - m.row_h and row.y < m.view_y + m.view_h + m.row_h then
+      local on = hovered_id == 'track:' .. m.kind .. ':' .. row.value
+      if on then
+        out[#out + 1] = shape(
+          fill(STEEL, ALPHA_STEEL_WASH) .. clip,
+          rrect(m.x + m.pad, row.y, m.w - 2 * m.pad, m.row_h, r)
+        )
+      end
+      -- The playing track is named in steel and marked, because a list where the current entry is
+      -- only a slightly brighter grey is a list you have to read twice.
+      if row.on then
+        local d = 4 * s
+        out[#out + 1] = shape(
+          fill(STEEL, OPAQUE) .. clip,
+          rrect(m.x + m.pad + D.pill_pad * s / 2, row.y + m.row_h / 2 - d / 2, d, d, d / 2)
+        )
+      end
+      local name_x = m.x + m.pad + D.menu_row * s / 2
+      local colour = row.on and STEEL or (on and STEEL_HOT or TEXT)
+      out[#out + 1] = label(
+        name_x, row.y + m.row_h / 2, 4,
+        L.menu_tags .. colour_tags(colour) .. clip, row.name
+      )
+      if row.meta ~= '' then
+        out[#out + 1] = label(
+          m.x + m.w - m.pad - D.pill_pad * s, row.y + m.row_h / 2, 6,
+          L.menu_meta_tags .. clip, row.meta
+        )
+      end
+    end
+  end
+
+  -- How far down a long list you are. Only when there is more list than menu.
+  if m.scrollable then
+    local track_h = m.view_h
+    local total = #m.rows * m.row_h
+    local thumb = math.max(20 * s, track_h * (track_h / total))
+    local at = m.scroll / (total - track_h)
+    local tx = m.x + m.w - 3 * s
+    out[#out + 1] = shape(
+      fill(WHITE, ALPHA_EDGE),
+      rrect(tx - s, m.view_y, 2 * s, track_h, s)
+    )
+    out[#out + 1] = shape(
+      fill(DIM_2, OPAQUE),
+      rrect(tx - s, m.view_y + at * (track_h - thumb), 2 * s, thumb, s)
     )
   end
 end
@@ -1068,8 +1297,11 @@ local function draw(L)
     elseif it.kind == 'pill' then
       -- No box at rest. Two bordered rectangles sitting on the glass outweighed the transport,
       -- which is backwards — picking a track is something you do once a film. The box is the
-      -- hover state and nothing else, the same wash every other control lights with.
-      local on = hovered(it)
+      -- hover state and nothing else, the same wash every other control lights with — and it
+      -- stays on while the menu it opened is up, because a button holding a menu open is lit.
+      local open = L.menu ~= nil
+        and L.menu.kind == (it.id == 'audio' and 'audio' or 'sub')
+      local on = hovered(it) or open
       if on then
         out[#out + 1] = shape(
           fill(STEEL, ALPHA_STEEL_WASH) .. hairline(1, STEEL, ALPHA_STEEL_EDGE),
@@ -1149,6 +1381,10 @@ local function draw(L)
       string.format('\\fn%s\\fs%.1f%s', FONT_DISPLAY, L.s * D.fs_chip, colour_tags(TEXT)))
   end
 
+  -- Last, and so over everything: a menu stands in front of the bar it was opened from.
+  local at = mouse.hover and region_at(mouse.x, mouse.y) or nil
+  draw_menu(out, L, at and at.id or nil)
+
   return table.concat(out, '\n')
 end
 
@@ -1160,6 +1396,9 @@ local function should_stay()
   -- Paused, buffering, idle or still loading, the bar is not in the way of anything, and going
   -- then would hide the one control that would start it again.
   if drag then return true end
+  -- A menu waits to be read. Nothing about it is in the way of the film that the bar under it is
+  -- not already in the way of, and having it vanish mid-list would be its own kind of rude.
+  if menu then return true end
   if mp.get_property_bool('pause') then return true end
   if mp.get_property_bool('idle-active') then return true end
   if mp.get_property_bool('paused-for-cache') then return true end
@@ -1270,18 +1509,24 @@ local function activate(id)
   elseif id == 'clock' then
     show_remaining = not show_remaining
   elseif id == 'audio' or id == 'subs' then
-    -- `cycle` walks the tracks of that type and the off state, which is mpv's own behaviour for
-    -- the same job and is why subtitles can be turned off from this button at all. What was
-    -- landed on is named above the bar for a moment, because "2/4" alone does not say which.
-    local kind = id == 'audio' and 'audio' or 'sub'
-    mp.commandv('cycle', kind)
-    -- The property has not settled by the time this returns; read it on the next tick instead.
-    mp.add_timeout(0.05, guard(function()
-      local state = track_state(kind == 'audio' and 'audio' or 'sub')
-      toast(string.format('%s  %s  %s', id == 'audio' and 'Audio' or 'Subtitles',
-        state.text, track_name(state.track)))
-      render()
-    end))
+    -- These used to cycle, which is what mpv's own controller does and is fine for a file with
+    -- two audio tracks. A film with twenty-seven subtitle tracks turns it into pressing a button
+    -- twenty-seven times and reading a counter after each press to find out where you are. So the
+    -- pill opens the list instead, and the tracks are things you pick rather than pass through.
+    open_menu(id == 'audio' and 'audio' or 'sub')
+  elseif id:sub(1, 6) == 'track:' then
+    local kind, value = id:match('^track:(%a+):(.+)$')
+    if kind then
+      mp.set_property(kind == 'audio' and 'aid' or 'sid', value)
+      close_menu()
+      -- Said out loud as well as shown, because the menu it was picked in is gone by the time the
+      -- picture changes, and the count on the pill alone does not say which track that was.
+      mp.add_timeout(0.05, guard(function()
+        local state = track_state(kind)
+        toast(string.format('%s  %s  %s', kind == 'audio' and 'Audio' or 'Subtitles',
+          state.text, track_name(state.track)))
+      end))
+    end
   elseif id == 'fullscreen' then
     -- Embedded, mpv cannot take the screen for itself — the window it draws into is not its own.
     -- Flipping the property is still the whole job: StreamHub observes it and puts *its* window
@@ -1308,9 +1553,12 @@ local on_mouse = guard(function(_, value)
     return
   end
   if moved then wake() end
-  local on_glass = shown and slab ~= nil
-    and mouse.x >= slab.x and mouse.x <= slab.x + slab.w
-    and mouse.y >= slab.y and mouse.y <= slab.y + slab.h
+  local function within(box)
+    return box ~= nil
+      and mouse.x >= box.x and mouse.x <= box.x + box.w
+      and mouse.y >= box.y and mouse.y <= box.y + box.h
+  end
+  local on_glass = shown and (within(slab) or within(menu_box))
   suppress_window_drag(on_glass or drag ~= nil)
   if not drag then return end
   local L = layout()
@@ -1327,6 +1575,14 @@ local function press()
   local L = layout()
   if not L then return end
   local at = region_at(mouse.x, mouse.y)
+  -- A press anywhere that is not the menu or the button that opened it dismisses the menu, which
+  -- is what a click outside a menu does everywhere else. Checked before the press is acted on, so
+  -- the click that closes it still does whatever it landed on.
+  if menu then
+    local id = at and at.id or ''
+    local own = id:sub(1, 6) == 'track:' or id == (menu.kind == 'audio' and 'audio' or 'subs')
+    if not own then close_menu() end
+  end
   if not at then
     pressed = nil
     return
@@ -1407,13 +1663,21 @@ end
 -- here and holding it would show the new film starting somewhere it is not.
 mp.register_event('file-loaded', guard(function()
   seek_target = nil
+  -- A different file has different tracks, so a list of the last one's is no longer a list of
+  -- anything.
+  close_menu()
   wake()
 end))
 mp.register_event('end-file', guard(function()
   seek_target = nil
+  close_menu()
   wake()
 end))
-mp.register_event('shutdown', guard(function() suppress_window_drag(false) end))
+mp.register_event('shutdown', guard(function()
+  -- Hand back what was borrowed: the window's own dragging, and the keys an open menu took.
+  suppress_window_drag(false)
+  close_menu()
+end))
 
 mp.add_forced_key_binding('MBTN_LEFT', 'streamhub-osc-click', on_click, { complex = true })
 
