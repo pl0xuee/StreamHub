@@ -115,6 +115,20 @@ function isGoogleAuthHost(hostname) {
   return GOOGLE_AUTH_HOSTS.has(hostname);
 }
 
+// A cheap pre-test for the check above, for callers on a hot path.
+//
+// views.js runs a header rewrite on *every* request every service view makes, in the main
+// process — the same thread that draws the app. Parsing each of those URLs to ask a question
+// that is almost always "no" is work the UI pays for; a substring scan answers it for a
+// fraction of the cost, and only a hit is worth a real parse. Deliberately derived from the
+// set above rather than restating the hosts, so the two cannot drift apart.
+function mayBeGoogleAuthUrl(url) {
+  for (const host of GOOGLE_AUTH_HOSTS) {
+    if (url.includes(host)) return true;
+  }
+  return false;
+}
+
 // Everything service-preload.js needs to patch the JS-visible identity, as a command-line
 // argument for it to parse.
 //
@@ -167,4 +181,5 @@ module.exports = {
   CH_ARCH,
   CH_BITNESS,
   isGoogleAuthHost,
+  mayBeGoogleAuthUrl,
 };

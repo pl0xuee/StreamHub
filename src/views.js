@@ -8,6 +8,7 @@ const {
   FIREFOX_UA,
   CH_PLATFORM,
   isGoogleAuthHost,
+  mayBeGoogleAuthUrl,
   identityArg,
   jellyfinArg,
   needsSetup,
@@ -28,20 +29,27 @@ function alignClientHints(ses) {
     // On Google's sign-in host we masquerade as Firefox (see services.js): send the Firefox
     // UA and drop every Sec-CH-UA* client hint, since Firefox emits none. The JS-visible half
     // of this identity (navigator.userAgent / userAgentData) is handled in service-preload.js.
-    let host = '';
-    try {
-      host = new URL(details.url).hostname;
-    } catch {
-      // Non-URL request target (unusual); fall through to the Chrome path.
-    }
-    if (isGoogleAuthHost(host)) {
-      for (const name of Object.keys(headers)) {
-        const lower = name.toLowerCase();
-        if (lower === 'user-agent') headers[name] = FIREFOX_UA;
-        else if (lower.startsWith('sec-ch-ua')) delete headers[name];
+    //
+    // This callback is the main process's share of *every* request every service view makes —
+    // thousands of them on a page like YouTube — and it runs on the thread that also draws the
+    // app, so a URL parse per request is jank the user pays for. mayBeGoogleAuthUrl answers the
+    // common "no" with a substring scan; only a hit is worth constructing a URL for.
+    if (mayBeGoogleAuthUrl(details.url)) {
+      let host = '';
+      try {
+        host = new URL(details.url).hostname;
+      } catch {
+        // Non-URL request target (unusual); fall through to the Chrome path.
       }
-      callback({ requestHeaders: headers });
-      return;
+      if (isGoogleAuthHost(host)) {
+        for (const name of Object.keys(headers)) {
+          const lower = name.toLowerCase();
+          if (lower === 'user-agent') headers[name] = FIREFOX_UA;
+          else if (lower.startsWith('sec-ch-ua')) delete headers[name];
+        }
+        callback({ requestHeaders: headers });
+        return;
+      }
     }
 
     for (const name of Object.keys(headers)) {
@@ -191,11 +199,37 @@ const SCROLLBAR_JS = `(() => {
   addEventListener('scroll', (e) => {
     const el = e.target === document ? document.documentElement : e.target;
     if (!el || el.nodeType !== 1) return;
-    el.setAttribute('data-streamhub-scrolling', '');
+    // Only stamp an element that is not already stamped. Writing the attribute again on every
+    // scroll event invalidates that element's style each time — on a page that scrolls for a
+    // living (an infinite feed) that is a style recalc per frame, bought for nothing, since the
+    // attribute already says what it is about to say. The timer is still restarted every event:
+    // that is what keeps the thumb awake while the motion continues.
+    if (!el.hasAttribute('data-streamhub-scrolling')) {
+      el.setAttribute('data-streamhub-scrolling', '');
+    }
     clearTimeout(stamps.get(el));
     stamps.set(el, setTimeout(() => el.removeAttribute('data-streamhub-scrolling'), 1000));
   }, { capture: true, passive: true });
 })()`;
+
+// How many service views are kept alive while off screen.
+//
+// A hidden view is a whole Chromium renderer holding a whole streaming site: hundreds of
+// megabytes, its own timers, its own service workers. They are kept deliberately — switching back
+// to a service you were just on should be instant, and always has been — but they were kept
+// *forever*, so an evening spent looking around a dozen services left a dozen of them resident and
+// the machine noticeably slower than it started. That is the "it gets slow after a while" this
+// bounds.
+//
+// So the recently-used ones stay and the rest are released, which is what every browser does with
+// background tabs. Four is chosen to cover how these are actually used — people cycle between two
+// or three services, not ten — and nothing on screen or still playing is ever counted here, so a
+// full grid plus a stream running in the background costs nothing against it. A released view
+// simply loads again next time it is chosen, exactly as it did the first time.
+const MAX_IDLE_VIEWS = 4;
+
+// The shortest gap between two attempts to put one background view's media back to sleep.
+const ENFORCE_PAUSE_INTERVAL_MS = 1000;
 
 // How the panes are arranged. 'auto' packs them into a square-ish block; 'rows' stacks them all
 // vertically (two panes become one above the other, which suits two 16:9 videos far better than
@@ -304,6 +338,16 @@ class ViewManager {
     this.onStackChange = () => {};
     this.onFullscreenChange = () => {};
     this.onCommandPalette = () => {}; // Ctrl+K pressed inside a service view; main.js opens ours
+    // How many *hidden* service views may stay resident. See trimIdleViews.
+    this.maxIdleViews = MAX_IDLE_VIEWS;
+    // A monotonic stamp per view, bumped whenever it is on screen, so the trim above can tell
+    // "the one I was just on" from "the one I opened an hour ago". A counter rather than a clock
+    // because it only ever has to sort.
+    this.shownTick = 0;
+    // When each view was last told to put its media back to sleep, and any such request still
+    // waiting out the gap between two of them. See enforcePaused.
+    this.lastEnforced = new WeakMap();
+    this.enforceTimers = new WeakMap();
   }
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
@@ -483,8 +527,10 @@ class ViewManager {
     wc.on('leave-html-full-screen', () => this.setVideoFullscreen(false, view));
 
     // Blocked requests only identify the webContents that made them, so tie this one to its
-    // service to be able to count them per service.
+    // service to be able to count them per service. The id is kept on the view as well, because
+    // tearing the view down has to undo this binding and by then the contents may be gone.
     adblocker.bindWebContents(wc.id, service.id);
+    view.__wcId = wc.id;
 
     // Chromium tells us when media actually starts and stops, which is what the screen-sleep
     // inhibitor keys off — far better than polling the page for a playing <video>. Note both
@@ -531,6 +577,14 @@ class ViewManager {
     // sign-out, reload-on-adblock-change) can find every pane belonging to one service.
     view.__serviceId = service.id;
     view.__viewKey = viewKey;
+    // Whether this view is showing our own "where is your server?" page rather than a site. It
+    // holds what the user is part-way through typing and there is no address to reload it from, so
+    // it is never one of the views released to keep the resident set down. See trimIdleViews.
+    view.__setupPage = setup;
+    // Newest by construction: a view that has only just been made has not had a chance to be shown
+    // yet, and must not read as the stalest thing in the app.
+    this.shownTick += 1;
+    view.__lastShown = this.shownTick;
     this.views.set(viewKey, view);
     return view;
   }
@@ -580,6 +634,10 @@ class ViewManager {
       // Re-adding an existing child view moves it to the top of the stacking order, above the
       // sidebar chrome; grid panes do not overlap, so their order among themselves is moot.
       this.win.contentView.addChildView(v);
+      // Freshest by definition: it is on screen. This is what keeps the trim below from ever
+      // releasing something the user is looking at, or was looking at a moment ago.
+      this.shownTick += 1;
+      v.__lastShown = this.shownTick;
       if (this.autoPaused.has(v)) {
         this.autoPaused.delete(v);
         this.resumeView(v);
@@ -595,6 +653,10 @@ class ViewManager {
     }
     this.grid = views.length > 1 ? views.slice() : [];
     this.active = primary || views[0] || null;
+    // …and, with the new arrangement settled, let go of the views nobody has been back to in a long
+    // while. After `active` and `grid` rather than before, so a release can never be reasoning about
+    // a set that is one line away from changing. See MAX_IDLE_VIEWS.
+    this.trimIdleViews();
     // Leaving grid mode drops any lingering per-pane fullscreen so the single view lays out normally.
     if (this.videoFullscreen && !next.has(this.fullscreenView)) {
       this.videoFullscreen = false;
@@ -680,6 +742,61 @@ class ViewManager {
     this.layout(this.bounds.width, this.bounds.height);
   }
 
+  // Release the least-recently-shown idle views, so a long session does not end with every
+  // service ever opened still resident. See MAX_IDLE_VIEWS for why this exists at all.
+  //
+  // Three kinds of view are never counted, let alone released:
+  //   * anything on screen — that is the whole point of it being on screen;
+  //   * anything still playing, which is how a stream left running in a background pane, or a
+  //     video the site put into picture-in-picture, survives;
+  //   * a self-hosted service sitting on its setup page, which has state the user is typing into
+  //     and no address to reload from.
+  trimIdleViews() {
+    const idle = [];
+    for (const view of this.views.values()) {
+      if (this.visible.has(view)) continue;
+      if (this.playing.has(view)) continue;
+      if (view.__setupPage) continue;
+      idle.push(view);
+    }
+    if (idle.length <= this.maxIdleViews) return;
+    // Least worth keeping first. Two keys, in this order:
+    //
+    //   * whether we paused a video on it on the way out. That marks the one thing a release
+    //     actually costs the user — a film left half-watched comes back at the site's front door
+    //     instead of where it was — so those are given up last, after every view that was only
+    //     ever browsed;
+    //   * how long ago it was last on screen, which is the ordinary recency question.
+    const cost = (v) => (this.autoPaused.has(v) ? 1 : 0);
+    idle.sort((a, b) => cost(a) - cost(b) || (a.__lastShown || 0) - (b.__lastShown || 0));
+    for (const view of idle.slice(0, idle.length - this.maxIdleViews)) {
+      this.destroyByKey(view.__viewKey);
+    }
+  }
+
+  // Leaving grid mode: make the pane the user was actually on *be* the service's single-mode view.
+  //
+  // Panes and single-mode views are keyed differently — a service's first pane borrows the bare
+  // service id, extra ones get a suffix — and collapsing the grid asks for the bare key. So a grid
+  // whose surviving primary is an extra pane (close the first of two Twitch tiles and leave grid
+  // mode) would build a *second*, blank view for that service and throw away the tile that was
+  // playing, which is precisely what closing a sibling pane is documented never to do. Re-keying
+  // is what makes the page travel out of the grid with its tile.
+  adoptAsPrimary(viewKey) {
+    const view = this.views.get(viewKey);
+    if (!view) return null;
+    const serviceId = view.__serviceId;
+    if (viewKey === serviceId) return view; // already the single-mode view
+    const incumbent = this.views.get(serviceId);
+    // An older single-mode view of the same service is the one being replaced: the user has been
+    // watching this tile, not that one.
+    if (incumbent && incumbent !== view) this.destroyByKey(serviceId);
+    this.views.delete(viewKey);
+    view.__viewKey = serviceId;
+    this.views.set(serviceId, view);
+    return view;
+  }
+
   // Tear down every view of a service when it is removed from the list — it may hold several
   // grid panes, not just one. The persistent partition (its cookies/login) stays on disk, so
   // re-adding the service later recreates the view already signed in.
@@ -699,12 +816,23 @@ class ViewManager {
     this.visible.delete(view);
     this.grid = this.grid.filter((v) => v !== view);
     this.autoPaused.delete(view);
+    // A deferred "go back to sleep" has nothing left to speak to.
+    const enforcing = this.enforceTimers.get(view);
+    if (enforcing) {
+      clearTimeout(enforcing);
+      this.enforceTimers.delete(view);
+    }
     // A destroyed view cannot report that it stopped playing, so drop it from the playing
     // set by hand or the display-sleep inhibitor would be held forever.
     this.onMediaChange(view, false);
-    if (!view.webContents.isDestroyed()) adblocker.unbindWebContents(view.webContents.id);
+    // Unbind whatever the state of the contents: the id is what the blocker filed this view under,
+    // and skipping it for a webContents that has already gone leaves that entry in the owners map
+    // for the life of the process. Read the id first, since it cannot be read afterwards.
+    const wc = view.webContents;
+    const wcId = wc && !wc.isDestroyed() ? wc.id : view.__wcId;
+    if (wcId !== undefined) adblocker.unbindWebContents(wcId);
     this.win.contentView.removeChildView(view);
-    view.webContents.close();
+    if (wc && !wc.isDestroyed()) wc.close();
     this.views.delete(key);
   }
 
@@ -781,6 +909,38 @@ class ViewManager {
   enforcePaused(view) {
     const wc = view && view.webContents;
     if (!wc || wc.isDestroyed()) return;
+    // Rate-limited to once a second per view, because each round of this injects into every frame
+    // of the page and some sites answer a pause by starting again a moment later — an argument with
+    // one background page could otherwise spend the main process's time in a loop nobody asked for.
+    //
+    // Deferred rather than dropped, though. Dropping would let a second video that started just
+    // after the first was silenced go on playing unheard-of in a hidden view, because nothing would
+    // ever come back for it. So a request that arrives too soon is held until the gap has passed
+    // and runs once then, however many arrived in the meantime.
+    if (this.enforceTimers.has(view)) return; // one is already on its way
+    const wait = Math.max(
+      0,
+      ENFORCE_PAUSE_INTERVAL_MS - (Date.now() - (this.lastEnforced.get(view) || 0)),
+    );
+    if (!wait) {
+      this.runEnforcePaused(view);
+      return;
+    }
+    this.enforceTimers.set(
+      view,
+      setTimeout(() => {
+        this.enforceTimers.delete(view);
+        this.runEnforcePaused(view);
+      }, wait),
+    );
+  }
+
+  runEnforcePaused(view) {
+    const wc = view && view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    // It may have come back on screen while this was waiting, in which case it is meant to play.
+    if (this.visible.has(view)) return;
+    this.lastEnforced.set(view, Date.now());
     this.eachFrame(wc, PAUSE_ALL_JS).catch(() => {});
   }
 

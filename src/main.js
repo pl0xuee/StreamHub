@@ -241,6 +241,9 @@ let jellyfinPlayer = null;
 let jellyfinApi = null;
 
 function layout() {
+  // Reachable from IPC as well as from window events, and the chrome view outlives the window by a
+  // moment while it is being torn down — so a late message must not throw its way out of here.
+  if (!baseWindow || baseWindow.isDestroyed() || !chromeView || !viewManager) return;
   const { width, height } = baseWindow.getContentBounds();
   chromeView.setBounds({ x: 0, y: 0, width: chromeRegionWidth(width), height });
   // Docked, the page starts where the sidebar actually ends. On glass this is ignored — the page
@@ -322,8 +325,36 @@ function updateChromeVisible() {
 
 // Something is playing if either source says so. Both call this instead of onPlaybackChange
 // directly, so the inhibitor and the media controls see the union rather than the last opinion.
+//
+// Stopping is held for a beat; starting is not.
+//
+// A background page the app has put to sleep does not always stay asleep — a site's own player
+// resumes itself, we pause it again, and it tries once more. Each round of that used to travel all
+// the way out: the display-sleep inhibitor released and re-taken, a PropertiesChanged onto the
+// session bus, and the sidebar told to re-render its on-air state. On the desktop that reads as the
+// panel's media widget flickering and the seam blinking while nothing the user can see has changed.
+//
+// A film really stopping is not a hurry, so a stop only counts once it has held for the grace
+// period below; anything that starts again inside it never becomes an event at all. Starting stays
+// immediate, because that one *is* a hurry — it is what stops the screen blanking.
+const PLAYBACK_SETTLE_MS = 900;
+let playbackSettleTimer = null;
+
 function reportPlaying() {
-  return onPlaybackChange(viewsPlaying || mpvPlaying);
+  const playing = viewsPlaying || mpvPlaying;
+  clearTimeout(playbackSettleTimer);
+  playbackSettleTimer = null;
+  // A start goes out at once, and goes out again even if something was already playing: the title
+  // the panel shows is read here, and what is playing may have changed under it.
+  if (playing) return onPlaybackChange(true);
+  if (!mediaPlaying) return Promise.resolve(); // already stopped; nothing to say
+  playbackSettleTimer = setTimeout(() => {
+    playbackSettleTimer = null;
+    // Re-read rather than trusting the reading that scheduled this: something may have started in
+    // the meantime through a path that did not come back here.
+    if (!(viewsPlaying || mpvPlaying)) onPlaybackChange(false);
+  }, PLAYBACK_SETTLE_MS);
+  return Promise.resolve();
 }
 
 // Remember the window's geometry. Debounced: resize and move fire continuously while the
@@ -471,13 +502,19 @@ function setGridMode(on) {
     const tiles = reconcileGrid();
     if (tiles.length) viewManager.showGrid(tiles);
   } else {
-    const primary = (gridPanes[0] && gridPanes[0].serviceId) || activeServiceId;
+    const primaryPane = gridPanes[0] || null;
+    const primary = (primaryPane && primaryPane.serviceId) || activeServiceId;
     gridMode = false;
     gridPanes = [];
     const service = config.services.find((s) => s.id === primary);
     if (service) {
       activeServiceId = service.id;
       config.lastServiceId = service.id;
+      // Hand the primary tile's own view over as the service's single view before showing it.
+      // Without this, a grid whose first pane had been closed (two Twitch tiles, close #1) would
+      // collapse onto a *fresh* Twitch view and throw away the tile that was playing — see
+      // adoptAsPrimary in views.js.
+      if (primaryPane) viewManager.adoptAsPrimary(primaryPane.paneId);
       viewManager.show(service);
     }
   }
@@ -1274,6 +1311,12 @@ function applyServerUrl(serviceId, url) {
   }
   persist();
 
+  // Whatever we were holding was issued by the *previous* server, for the previous account. It is
+  // rebuilt from what the page hands over on the next play; until then there must be nothing here,
+  // or a report about the item that was playing would go out to the old address carrying the old
+  // token.
+  jellyfinApi = null;
+
   viewManager.destroyView(service.id);
   if (gridMode && gridPanes.some((p) => p.serviceId === service.id)) {
     const tiles = reconcileGrid();
@@ -1320,6 +1363,9 @@ ipcMain.handle('set-mpv-playback', async (_e, on) => {
   // usable, and it is only ever built once at startup — dropping the reference here would leave
   // nothing to play with if the setting were turned back on.
   if (jellyfinPlayer) await jellyfinPlayer.destroy().catch(() => {});
+  // The view that opened this session is about to be rebuilt, so the session is over: drop the
+  // credentials with it rather than reporting into it from the next one.
+  jellyfinApi = null;
 
   const service = jellyfinService();
   if (service) {
@@ -1433,6 +1479,7 @@ ipcMain.handle('set-enhance', (_e, key, on) => {
 });
 
 ipcMain.on('toggle-fullscreen', () => {
+  if (!baseWindow || baseWindow.isDestroyed()) return;
   baseWindow.setFullScreen(!baseWindow.isFullScreen());
 });
 
@@ -1564,15 +1611,20 @@ function relaunchAfterExit(appImagePath, extraArg) {
 // Download the new build, then restart into it. Progress goes to the update button so a
 // 120MB download isn't a silently frozen UI.
 async function downloadAndInstall(info) {
-  autoUpdater.on('download-progress', (p) =>
-    sendToUi('update-progress', Math.round(p.percent)),
-  );
+  // Attached for this download and taken off again afterwards. It used to be added here and never
+  // removed, so a second attempt in the same session (a failed download, a "Later" followed by a
+  // change of mind) left two listeners pushing the same percentage, then three — and eventually
+  // Node's max-listeners warning on top of it.
+  const onProgress = (p) => sendToUi('update-progress', Math.round(p.percent));
+  autoUpdater.on('download-progress', onProgress);
 
   try {
     await autoUpdater.downloadUpdate();
   } catch (err) {
     sendToUi('update-progress', null);
     throw err;
+  } finally {
+    autoUpdater.off('download-progress', onProgress);
   }
   sendToUi('update-progress', null);
 
@@ -1823,6 +1875,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   unregisterMediaKeys();
+  clearTimeout(playbackSettleTimer); // a stop still settling has nothing left to settle into
   setPlaybackInhibitor(false); // never leave the display-sleep inhibitor held after we exit
   destroyTray();
   if (mpris) mpris.stop(); // drop the bus name, or the panel keeps a dead player around

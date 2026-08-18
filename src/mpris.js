@@ -49,10 +49,14 @@ function guardAgainstDbusCrashes() {
     // the player back. Capped, so a client spraying bad requests cannot spin us forever.
     if (!current || restarts >= MAX_RESTARTS) return;
     restarts += 1;
+    const player = current;
     setTimeout(() => {
+      // The app may have asked MPRIS to go away in the meantime — it does exactly that on quit —
+      // and putting the bus name back half a second into shutting down leaves the panel holding a
+      // player that is not there any more, which is the very thing stop() exists to prevent.
+      if (player.retired) return;
       try {
-        current.stop();
-        current.start();
+        player.restart();
       } catch {
         /* the bus is gone; media controls stay absent, the app carries on */
       }
@@ -69,6 +73,10 @@ class Mpris {
     this.title = 'StreamHub';
     this.service = '';
     this.props = null; // the exported Player interface, once dbus hands it to us
+    // Whether the app has finished with this player, as opposed to it merely being off the bus for
+    // a moment. Only stop() sets it, and it is what keeps the crash guard from resurrecting a
+    // player that was deliberately put away.
+    this.retired = false;
   }
 
   start() {
@@ -79,6 +87,7 @@ class Mpris {
       return; // no session bus (a container, a TTY) — media controls are simply absent
     }
     if (!this.bus) return;
+    this.retired = false;
     current = this;
     guardAgainstDbusCrashes();
     // Errors on the bus must never take the app down; losing the panel applet is not worth
@@ -90,7 +99,22 @@ class Mpris {
     this.exportPlayer();
   }
 
+  // The app is finished with this player: drop the bus name, and stay off the bus. Anything the
+  // guard had queued for it stands down — see `retired`.
   stop() {
+    this.retired = true;
+    if (current === this) current = null;
+    this.closeBus();
+  }
+
+  // Off the bus and straight back on, after a bad request took the connection down with it. This
+  // is deliberately not stop() + start(): stop() means "the app is done", which this is not.
+  restart() {
+    this.closeBus();
+    this.start();
+  }
+
+  closeBus() {
     if (!this.bus) return;
     try {
       this.bus.releaseName(BUS_NAME, () => {});
@@ -99,6 +123,7 @@ class Mpris {
       /* going away anyway */
     }
     this.bus = null;
+    this.props = null; // it belonged to the connection that has just gone
   }
 
   // org.mpris.MediaPlayer2 — identity, and Raise so clicking the applet brings the window up.

@@ -44,7 +44,10 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   restore. Collapses to an icon rail.
 - **Quick switch** — `Ctrl+K`, a few letters, Enter. Shift+Enter tiles it as another grid pane.
   Works from inside a service too, not just when the sidebar is already open.
-- **Pause on switch** — leaving a service pauses its video, returning resumes it.
+- **Pause on switch** — leaving a service pauses its video, returning resumes it. The services you
+  have been using recently stay loaded so switching back to them is instant; ones you have not
+  touched in a while are released and load again next time, so a long session does not end with a
+  dozen streaming sites still resident.
 - **Stays signed in**, per service, in isolated sessions. Popup sign-in ("Sign in with
   Google/Apple") works. Right-click a service to sign out and wipe its data.
 - **System media controls (MPRIS)** — the KDE/GNOME panel and lock screen drive playback.

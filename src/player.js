@@ -55,6 +55,7 @@ class Player extends EventEmitter {
     this.mpv = null;
     this.current = null; // what is playing, for the progress reports
     this.progressTimer = null;
+    this.tickTimer = null;
     this.state = { positionSeconds: 0, durationSeconds: 0, paused: false };
     // Stream selection asked for before the file was open; applied on 'file-loaded'.
     this.pendingTracks = null;
@@ -562,15 +563,33 @@ class Player extends EventEmitter {
   }
 
   // Full shutdown, for quitting the app or leaving Jellyfin entirely.
+  //
+  // The object stays usable afterwards — it is built once at startup and the mpv setting can be
+  // turned back on — so everything that was measured against the window being destroyed here has
+  // to go with it. The window id above all: it names an X window that is about to stop existing,
+  // and holding on to it meant the next play handed mpv `--wid=<a window that is gone>`, which mpv
+  // answers by dying outright with "BadWindow". That is the whole of why turning mpv playback off
+  // and back on left Jellyfin unable to play anything until the app was restarted.
   async destroy() {
     this.stopProgress();
     if (this.mpv) {
       const mpv = this.mpv;
       this.mpv = null;
+      // Its handlers are deliberately left attached: the exit this is about to cause is what runs
+      // teardown(), and teardown() is what emits the final 'active' — the event main.js turns into
+      // the stop report that writes the resume point. Cutting them loose here would make closing
+      // the film by turning mpv off lose the place it was left at.
       await mpv.stop().catch(() => {});
     }
     if (this.host && !this.host.isDestroyed()) this.host.destroy();
     this.host = null;
+    // Measured against a window that no longer exists — all of it has to be found out again.
+    this.embedded = null;
+    this.wid = 0;
+    this.frameInset = { w: 0, h: 0 };
+    this.targetSize = null;
+    this.current = null;
+    this.pendingTracks = null;
   }
 }
 

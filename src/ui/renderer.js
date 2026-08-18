@@ -991,7 +991,12 @@ window.addEventListener(
   (e) => {
     const el = e.target === document ? document.documentElement : e.target;
     if (!el || el.nodeType !== 1) return;
-    el.setAttribute('data-streamhub-scrolling', '');
+    // Only stamp what is not already stamped: re-writing the attribute on every scroll event
+    // invalidates that element's style each time, for an attribute that already says what it is
+    // about to say. Restarting the timer is what keeps the thumb awake while the motion lasts.
+    if (!el.hasAttribute('data-streamhub-scrolling')) {
+      el.setAttribute('data-streamhub-scrolling', '');
+    }
     clearTimeout(scrollStamps.get(el));
     scrollStamps.set(el, setTimeout(() => el.removeAttribute('data-streamhub-scrolling'), 1000));
   },

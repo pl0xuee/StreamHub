@@ -235,6 +235,17 @@ body {
 body.playing #sidebar {
   animation: seam 3.4s ease-in-out infinite;
 }
+/* …but only while the panel is actually on screen.
+   `seam` animates border-color and box-shadow, neither of which the compositor can handle on its
+   own, so every frame of it is a paint. Stowed, the panel is translated out of the window and the
+   chrome view is shrunk to the strip, so there is nothing of it left to see — and yet the animation
+   kept ticking for the length of every film. Small, since the view it is painting into is a 24px
+   sliver by then, but it is a repaint at the refresh rate for hours, spent on a pane of glass
+   nobody can look at. The strip left behind carries the on-air light in its place, which is what
+   the note above already says it does. */
+body.stowed:not(.peeking) #sidebar {
+  animation: none;
+}
 /* The panel floats, so the light catches its whole edge rather than one side of it: the border
    brightens and a steel halo swells around the slab, over the shadow that is already holding it
    off the picture. */
