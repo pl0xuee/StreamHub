@@ -1607,6 +1607,20 @@ function relaunchAfterExit(appImagePath, extraArg) {
   for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'LD_LIBRARY_PATH', 'LD_PRELOAD']) {
     delete env[key];
   }
+  // CHROME_DESKTOP has to go too, and it is not one of the AppImage's.
+  //
+  // Chromium sets it on *itself* at runtime, for desktop integration — it is absent from the
+  // environment the app was launched with (/proc/self/environ does not have it) and present in
+  // process.env, which is what this copies. So the successor is started carrying it.
+  //
+  // An Electron process that starts with CHROME_DESKTOP already set dies before it draws
+  // anything: "FATAL zygote_host_impl_linux.cc Check failed: . : Invalid argument (22)".
+  // Reproduced on this build every time, with any value, packaged or from source; take the
+  // variable away and the very same environment starts cleanly.
+  //
+  // It is silent, because the successor is detached with its output discarded — so the whole
+  // failure the user sees is an app that quits to install an update and never comes back.
+  delete env.CHROME_DESKTOP;
 
   const child = spawn(
     '/bin/sh',
