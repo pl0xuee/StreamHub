@@ -16,7 +16,7 @@
 // The chrome is therefore hidden for the duration, on the same reasoning the app already
 // applies to a site going fullscreen: a strip of sidebar over the film is the one thing left on
 // screen that is not the film.
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, screen } = require('electron');
 const { EventEmitter } = require('events');
 const { Mpv, isAvailable } = require('./mpv');
 
@@ -127,7 +127,21 @@ class Player extends EventEmitter {
       const dim = await this.mpv.getProperty('osd-dimensions').catch(() => null);
       if (!dim || !dim.w || !dim.h) return null;
       if (!this.host || this.host.isDestroyed()) return null;
-      return { dw: dim.w - target.w, dh: dim.h - target.h };
+      // Put both sides in the same units before subtracting. mpv measures the real X window, so
+      // osd-dimensions is in device pixels; every rectangle Electron hands out or takes back —
+      // getContentBounds, the grid's pane bounds, setBounds — is in density-independent ones.
+      // The two only coincide at a device scale factor of 1, which is what made this look right
+      // everywhere it was tested.
+      //
+      // Anywhere else the difference is not a margin at all, it is the scale factor: at 1.25 the
+      // first reading is a quarter of the pane, and that quarter is subtracted from every layout
+      // after. The picture comes back at three-quarter size, shoved down and right by half of
+      // what was taken off — which on a compositor that floats this window (Hyprland floats it,
+      // being transient for the main window) reads as a player that has come adrift of the app.
+      // It creeps back toward the truth over later files, since each one measures again, which
+      // is exactly the kind of half-wrong that survives a test.
+      const scale = screen.getDisplayMatching(this.host.getBounds()).scaleFactor || 1;
+      return { dw: dim.w / scale - target.w, dh: dim.h / scale - target.h };
     };
 
     const first = await read();
