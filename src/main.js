@@ -698,7 +698,29 @@ function createWindow() {
   };
 
   layout();
-  baseWindow.on('resize', layout);
+  // Settle after a resize, not just on it. Electron's cached bounds lag the window manager, and
+  // 'resize' is emitted from the notification rather than after the new size has been read back:
+  // measured here under Hyprland, the event arrives with getContentBounds() still reporting the
+  // size the window had *before* the change, and the true one only becomes readable about 50ms
+  // later. Laying out on that stale number sizes every view to the window as it was.
+  //
+  // This is what a tiling compositor makes unmissable. It resizes the window the moment it is
+  // mapped, so the very first layout of a session is the one that reads the wrong size, and the
+  // app opens with the page drawn to some other window's dimensions. Nothing corrected it,
+  // because nothing else re-read the bounds: recovery waited on some unrelated call to layout(),
+  // which in practice meant reaching for the sidebar — set-chrome-region ignores a region that
+  // has not changed, so merely rendering the chrome was not always enough to trigger one.
+  //
+  // Immediate, so a drag stays responsive, then re-read once the resizes stop. Replacing the
+  // pending pair rather than adding to it keeps a drag to two timers rather than two per event.
+  let resizeSettle = [];
+  const layoutOnResize = () => {
+    layout();
+    resizeSettle.forEach(clearTimeout);
+    resizeSettle = [50, 300].map((delay) => setTimeout(layout, delay));
+  };
+  baseWindow.on('resize', layoutOnResize);
+
   // Settled, not immediate, for the same reason maximising is: Electron's cached bounds lag the
   // window manager through the transition, so a single layout here sizes the video to the window
   // as it was *before* it went fullscreen. The picture then covers the top of the screen and the
