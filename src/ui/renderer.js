@@ -67,6 +67,20 @@ function initial(name) {
   return name.replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase() || '?';
 }
 
+// One of the icons drawn in index.html's sprite, as an element. The rows this file builds carry the
+// same line icons the static chrome does, so a delete cross here is the same cross as the one on a
+// sheet's close button.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgIcon(name) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'ico');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.appendChild(use);
+  return svg;
+}
+
 function makeServiceEl(svc) {
   const li = document.createElement('li');
   li.className = 'service' + (isSelected(svc.id) ? ' active' : '');
@@ -105,7 +119,8 @@ function makeServiceEl(svc) {
   const del = document.createElement('button');
   del.className = 'del';
   del.title = `Remove ${svc.name}`;
-  del.textContent = '×';
+  del.setAttribute('aria-label', del.title);
+  del.appendChild(svgIcon('close'));
   del.addEventListener('click', (e) => {
     e.stopPropagation();
     window.shell.removeService(svc.id);
@@ -223,8 +238,9 @@ function renderGridPreview() {
     // way out of the mode. Drop the button rather than offering a dead one.
     const close = document.createElement('button');
     close.className = 'pane-close';
-    close.textContent = '×';
+    close.appendChild(svgIcon('close'));
     close.title = `Close pane ${i + 1} (${svc.name})`;
+    close.setAttribute('aria-label', close.title);
     close.hidden = panes.length < 2;
     close.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -308,10 +324,11 @@ function closeServiceMenu() {
   menuEl.hidden = true;
   menuServiceId = null;
   menuWanted = null;
-  // The menu sits outside the sidebar, so while it is open the pointer is not hovering the
-  // sidebar and the house lights would go down under it. See .menu-open in styles.css.
   document.body.classList.remove('menu-open');
   syncChromeRegion();
+  // The pointer has been off the sidebar the whole time the menu was up; now that it is gone, let
+  // the sidebar go the way it would have.
+  releasePeek();
 }
 
 function openServiceMenu(svc, x, y) {
@@ -334,6 +351,10 @@ function openServiceMenu(svc, x, y) {
   menuEl.hidden = false;
   document.body.classList.add('menu-open');
   menuWanted = { x, y };
+  // The menu sits beside the sidebar rather than in it, so moving onto it is leaving the sidebar
+  // as far as mouseleave is concerned — and the sidebar used to slide away under a menu that was
+  // still open. Hold it until the menu closes; stowSoon also refuses to let go while one is up.
+  holdPeek();
   // The chrome is only as wide as the sidebar until it is asked for more, so the menu needs the
   // whole window before it can be placed — a menu wider than the sidebar would otherwise be
   // clamped into it. The request lands a frame or two later, hence the reposition on resize.
@@ -573,12 +594,21 @@ function holdPeek() {
   syncChromeRegion();
 }
 
+// Whether something is open over the page that the sidebar belongs with: a sheet, the quick
+// switch, a service's menu. While any of them is up the pointer is off the sidebar by design, and
+// the sidebar sliding away underneath would leave the panel that came from it hanging in space.
+function heldOpen() {
+  return Boolean(openSheetName || paletteOpen || !menuEl.hidden);
+}
+
 // Let it go, after `delay`. Anything that holds the sidebar in — the pointer arriving, a sheet
 // opening — cancels the pending departure by way of holdPeek.
 function stowSoon(delay) {
   clearTimeout(peekTimer);
-  if (!stowed || !peeking) return;
+  if (!stowed || !peeking || heldOpen()) return;
   peekTimer = setTimeout(() => {
+    // Re-read rather than trusting the moment this was scheduled: a sheet can have opened since.
+    if (heldOpen()) return;
     peeking = false;
     document.body.classList.toggle('peeking', false);
     syncChromeRegion();
@@ -724,6 +754,11 @@ const autoHideEl = document.getElementById('chk-autohide');
 const glassEl = document.getElementById('chk-glass');
 const mpvEl = document.getElementById('chk-mpv');
 const mpvSubEl = document.getElementById('sub-mpv');
+const scaleEl = document.getElementById('sel-scale');
+const scaleSubEl = document.getElementById('scale-sub');
+const scaleNoteEl = document.getElementById('scale-note');
+const hwDecodeEl = document.getElementById('chk-hwdecode');
+const hwDecodeSubEl = document.getElementById('sub-hwdecode');
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -801,7 +836,7 @@ function renderRemoved(removed) {
 
     const plus = document.createElement('span');
     plus.className = 'restore-plus';
-    plus.textContent = '+';
+    plus.appendChild(svgIcon('plus'));
 
     li.append(icon, label, plus);
     li.addEventListener('click', () => window.shell.restoreService(svc.id));
@@ -826,8 +861,56 @@ function renderSheets() {
     mpvSubEl.textContent = 'mpv is not installed — Jellyfin plays in the browser player until it is';
   }
   trayEl.checked = state.minimizeToTray === true;
+  renderDisplayScale();
+  hwDecodeEl.checked = state.hwDecode !== false;
   renderUpdate();
   renderRemoved(state.removed || []);
+}
+
+// The size picker, and a line saying what the app is actually being drawn at. "Auto" on its own
+// says nothing; "Auto — 150%, from the monitor" says both that it worked and what it found.
+const percent = (scale) => `${Math.round(scale * 100)}%`;
+
+function renderDisplayScale() {
+  const choices = state.displayScaleChoices || [1, 1.25, 1.5, 1.75, 2];
+  const chosen = state.displayScale === 'auto' || state.displayScale === undefined
+    ? 'auto'
+    : String(state.displayScale);
+  // Rebuilt only when the choices change; the list is the same every time, so in practice once.
+  const want = ['auto', ...choices.map(String)];
+  const have = Array.from(scaleEl.options).map((o) => o.value);
+  if (want.join() !== have.join()) {
+    scaleEl.replaceChildren();
+    for (const value of want) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value === 'auto' ? 'Auto' : percent(Number(value));
+      scaleEl.appendChild(opt);
+    }
+  }
+  scaleEl.value = want.includes(chosen) ? chosen : 'auto';
+
+  const info = state.displayScaleInfo || {};
+  const at = Number.isFinite(info.scale) ? percent(info.scale) : null;
+  if (chosen === 'auto') {
+    if (info.source === 'monitor') {
+      scaleSubEl.textContent = `${at}, from ${info.monitor ? info.monitor : 'the monitor'}`;
+    } else if (info.detectable) {
+      scaleSubEl.textContent = `${at} — the monitor's scale could not be read, so this is the system's`;
+    } else {
+      scaleSubEl.textContent = `${at}, as the system reports it`;
+    }
+  } else {
+    scaleSubEl.textContent = `Fixed at ${percent(Number(chosen))}`;
+  }
+  // The long explanation is for a desktop where Auto can read the monitor. Anywhere else it
+  // would be describing a feature that is not doing anything.
+  scaleNoteEl.textContent = info.detectable
+    ? 'Auto asks the desktop what scale the monitor is set to and follows the window from one ' +
+      'monitor to the next. Pick a fixed size if you would rather have the app larger or ' +
+      'smaller than the desktop thinks.'
+    : 'Auto uses the scale the system reports. Pick a fixed size if that comes out wrong on ' +
+      'this monitor, or if you would rather have the app larger or smaller.';
 }
 
 function applyState(next) {
@@ -923,8 +1006,18 @@ async function init() {
   );
   autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
   glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));
-mpvEl.addEventListener('change', () => window.shell.setMpvPlayback(mpvEl.checked));
+  mpvEl.addEventListener('change', () => window.shell.setMpvPlayback(mpvEl.checked));
   trayEl.addEventListener('change', () => window.shell.setTray(trayEl.checked));
+  scaleEl.addEventListener('change', () => {
+    const value = scaleEl.value === 'auto' ? 'auto' : Number(scaleEl.value);
+    window.shell.setDisplayScale(value);
+  });
+  // A launch flag, so nothing changes until the next start — say so on the row itself, where the
+  // tick was just made, rather than leaving it looking like it did nothing.
+  hwDecodeEl.addEventListener('change', async () => {
+    await window.shell.setHwDecode(hwDecodeEl.checked);
+    hwDecodeSubEl.textContent = 'Restart StreamHub for this to take effect';
+  });
 
   // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the
   // button rather than leaving it sitting on "Checking…".

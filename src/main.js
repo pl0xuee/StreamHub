@@ -13,6 +13,7 @@ const {
   Tray,
   nativeImage,
   powerSaveBlocker,
+  screen,
   shell,
 } = require('electron');
 
@@ -28,6 +29,7 @@ const { registerMediaKeys, unregisterMediaKeys } = require('./shortcuts');
 const { Player } = require('./player');
 const { jellyfinShellJs } = require('./jellyfin-shell');
 const { JellyfinApi } = require('./jellyfin-api');
+const displayScale = require('./display-scale');
 
 // StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot work at
 // all: mpv renders into a window the app owns, and mpv can only be handed a window that way on
@@ -123,6 +125,30 @@ if (!gotInstanceLock) {
   app.on('second-instance', () => showWindow());
 }
 
+// The user's list and settings, from their userData dir. Read this early — before the app is
+// ready — because two of the settings are Chromium command-line switches, and those have to be
+// set before Chromium starts.
+let config = gotInstanceLock ? configStore.load() : { services: [], removed: [], settings: {} };
+
+// Decode video on the GPU. Chromium ships with this off on Linux — not because it does not
+// work, but because a driver that gets it wrong shows garbage and Google would rather not field
+// the bug — and a streaming app is the one kind of program where it matters: a 4K VP9 or AV1
+// stream decoded in software is a whole CPU core, fans and all, for the length of a film. Both
+// feature names are given because Chromium renamed it; the one this build does not know is
+// ignored. Widevine playback is unaffected either way — the CDM decodes what it decrypts itself.
+// The switch is in Settings, for the driver that gets it wrong.
+if (process.platform === 'linux' && gotInstanceLock && config.settings.hwDecode !== false) {
+  const existing = app.commandLine.getSwitchValue('enable-features');
+  const wanted = ['AcceleratedVideoDecodeLinuxGL', 'VaapiVideoDecodeLinuxGL', 'VaapiVideoDecoder'];
+  const merged = (existing ? existing.split(',') : []).concat(wanted).filter(Boolean);
+  app.commandLine.appendSwitch('enable-features', Array.from(new Set(merged)).join(','));
+}
+
+// Ask the compositor how big the monitor wants things, where Chromium cannot find out for itself.
+// Blocking and before ready, so the very first frame is drawn at the right size. See
+// display-scale.js for the desktop this exists for.
+if (gotInstanceLock) displayScale.detectSync();
+
 // Updates are always user-initiated (the settings window's update button), so never
 // download in the background — decide first, then fetch.
 autoUpdater.autoDownload = false;
@@ -167,9 +193,16 @@ let chromeRegion = 'sidebar';
 // width for a sidebar that has left is what leaves a bare band of background down the side.
 let dockInsetWidth = SIDEBAR_WIDTH;
 
+// How much every view is zoomed so the app comes out the size the monitor wants — see
+// display-scale.js. The chrome's widths above are CSS pixels; the window's bounds are DIPs; at any
+// zoom but 1 the two differ by exactly this, so every width handed to setBounds goes through it.
+let uiZoom = 1;
+// What the zoom was worked out from, for the settings sheet to say what "Auto" currently means.
+let uiScale = { scale: 1, source: 'system', zoom: 1, systemScale: 1 };
+
 function chromeRegionWidth(windowWidth) {
   const width = CHROME_REGIONS[chromeRegion];
-  return width === null || width === undefined ? windowWidth : width;
+  return width === null || width === undefined ? windowWidth : Math.round(width * uiZoom);
 }
 
 // NOTE: cookies — i.e. the logins — live in <userData>/Partitions/<service>@default/Cookies.
@@ -192,7 +225,6 @@ function chromeRegionWidth(windowWidth) {
 let baseWindow;
 let chromeView; // the app's own UI (sidebar), hosted in its own view
 let viewManager;
-let config = { services: [], removed: [], settings: {} }; // the user's list, loaded from userData
 let activeServiceId = null;
 // Multi-view grid: whether it is on, and the ordered panes tiled in it (up to four). A pane is
 // `{ paneId, serviceId }` rather than a bare id, because one service may be tiled more than once
@@ -248,7 +280,7 @@ function layout() {
   chromeView.setBounds({ x: 0, y: 0, width: chromeRegionWidth(width), height });
   // Docked, the page starts where the sidebar actually ends. On glass this is ignored — the page
   // runs the full width and the sidebar floats over it.
-  viewManager.sidebarWidth = dockInsetWidth;
+  viewManager.sidebarWidth = Math.round(dockInsetWidth * uiZoom);
   viewManager.layout(width, height);
   // The player's window is a separate top-level window, so it is positioned in screen
   // coordinates and has to be told to follow rather than being laid out by the parent.
@@ -295,20 +327,87 @@ async function onPlaybackChange(playing) {
   mpris.update({ playing, title, service: service ? service.name : '' });
 }
 
-// Lay out now, and again once the window manager has settled.
+// Lay out now, and keep re-reading the bounds until they hold still.
 //
-// Maximising is not synchronous, and Electron's cached bounds lag behind it: with the window
-// already carrying _NET_WM_STATE_MAXIMIZED_HORZ/VERT, getContentBounds() still reported the size
-// the window had *before* it was maximised — verified on KDE/X11. Laying out on that stale number
-// leaves every view sized to a window that no longer exists, with the page filling part of a
-// wider frame and a band of empty background beside it, until something else forces a layout.
+// Maximising, going fullscreen and being tiled are none of them synchronous, and Electron's cached
+// bounds lag behind the window manager: with the window already carrying
+// _NET_WM_STATE_MAXIMIZED_HORZ/VERT, getContentBounds() still reported the size the window had
+// *before* it was maximised — verified on KDE/X11 — and under Hyprland a 'resize' arrives with the
+// old size still readable and the new one only there some 50ms later. Laying out on a stale number
+// sizes every view to a window that no longer exists: the page fills part of a wider frame with a
+// band of empty background beside it, until something else happens to force a layout.
 //
-// There is no event for "the window manager has finished", so this re-reads a moment later. The
-// repeats are cheap — layout() only sets bounds — and idempotent once the size has settled.
+// There is no event for "the window manager has finished", and a fixed pair of delays (this used
+// to re-read at 50ms and 300ms) is a guess about how slow the slowest compositor is — an animated
+// tiling layout can take longer than that to settle. So this polls: every 50ms, lay out again if
+// the bounds have changed, and stop once they have read the same four times running, or after a
+// second regardless. The repeats are cheap — layout() only sets bounds — and idempotent.
+const SETTLE_TICK_MS = 50;
+const SETTLE_STABLE_READS = 4;
+const SETTLE_MAX_MS = 1200;
+let settleTimer = null;
+let settleDeadline = 0;
+let settleStable = 0;
+let settleLast = '';
+
+function boundsKey() {
+  if (!baseWindow || baseWindow.isDestroyed()) return '';
+  const { width, height } = baseWindow.getContentBounds();
+  return `${width}x${height}`;
+}
+
 function layoutSettled() {
   layout();
-  setTimeout(layout, 50);
-  setTimeout(layout, 300);
+  settleLast = boundsKey();
+  settleStable = 0;
+  settleDeadline = Date.now() + SETTLE_MAX_MS;
+  if (settleTimer) return; // already polling; the deadline above extends it
+  const tick = () => {
+    settleTimer = null;
+    if (!baseWindow || baseWindow.isDestroyed()) return;
+    const key = boundsKey();
+    if (key !== settleLast) {
+      settleLast = key;
+      settleStable = 0;
+      layout();
+    } else {
+      settleStable += 1;
+    }
+    if (settleStable < SETTLE_STABLE_READS && Date.now() < settleDeadline) {
+      settleTimer = setTimeout(tick, SETTLE_TICK_MS);
+    }
+  };
+  settleTimer = setTimeout(tick, SETTLE_TICK_MS);
+}
+
+// Work out how large the app should be drawn on the monitor the window is on, and apply it.
+//
+// Called whenever the window moves or a display changes, and cheap when nothing has: zoom is only
+// touched when the answer differs. Applying it means every view — the chrome and each service —
+// and then a layout, since the chrome's widths in DIPs have just changed with it.
+function applyDisplayScale() {
+  if (!baseWindow || baseWindow.isDestroyed() || !viewManager) return;
+  const found = displayScale.zoomFor(baseWindow.getBounds(), config.settings.displayScale);
+  const changed = Math.abs(found.zoom - uiZoom) > 0.001;
+  const described = found.scale !== uiScale.scale || found.source !== uiScale.source;
+  uiScale = found;
+  if (changed) {
+    uiZoom = found.zoom;
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      chromeView.webContents.setZoomFactor(uiZoom);
+    }
+    viewManager.setZoom(uiZoom);
+    layout();
+  }
+  // The settings sheet names the scale in use, so it has to hear about a change even when the
+  // zoom itself came out the same (a manual 150% on a 150% monitor, say).
+  if (changed || described) broadcast();
+}
+
+let displayScaleTimer = null;
+function applyDisplayScaleSoon() {
+  clearTimeout(displayScaleTimer);
+  displayScaleTimer = setTimeout(applyDisplayScale, 120);
 }
 
 // Two unrelated things want the sidebar out of the way: a site that has gone HTML-fullscreen, and
@@ -400,6 +499,17 @@ function statePayload() {
     gridPanes,
     gridLayout,
     gridFull: gridPanes.length >= MAX_GRID_PANES,
+    // How large the app is drawn: the user's choice, and what that currently resolves to on the
+    // monitor the window is on, so the sheet can say "Auto — 150%" rather than just "Auto".
+    displayScale: config.settings.displayScale,
+    displayScaleChoices: displayScale.SCALE_CHOICES,
+    displayScaleInfo: {
+      scale: uiScale.scale,
+      source: uiScale.source,
+      monitor: uiScale.monitor || null,
+      detectable: displayScale.canDetect(),
+    },
+    hwDecode: config.settings.hwDecode !== false,
   };
 }
 
@@ -540,12 +650,28 @@ function createWindow() {
   // Maximising here would resize the window before anything is listening, and the new size would
   // never reach the views.
 
+  // The zoom is settled before the window exists, so the first frame of the chrome is already at
+  // the right size rather than jumping there. See applyDisplayScale.
+  uiScale = displayScale.zoomFor(
+    { x: saved.x || 0, y: saved.y || 0, width: saved.width || 1280, height: saved.height || 800 },
+    config.settings.displayScale,
+  );
+  uiZoom = uiScale.zoom;
+
   chromeView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      zoomFactor: uiZoom,
     },
+  });
+  // Chromium keeps zoom per origin and can forget the one asked for above once the page is really
+  // there; say it again when it is.
+  chromeView.webContents.on('did-finish-load', () => {
+    if (chromeView && !chromeView.webContents.isDestroyed()) {
+      chromeView.webContents.setZoomFactor(uiZoom);
+    }
   });
   baseWindow.contentView.addChildView(chromeView);
   // Transparent so the picture shows through the chrome. The page sets its own background to
@@ -553,7 +679,8 @@ function createWindow() {
   chromeView.setBackgroundColor('#00000000');
   chromeView.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
 
-  viewManager = new ViewManager(baseWindow, SIDEBAR_WIDTH);
+  viewManager = new ViewManager(baseWindow, Math.round(SIDEBAR_WIDTH * uiZoom));
+  viewManager.setZoom(uiZoom);
   // Playing/stopping drives both the display-sleep inhibitor and the system media controls.
   // Two things can be playing now — a site's own <video>, and mpv — and they report separately,
   // so combine them rather than letting whichever spoke last win. Otherwise stopping a Jellyfin
@@ -697,38 +824,37 @@ function createWindow() {
     }
   };
 
-  layout();
-  // Settle after a resize, not just on it. Electron's cached bounds lag the window manager, and
-  // 'resize' is emitted from the notification rather than after the new size has been read back:
-  // measured here under Hyprland, the event arrives with getContentBounds() still reporting the
-  // size the window had *before* the change, and the true one only becomes readable about 50ms
-  // later. Laying out on that stale number sizes every view to the window as it was.
-  //
-  // This is what a tiling compositor makes unmissable. It resizes the window the moment it is
-  // mapped, so the very first layout of a session is the one that reads the wrong size, and the
-  // app opens with the page drawn to some other window's dimensions. Nothing corrected it,
-  // because nothing else re-read the bounds: recovery waited on some unrelated call to layout(),
-  // which in practice meant reaching for the sidebar — set-chrome-region ignores a region that
-  // has not changed, so merely rendering the chrome was not always enough to trigger one.
-  //
-  // Immediate, so a drag stays responsive, then re-read once the resizes stop. Replacing the
-  // pending pair rather than adding to it keeps a drag to two timers rather than two per event.
-  let resizeSettle = [];
-  const layoutOnResize = () => {
-    layout();
-    resizeSettle.forEach(clearTimeout);
-    resizeSettle = [50, 300].map((delay) => setTimeout(layout, delay));
-  };
-  baseWindow.on('resize', layoutOnResize);
-
-  // Settled, not immediate, for the same reason maximising is: Electron's cached bounds lag the
-  // window manager through the transition, so a single layout here sizes the video to the window
-  // as it was *before* it went fullscreen. The picture then covers the top of the screen and the
-  // page shows through underneath it.
+  // Settle after every resize, not just on it — see layoutSettled for why a single layout on the
+  // event is not enough, and why a tiling compositor makes that unmissable: it resizes the window
+  // the moment it is mapped, so the very first layout of a session is the one that reads the wrong
+  // size, and the app used to open with the page drawn to some other window's dimensions until
+  // something else happened to force a layout. Immediate as well, so a drag stays responsive.
+  layoutSettled();
+  baseWindow.on('resize', layoutSettled);
   baseWindow.on('enter-full-screen', layoutSettled);
   baseWindow.on('leave-full-screen', layoutSettled);
   baseWindow.on('maximize', layoutSettled);
   baseWindow.on('unmaximize', layoutSettled);
+
+  // The monitor the window is on decides how large everything is drawn. It changes when the
+  // window is moved — or, under a tiling compositor, sent — to another monitor, and when a monitor
+  // is plugged in, unplugged or reconfigured; the compositor is asked again for the latter.
+  baseWindow.on('move', applyDisplayScaleSoon);
+  baseWindow.on('resize', applyDisplayScaleSoon);
+  const onDisplayChange = () => {
+    displayScale.refresh().then(applyDisplayScaleSoon);
+  };
+  screen.on('display-added', onDisplayChange);
+  screen.on('display-removed', onDisplayChange);
+  screen.on('display-metrics-changed', onDisplayChange);
+  baseWindow.on('closed', () => {
+    screen.off('display-added', onDisplayChange);
+    screen.off('display-removed', onDisplayChange);
+    screen.off('display-metrics-changed', onDisplayChange);
+    clearTimeout(displayScaleTimer);
+    clearTimeout(settleTimer);
+    settleTimer = null;
+  });
 
   // Only now restore a maximised window, with the listeners above in place to catch the size it
   // lands on. Doing it at construction meant the window grew before anything was watching: every
@@ -1490,6 +1616,25 @@ ipcMain.handle('set-auto-hide-sidebar', (_e, on) => {
   return config.settings.autoHideSidebar;
 });
 
+// How large the app is drawn. Applied at once — it is zoom, not a device scale factor, so nothing
+// has to restart — and applyDisplayScale broadcasts what it settled on.
+ipcMain.handle('set-display-scale', (_e, value) => {
+  config.settings.displayScale = displayScale.cleanChoice(value);
+  persist();
+  applyDisplayScale();
+  broadcast();
+  return config.settings.displayScale;
+});
+
+// GPU video decoding is a Chromium command-line switch, set before the app is ready (see the top
+// of this file), so a change here only takes effect on the next launch. The sheet says so.
+ipcMain.handle('set-hw-decode', (_e, on) => {
+  config.settings.hwDecode = on === true;
+  persist();
+  broadcast();
+  return config.settings.hwDecode;
+});
+
 ipcMain.handle('set-enhance', (_e, key, on) => {
   // Round-trip through cleanEnhance so an unknown key from the UI cannot write itself into the
   // saved settings, and the stored object always has exactly the keys this build knows about.
@@ -1817,7 +1962,7 @@ app.whenReady().then(async () => {
         String(err),
     );
   }
-  config = configStore.load(); // the user's list, from their userData dir
+  // `config` was read before ready (see the top of this file); the rest of the state comes from it.
   sidebarCollapsed = config.settings.sidebarCollapsed === true;
   gridMode = config.gridMode === true;
   gridPanes = Array.isArray(config.gridPanes) ? config.gridPanes.slice(0, MAX_GRID_PANES) : [];

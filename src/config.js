@@ -8,6 +8,7 @@ const path = require('path');
 const { app } = require('electron');
 const { DEFAULT_SERVICES } = require('./services');
 const { defaultEnhance, cleanEnhance } = require('./enhance');
+const { cleanChoice: cleanDisplayScale } = require('./display-scale');
 
 function configPath() {
   return path.join(app.getPath('userData'), 'services.json');
@@ -35,6 +36,14 @@ function defaultSettings() {
     autoHideSidebar: true,
     // Per-site cosmetic tweaks, each switchable on its own — see enhance.js.
     enhance: defaultEnhance(),
+    // How large to draw the app: 'auto' follows the monitor (see display-scale.js), or a fixed
+    // factor the user picked.
+    displayScale: 'auto',
+    // Decode video on the GPU where the driver allows it. On by default: a streaming app spends
+    // most of its life decoding video, and on the CPU a 4K VP9 or AV1 stream is a whole core. The
+    // switch exists because a driver that gets it wrong shows green or black frames, and the way
+    // out of that has to be one click rather than a reinstall.
+    hwDecode: true,
   };
 }
 
@@ -57,6 +66,8 @@ function cleanSettings(raw) {
     autoHideSidebar:
       s.autoHideSidebar !== undefined ? s.autoHideSidebar !== false : s.dimWhilePlaying !== false,
     enhance: cleanEnhance(s.enhance),
+    displayScale: cleanDisplayScale(s.displayScale),
+    hwDecode: s.hwDecode !== false,
   };
 }
 

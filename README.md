@@ -69,10 +69,15 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   installed; single view only; the switch is in Settings.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
+- **Sized for the monitor it is on.** On a desktop that scales its monitors differently (a 4K
+  screen at 150% beside a 1440p one at 100%, say) the app asks what the monitor is set to and
+  follows the window from one to the next. Or pick a fixed size in Settings — see
+  [Display scaling](#display-scaling).
+- **Video decoded on the graphics card**, where the driver allows it, so a 4K stream is not a
+  CPU core for the length of a film. Switchable in Settings.
 - **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
-  ad blocker, the YouTube and Twitch theater modes, how the sidebar behaves, tray behaviour,
-  updates. The removed
-  list is a panel now too.
+  ad blocker, the YouTube and Twitch theater modes, how the sidebar behaves, display size,
+  playback, tray behaviour, updates. The removed list is a panel now too.
 - **Optional tray icon** — closing the window keeps a stream running.
 
 ## Updating
@@ -162,6 +167,35 @@ Honest caveats:
   practice, and it is the same exposure as running any X11 browser — but it is a step back from a
   pure Wayland session, taken to make playback possible at all.
 - Linux only, like the rest of the app.
+
+## Display scaling
+
+The app runs on X11 (see the mpv note above), which on a Wayland desktop means under XWayland —
+and XWayland has no way of telling a program what scale a monitor is set to. Most compositors
+work around that by scaling X windows up themselves: the right size, a little soft. Hyprland with
+`xwayland { force_zero_scaling = true }` (Omarchy's default) does not: X programs get the
+monitor's real pixels and are expected to scale themselves. Left alone, Chromium draws at 100%,
+and on a 4K monitor at 150% the whole app comes out at two-thirds size.
+
+So StreamHub asks Hyprland what each monitor is set to and draws itself accordingly, following
+the window as it moves between monitors of different scales. It is applied as page zoom rather
+than a device scale factor, which is what lets it change at runtime and differ per monitor —
+visually the two are the same thing.
+
+Settings → Display → **Size on this monitor** shows what it settled on ("150%, from DP-2"), and
+offers fixed sizes from 100% to 200% for a desktop it cannot read, or for anyone who would rather
+have the app larger or smaller than the desktop's idea. Applied at once; nothing restarts.
+
+## Hardware video decoding
+
+On by default, off in Settings → Playback. Chromium ships with GPU video decoding disabled on
+Linux, and this turns it on (`AcceleratedVideoDecodeLinuxGL` / VA-API). It applies to the
+services that play unprotected video — YouTube, Twitch, Jellyfin's browser player — where a 4K
+VP9 or AV1 stream decoded in software is otherwise a whole CPU core. Widevine services decode
+inside the CDM either way and are unaffected.
+
+If a video ever comes out green, black or torn, that is the driver: turn the setting off and
+restart. It is a launch flag, so a change takes effect on the next start.
 
 ## Ad blocking
 

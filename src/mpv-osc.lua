@@ -893,9 +893,8 @@ end
 -- ---------------------------------------------------------------------------------------------
 -- Glyphs
 --
--- Each is drawn in a 15-unit box with its top left at (x, y). The shapes are the ones in
--- src/ui/player.html where there is a counterpart, so the two sets of controls are literally the
--- same drawing at two sizes.
+-- Each is drawn in a 15-unit box with its top left at (x, y). The shapes follow the app's own
+-- chrome (src/ui/index.html), so the two sets of controls read as one design at two sizes.
 -- ---------------------------------------------------------------------------------------------
 
 local function glyph_play(x, y, s)
@@ -1287,8 +1286,8 @@ local function draw(L)
     elseif it.kind == 'volume' then
       draw_volume(out, it, s, L.volume / 100, hovered(it) or drag == 'volume')
     elseif it.kind == 'spinner' then
-      -- A ring of steel with one lit quarter, turning: the same shape player.css spins in CSS,
-      -- and the only thing on the bar that says the picture is still coming.
+      -- A ring of steel with one lit quarter, turning — the only thing on the bar that says the
+      -- picture is still coming.
       local cx, cy = it.x + it.w / 2, L.mid
       local r, t = it.w * 0.36, 1.5 * s
       local a = (mp.get_time() * 3.2) % (2 * math.pi)

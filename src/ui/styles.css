@@ -112,12 +112,31 @@
     Consolas, monospace;
 
   font-family: var(--font-body);
+  /* The one native control left in the chrome is the size picker's <select>, whose drop-down is
+     drawn by Chromium in the scheme declared here. Dark, so it matches the sheet it opens from. */
+  color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+/* ---- Icons ---- */
+/* Line icons from the sprite in index.html, sized by the font size of wherever they sit and drawn
+   in whatever colour the text there is — so a button's hover colour lights its icon for free. One
+   stroke weight and round caps throughout: they are all in the same hand. */
+.ico {
+  display: block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 html,
@@ -214,6 +233,12 @@ body {
   padding: 2px 4px 14px;
   border-bottom: 1px solid var(--edge);
 }
+.brand-mark {
+  font-size: 18px;
+  color: var(--steel);
+  /* The play triangle is filled from the sprite; the ring is a stroke like every other icon. */
+  transition: opacity 0.45s ease;
+}
 .brand-text {
   flex: 1;
   min-width: 0;
@@ -232,18 +257,30 @@ body {
    This is the app's only on-air signal, and it needs no lamp of its own: that edge is the one
    boundary the whole thing has, and it is the last piece still on screen once the sidebar stows —
    so the strip left behind goes on saying "playing" for free. */
-body.playing #sidebar {
+/* The light is its own layer: a lit copy of the panel's edge, laid exactly over it, that only ever
+   changes opacity. It used to be the panel's own border-color and box-shadow that breathed, and
+   neither of those is anything the compositor can do on its own — every frame of the animation was
+   a repaint of the whole panel, at the refresh rate, for the length of a film. On a 240Hz monitor
+   that is a lot of paint spent on a glow. Opacity on a layer of its own is composited, so the
+   breathing costs nothing the GPU notices. */
+#sidebar::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid rgba(157, 178, 200, 0.6);
+  box-shadow: 0 0 26px -2px rgba(157, 178, 200, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+body.playing #sidebar::after {
   animation: seam 3.4s ease-in-out infinite;
 }
-/* …but only while the panel is actually on screen.
-   `seam` animates border-color and box-shadow, neither of which the compositor can handle on its
-   own, so every frame of it is a paint. Stowed, the panel is translated out of the window and the
-   chrome view is shrunk to the strip, so there is nothing of it left to see — and yet the animation
-   kept ticking for the length of every film. Small, since the view it is painting into is a 24px
-   sliver by then, but it is a repaint at the refresh rate for hours, spent on a pane of glass
-   nobody can look at. The strip left behind carries the on-air light in its place, which is what
-   the note above already says it does. */
-body.stowed:not(.peeking) #sidebar {
+/* …but only while the panel is actually on screen. Stowed, it is translated out of the window and
+   the chrome view is shrunk to the strip, so there is nothing of it left to see; the strip left
+   behind carries the on-air light in its place, which is what the note above already says it does. */
+body.stowed:not(.peeking) #sidebar::after {
   animation: none;
 }
 /* The panel floats, so the light catches its whole edge rather than one side of it: the border
@@ -252,12 +289,10 @@ body.stowed:not(.peeking) #sidebar {
 @keyframes seam {
   0%,
   100% {
-    border-color: rgba(157, 178, 200, 0.18);
-    box-shadow: var(--lift), 0 0 16px -4px rgba(157, 178, 200, 0.2);
+    opacity: 0.28;
   }
   50% {
-    border-color: rgba(157, 178, 200, 0.6);
-    box-shadow: var(--lift), 0 0 26px -2px rgba(157, 178, 200, 0.45);
+    opacity: 1;
   }
 }
 
@@ -426,13 +461,16 @@ body.stowed:not(.peeking) #sidebar {
 
 .service .del {
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
   width: 20px;
   height: 20px;
+  padding: 0;
   border: none;
   border-radius: 4px;
   background: transparent;
   color: var(--dim-2);
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -611,6 +649,8 @@ body.grid-full .service {
   position: absolute;
   top: 1px;
   right: 1px;
+  display: grid;
+  place-items: center;
   width: 14px;
   height: 14px;
   padding: 0;
@@ -618,8 +658,8 @@ body.grid-full .service {
   border-radius: 3px;
   background: transparent;
   color: var(--dim-2);
-  font-size: 12px;
-  line-height: 12px;
+  font-size: 9px;
+  line-height: 1;
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--ease), background var(--ease), color var(--ease);
@@ -646,12 +686,15 @@ body.grid-full .service {
 }
 .grid-layout button {
   flex: 1;
+  display: grid;
+  place-items: center;
   height: 24px;
+  padding: 0;
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--dim-2);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
   transition: background var(--ease), color var(--ease), border-color var(--ease);
@@ -707,6 +750,9 @@ body.grid-full .service {
   border-color: var(--steel-edge);
   background: var(--steel-wash);
 }
+.list-actions button .ico {
+  font-size: 13px;
+}
 #removed-count {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -727,12 +773,15 @@ body.grid-full .service {
 }
 .toolbar button {
   flex: 1;
+  display: grid;
+  place-items: center;
+  height: 32px;
   background: transparent;
   color: var(--dim);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 9px 0;
-  font-size: 15px;
+  padding: 0;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
   transition: color var(--ease), background var(--ease), border-color var(--ease);
@@ -768,6 +817,7 @@ body.grid-full .service {
 /* The settings window's update button, and the sidebar's gear that leads to it. */
 #btn-update,
 #btn-settings {
+  position: relative; /* for the update pulse drawn over it, below */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -795,7 +845,7 @@ body.grid-full .service {
   cursor: default;
 }
 #btn-settings .gear {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   transition: transform 0.3s ease;
 }
@@ -846,21 +896,35 @@ body.stowed.peeking #sidebar {
   border-radius: 2px;
   background: rgba(157, 178, 200, 0.26);
 }
+/* The lit version of the same pill, over it, breathing in opacity alone — see #sidebar::after for
+   why the light is a layer of its own rather than the pill's colour changing. This one matters
+   more: it runs for the whole of every film, since the strip is what is left once the sidebar has
+   stowed. */
+.edge-strip::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: var(--float);
+  bottom: var(--float);
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(157, 178, 200, 0.72);
+  box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
+  opacity: 0;
+}
 .edge-strip[hidden] {
   display: none;
 }
-body.playing .edge-strip::after {
+body.playing .edge-strip::before {
   animation: seam-strip 3.4s ease-in-out infinite;
 }
 @keyframes seam-strip {
   0%,
   100% {
-    background: rgba(157, 178, 200, 0.22);
-    box-shadow: 0 0 10px rgba(157, 178, 200, 0.16);
+    opacity: 0;
   }
   50% {
-    background: rgba(157, 178, 200, 0.72);
-    box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
+    opacity: 1;
   }
 }
 
@@ -870,12 +934,10 @@ body.playing .edge-strip::after {
 @keyframes update-pulse {
   0%,
   100% {
-    border-color: var(--steel-edge);
-    box-shadow: 0 0 0 rgba(143, 163, 184, 0);
+    opacity: 0;
   }
   50% {
-    border-color: var(--steel);
-    box-shadow: 0 0 9px rgba(143, 163, 184, 0.4);
+    opacity: 1;
   }
 }
 
@@ -884,12 +946,26 @@ body.playing .edge-strip::after {
   color: var(--steel);
   border-color: var(--steel-edge);
   background: var(--steel-wash);
+}
+/* The pulse is a lit copy of the button's edge over it, breathing in opacity — the same treatment
+   as the seam, for the same reason: border-color and box-shadow are a repaint per frame, opacity is
+   not. */
+#btn-update.has-update::before,
+#btn-settings.has-update::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid var(--steel);
+  box-shadow: 0 0 9px rgba(143, 163, 184, 0.4);
+  opacity: 0;
+  pointer-events: none;
   animation: update-pulse 2.4s ease-in-out infinite;
 }
-#btn-update.has-update:hover,
-#btn-settings.has-update:hover {
+#btn-update.has-update:hover::before,
+#btn-settings.has-update:hover::before {
   animation-play-state: paused; /* settle once it is being aimed at */
-  border-color: var(--steel);
+  opacity: 1;
 }
 
 /* The update itself is installed from the settings window, so the sidebar's gear only has to say
@@ -921,7 +997,16 @@ body.collapsed.update-available #app-version::after {
   border-radius: 50%;
   background: var(--steel);
   box-shadow: 0 0 6px var(--steel-glow);
-  animation: update-pulse 2.4s ease-in-out infinite;
+  animation: update-dot 2.4s ease-in-out infinite;
+}
+@keyframes update-dot {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* Respect a reduced-motion preference. The sidebar still stows — that is a state, not an animation
@@ -936,21 +1021,17 @@ body.collapsed.update-available #app-version::after {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
-  #btn-update.has-update,
-  #btn-settings.has-update,
+  #btn-update.has-update::before,
+  #btn-settings.has-update::before,
   body.collapsed.update-available #app-version::after {
-    border-color: var(--steel);
+    opacity: 1;
   }
   #btn-settings:hover .gear {
     transform: none;
   }
-  body.playing #sidebar {
-    border-color: rgba(157, 178, 200, 0.6);
-    box-shadow: var(--lift), 0 0 26px -2px rgba(157, 178, 200, 0.45);
-  }
-  body.playing .edge-strip::after {
-    background: rgba(157, 178, 200, 0.72);
-    box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
+  body.playing #sidebar::after,
+  body.playing .edge-strip::before {
+    opacity: 1;
   }
 }
 
@@ -966,6 +1047,7 @@ body.collapsed .brand {
   padding: 2px 0 14px;
 }
 body.collapsed .brand-text,
+body.collapsed .brand-mark,
 body.collapsed .service .label {
   display: none;
 }
@@ -1140,14 +1222,17 @@ body.collapsed #btn-settings .gear {
   text-transform: uppercase;
 }
 .sheet-close {
-  width: 26px;
-  height: 26px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   flex-shrink: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--dim);
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   transition: background var(--ease), color var(--ease);
@@ -1303,38 +1388,84 @@ body.collapsed #btn-settings .gear {
   border-color: var(--steel-edge);
 }
 
-/* The checkbox is a small lamp: dark when off, lit when on. */
+/* The checkbox is a switch, on the right of the row where a settings switch is expected: a short
+   dark track with a knob that travels, and the knob is the lamp — dim at rest, lit steel when on.
+   Same rule as everything else here: active is lit, nothing else carries colour. */
 .setting input[type="checkbox"] {
   appearance: none;
+  order: 2;
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
+  position: relative;
+  align-self: center;
+  width: 32px;
+  height: 18px;
+  margin-left: auto;
   border: 1px solid var(--edge-strong);
-  border-radius: 4px;
-  background: var(--ink);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.38);
   cursor: pointer;
-  display: grid;
-  place-items: center;
   transition: background var(--ease), border-color var(--ease), box-shadow var(--ease);
 }
+.setting input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dim-2);
+  transition: transform var(--ease-move), background var(--ease), box-shadow var(--ease);
+}
 .setting input[type="checkbox"]:checked {
-  background: var(--steel);
-  border-color: var(--steel);
-  box-shadow: 0 0 8px rgba(143, 163, 184, 0.3);
+  background: var(--steel-wash);
+  border-color: var(--steel-edge);
 }
 .setting input[type="checkbox"]:checked::after {
-  content: "";
-  width: 4px;
-  height: 8px;
-  margin-top: -2px;
-  border: solid var(--ink);
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  transform: translateX(14px);
+  background: var(--steel-hot);
+  box-shadow: 0 0 7px var(--steel-glow);
 }
 .setting input[type="checkbox"]:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* The size picker: the one row whose control is a choice rather than a switch. The <select> is
+   dressed as the rest of the chrome and its own arrow is replaced with one from the sprite. */
+.setting-select {
+  align-items: center;
+}
+.select-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.select-wrap select {
+  appearance: none;
+  min-width: 84px;
+  padding: 5px 26px 5px 10px;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color var(--ease), background var(--ease);
+}
+.select-wrap select:hover {
+  border-color: var(--steel-edge);
+}
+.select-wrap .ico {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--dim-2);
+  pointer-events: none;
 }
 
 .setting-text {
@@ -1363,7 +1494,7 @@ body.collapsed #btn-settings .gear {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 4px 0 36px; /* line up under the toggle's label, not the toggle */
+  padding: 2px 4px 0 12px; /* line up under the row's text */
 }
 /* The row is only shown once the engine is actually loaded (renderer.js sets `hidden`), and the
    author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]` — leaving a
@@ -1430,8 +1561,7 @@ body.collapsed #btn-settings .gear {
 }
 #sheet-removed .service .restore-plus {
   flex-shrink: 0;
-  font-size: 17px;
-  font-weight: 400;
+  font-size: 15px;
   color: var(--dim-2);
   transition: color var(--ease);
 }

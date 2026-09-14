@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('shell', {
   // Whether the sidebar is tinted glass over the page, or docked opaque beside it.
   setGlassSidebar: (on) => ipcRenderer.invoke('set-glass-sidebar', on),
   setMpvPlayback: (on) => ipcRenderer.invoke('set-mpv-playback', on),
+  // How large the app is drawn: 'auto' (follow the monitor) or a fixed factor. Applied at once.
+  setDisplayScale: (value) => ipcRenderer.invoke('set-display-scale', value),
+  // Decode video on the GPU. A launch flag, so it takes effect on the next start.
+  setHwDecode: (on) => ipcRenderer.invoke('set-hw-decode', on),
   // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
   // renderer could never have seen for itself, forwarded by the main process.
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),

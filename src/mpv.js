@@ -17,7 +17,7 @@
 // The window: mpv renders into StreamHub's own window by X11 reparenting (--wid). That is
 // proven to work here, and it is also why the Jellyfin web view has to be *hidden* while mpv
 // is up rather than layered under it — an X11 child window always draws above its parent's
-// content. See the player overlay for what is drawn on top instead.
+// content. The controls are drawn by mpv itself, from src/mpv-osc.lua, for the same reason.
 const { spawn } = require('child_process');
 const net = require('net');
 const os = require('os');

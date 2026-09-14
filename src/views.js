@@ -348,6 +348,24 @@ class ViewManager {
     // waiting out the gap between two of them. See enforcePaused.
     this.lastEnforced = new WeakMap();
     this.enforceTimers = new WeakMap();
+    // How much every page is zoomed so the app comes out the size the monitor wants — set by
+    // main.js from display-scale.js. Chromium keeps zoom per origin, so it is applied to a view as
+    // it is made and again on every navigation, or a site that moves between hosts (YouTube to its
+    // sign-in page and back) would come back at 1x.
+    this.zoom = 1;
+  }
+
+  // Zoom every live view, now and for every page they navigate to from here on.
+  setZoom(zoom) {
+    const next = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+    this.zoom = next;
+    for (const view of this.views.values()) this.applyZoom(view);
+  }
+
+  applyZoom(view) {
+    const wc = view && view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    if (Math.abs(wc.getZoomFactor() - this.zoom) > 0.001) wc.setZoomFactor(this.zoom);
   }
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
@@ -444,11 +462,15 @@ class ViewManager {
         additionalArguments: nativePlayer
           ? [identityArg(), jellyfinArg(service.url)]
           : [identityArg()],
+        zoomFactor: this.zoom,
       },
     });
 
     const wc = view.webContents;
     wc.setUserAgent(CHROME_UA);
+    // Zoom is per origin in Chromium, so a page that arrives at a new host arrives at 1x unless
+    // it is told again. Every navigation, and the first load with it.
+    wc.on('did-navigate', () => this.applyZoom(view));
 
     // The Jellyfin shell runs inside the page, and a page throws where the main process cannot
     // see it — a shell that breaks jellyfin-web's bootstrap looks exactly like a server that is
@@ -500,6 +522,7 @@ class ViewManager {
             additionalArguments: [identityArg()],
             contextIsolation: true,
             nodeIntegration: false,
+            zoomFactor: this.zoom,
           },
         },
       };
@@ -658,10 +681,7 @@ class ViewManager {
     // a set that is one line away from changing. See MAX_IDLE_VIEWS.
     this.trimIdleViews();
     // Leaving grid mode drops any lingering per-pane fullscreen so the single view lays out normally.
-    if (this.videoFullscreen && !next.has(this.fullscreenView)) {
-      this.videoFullscreen = false;
-      this.fullscreenView = null;
-    }
+    if (this.videoFullscreen && !next.has(this.fullscreenView)) this.dropFullscreen();
     this.layout(this.bounds.width, this.bounds.height);
     // Raising a service view put it above the chrome; put the chrome back on top.
     this.onStackChange();
@@ -809,10 +829,7 @@ class ViewManager {
     const view = this.views.get(key);
     if (!view) return;
     if (this.active === view) this.active = null;
-    if (this.fullscreenView === view) {
-      this.fullscreenView = null;
-      this.videoFullscreen = false;
-    }
+    if (this.fullscreenView === view) this.dropFullscreen();
     this.visible.delete(view);
     this.grid = this.grid.filter((v) => v !== view);
     this.autoPaused.delete(view);
@@ -849,10 +866,26 @@ class ViewManager {
     for (const view of this.viewsForService(service.id)) this.loadService(view, service);
   }
 
+  // Take a site out of fullscreen without it asking: the pane that held it has gone off screen or
+  // been destroyed. The window has to be told as well as the flag cleared. Leaving grid mode while
+  // a pane was fullscreen used to clear the flag alone, which left the OS window in fullscreen with
+  // the chrome hidden until the now-hidden page happened to leave fullscreen on its own.
+  dropFullscreen() {
+    if (!this.videoFullscreen && !this.fullscreenView) return;
+    this.videoFullscreen = false;
+    this.fullscreenView = null;
+    this.onFullscreenChange(false);
+    if (this.win.setFullScreen && !this.win.isDestroyed() && this.win.isFullScreen()) {
+      this.win.setFullScreen(false);
+    }
+  }
+
   setVideoFullscreen(on, view) {
-    // Ignore a stale "leave" from a pane that is not the one currently filling the screen — in a
-    // grid, several panes can fire these, and only the one that took over should end it.
-    if (!on && this.fullscreenView && view && view !== this.fullscreenView) return;
+    // Ignore a stale "leave": one from a pane that is not the one currently filling the screen —
+    // in a grid, several panes can fire these, and only the one that took over should end it —
+    // and one that arrives when nothing is fullscreen at all, which must not drag the window out
+    // of a fullscreen the user chose with F11.
+    if (!on && (!this.fullscreenView || (view && view !== this.fullscreenView))) return;
     this.videoFullscreen = on;
     this.onFullscreenChange(on);
     this.fullscreenView = on ? view || this.active : null;
@@ -968,6 +1001,9 @@ class ViewManager {
   // way. Views are created lazily, so this only touches services actually visited.
   reloadAll() {
     for (const view of this.views.values()) {
+      // The setup page makes no requests the blocker could touch, and reloading it throws away
+      // whatever address is half-typed into it.
+      if (view.__setupPage) continue;
       const wc = view.webContents;
       if (wc && !wc.isDestroyed()) wc.reload();
     }
