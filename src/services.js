@@ -129,6 +129,17 @@ function mayBeGoogleAuthUrl(url) {
   return false;
 }
 
+// This engine claims it can decode Dolby audio (AC-3 / E-AC-3, the codecs behind "Dolby Digital"
+// and "Atmos") on every platform: castLabs builds Chromium with the Dolby codecs switched on,
+// which upstream keeps off for anything but cast devices. On Windows and macOS the claim is
+// checked against the OS decoder before it is made. On Linux there is no such decoder and the
+// check is skipped, so MediaSource.isTypeSupported and mediaCapabilities.decodingInfo answer yes
+// to a codec the pipeline cannot start. A site that believes them — Apple TV+ picks its Atmos
+// track on exactly that answer — gets "audio decoder initialization failed" and a player that
+// never leaves the first frame. Real Chrome on Linux says no, so saying no here is not a lie but
+// the correction of one; the sites then fall back to AAC as they do in Chrome.
+const HIDE_DOLBY_AUDIO = process.platform === 'linux';
+
 // Everything service-preload.js needs to patch the JS-visible identity, as a command-line
 // argument for it to parse.
 //
@@ -145,6 +156,7 @@ function identityArg() {
     chArch: CH_ARCH,
     chBitness: CH_BITNESS,
     authHosts: Array.from(GOOGLE_AUTH_HOSTS),
+    hideDolbyAudio: HIDE_DOLBY_AUDIO,
   })}`;
 }
 

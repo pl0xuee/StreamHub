@@ -39,6 +39,57 @@ try {
   // location unavailable this early on some about:/blank docs; treat as non-auth.
 }
 
+// Stop advertising Dolby audio where the engine cannot actually decode it (see HIDE_DOLBY_AUDIO
+// in services.js). Every way a page can ask is answered the way Chrome on Linux answers: the MSE
+// and <video> type queries, the Media Capabilities query, and the EME configuration — a
+// requestMediaKeySystemAccess candidate whose audio was all Dolby is dropped, and a call left
+// with no candidates is refused with the NotSupportedError the browser itself would give.
+// Everything else passes through untouched.
+if (identity && identity.hideDolbyAudio) {
+  webFrame.executeJavaScript(`(() => {
+    const dolby = /\\b(ac-3|ec-3)\\b/i;
+
+    const isTypeSupported = MediaSource.isTypeSupported;
+    MediaSource.isTypeSupported = function (type) {
+      return dolby.test(type) ? false : isTypeSupported.call(this, type);
+    };
+
+    const canPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (type) {
+      return dolby.test(type) ? '' : canPlayType.call(this, type);
+    };
+
+    const decodingInfo = MediaCapabilities.prototype.decodingInfo;
+    MediaCapabilities.prototype.decodingInfo = function (config) {
+      if (config && config.audio && dolby.test(config.audio.contentType)) {
+        return Promise.resolve({
+          supported: false, smooth: false, powerEfficient: false, configuration: config,
+        });
+      }
+      return decodingInfo.call(this, config);
+    };
+
+    const requestAccess = Navigator.prototype.requestMediaKeySystemAccess;
+    Navigator.prototype.requestMediaKeySystemAccess = function (keySystem, configs) {
+      const kept = Array.from(configs || []).filter((config) => {
+        const audio = config && config.audioCapabilities;
+        if (!audio || audio.length === 0) return true;
+        return audio.some((c) => !dolby.test(c && c.contentType));
+      }).map((config) => {
+        const audio = config && config.audioCapabilities;
+        if (!audio || audio.length === 0) return config;
+        return { ...config, audioCapabilities: audio.filter((c) => !dolby.test(c && c.contentType)) };
+      });
+      if (configs && configs.length && !kept.length) {
+        return Promise.reject(new DOMException(
+          'Unsupported keySystem or supportedConfigurations.', 'NotSupportedError',
+        ));
+      }
+      return requestAccess.call(this, keySystem, kept);
+    };
+  })()`);
+}
+
 if (identity) {
   const isAuthHost = (identity.authHosts || []).includes(host);
 
