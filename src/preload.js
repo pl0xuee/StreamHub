@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('shell', {
   setDisplayScale: (value) => ipcRenderer.invoke('set-display-scale', value),
   // Decode video on the GPU. A launch flag, so it takes effect on the next start.
   setHwDecode: (on) => ipcRenderer.invoke('set-hw-decode', on),
+  // Stop waiting on XWayland's vsync. Also a launch flag.
+  setSmoothPlayback: (on) => ipcRenderer.invoke('set-smooth-playback', on),
   // Ctrl+, from the app menu and Ctrl+K from inside a service view: both are keystrokes the
   // renderer could never have seen for itself, forwarded by the main process.
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),

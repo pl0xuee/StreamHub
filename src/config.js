@@ -44,6 +44,11 @@ function defaultSettings() {
     // switch exists because a driver that gets it wrong shows green or black frames, and the way
     // out of that has to be one click rather than a reinstall.
     hwDecode: true,
+    // Present frames without waiting on vsync, under XWayland only — see main.js for what it fixes
+    // and what it costs. On by default because what it fixes is video dropping frames, and the
+    // streaming sites answering that by lowering the picture quality; the switch is there for a
+    // machine where it does more harm than good.
+    smoothPlayback: true,
   };
 }
 
@@ -68,6 +73,7 @@ function cleanSettings(raw) {
     enhance: cleanEnhance(s.enhance),
     displayScale: cleanDisplayScale(s.displayScale),
     hwDecode: s.hwDecode !== false,
+    smoothPlayback: s.smoothPlayback !== false,
   };
 }
 

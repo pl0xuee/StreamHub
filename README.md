@@ -197,6 +197,21 @@ inside the CDM either way and are unaffected.
 If a video ever comes out green, black or torn, that is the driver: turn the setting off and
 restart. It is a launch flag, so a change takes effect on the next start.
 
+## Smooth video under XWayland
+
+On a Wayland desktop the app runs through XWayland (see the mpv note above), and there Chromium
+cannot get a reliable vsync signal: it schedules frames against a clock that is wrong, and video
+drops frames — measured at 3–8% of them on a 60Hz monitor under Hyprland. YouTube and Netflix
+both read dropped frames as a player that cannot keep up, and answer by lowering the quality,
+which is what makes the picture keep changing resolution mid-film.
+
+So under XWayland the app stops waiting on vsync (`--disable-gpu-vsync`), which took the same
+stream to no dropped frames at all. It cannot tear — the Wayland compositor still presents every
+frame on vblank. The cost is that a page's own animations run at the fastest monitor's refresh
+rate rather than the one the window is on. On by default; Settings → Playback → "Keep video
+smooth under XWayland" turns it off, and applies on the next start. It is not offered anywhere
+else, where it would do nothing useful.
+
 ## Ad blocking
 
 Off by default, and **experimental** — the toggle is in Settings.

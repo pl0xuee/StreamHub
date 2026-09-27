@@ -274,25 +274,38 @@ body {
   pointer-events: none;
   transition: opacity 0.6s ease;
 }
+/* It breathes twice and then holds, rather than breathing for the length of the film.
+   Composited opacity is cheap to draw, but it is not free: an animation that never ends is a new
+   frame out of this view at the monitor's refresh rate for as long as it runs, and this view sits
+   over the video, so every one of those frames recomposites the picture under it. Measured, the
+   endless breath roughly tripled the GPU process's work while a film played — work the video was
+   competing for, and losing, as dropped frames. Two breaths still say "on air" as playback starts;
+   the steady light that follows goes on saying it for nothing. */
 body.playing #sidebar::after {
-  animation: seam 3.4s ease-in-out infinite;
+  opacity: 0.6;
+  animation: seam 6.8s ease-in-out 1;
 }
-/* …but only while the panel is actually on screen. Stowed, it is translated out of the window and
+/* …and only while the panel is actually on screen. Stowed, it is translated out of the window and
    the chrome view is shrunk to the strip, so there is nothing of it left to see; the strip left
-   behind carries the on-air light in its place, which is what the note above already says it does. */
+   behind carries the on-air light in its place, which is what the note above already says it does.
+   Coming back into view restarts the breath, so reaching for the sidebar mid-film still shows it. */
 body.stowed:not(.peeking) #sidebar::after {
   animation: none;
 }
 /* The panel floats, so the light catches its whole edge rather than one side of it: the border
    brightens and a steel halo swells around the slab, over the shadow that is already holding it
-   off the picture. */
+   off the picture. It ends on the value it holds, so nothing jumps when it stops. */
 @keyframes seam {
   0%,
-  100% {
+  50% {
     opacity: 0.28;
   }
-  50% {
+  25%,
+  75% {
     opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
   }
 }
 
@@ -896,10 +909,11 @@ body.stowed.peeking #sidebar {
   border-radius: 2px;
   background: rgba(157, 178, 200, 0.26);
 }
-/* The lit version of the same pill, over it, breathing in opacity alone — see #sidebar::after for
+/* The lit version of the same pill, over it, changing in opacity alone — see #sidebar::after for
    why the light is a layer of its own rather than the pill's colour changing. This one matters
-   more: it runs for the whole of every film, since the strip is what is left once the sidebar has
-   stowed. */
+   more: it is on screen for the whole of every film, since the strip is what is left once the
+   sidebar has stowed — which is exactly why it breathes twice and then holds rather than breathing
+   for two hours over the picture (see #sidebar::after). */
 .edge-strip::before {
   content: "";
   position: absolute;
@@ -916,21 +930,30 @@ body.stowed.peeking #sidebar {
   display: none;
 }
 body.playing .edge-strip::before {
-  animation: seam-strip 3.4s ease-in-out infinite;
+  opacity: 0.6;
+  animation: seam-strip 6.8s ease-in-out 1;
 }
 @keyframes seam-strip {
   0%,
-  100% {
+  50% {
     opacity: 0;
   }
-  50% {
+  25%,
+  75% {
     opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
   }
 }
 
 /* ---- An update is waiting ---- */
 /* A slow pulse of steel: enough to catch the eye on a glance at the sidebar, not so much that it
-   nags at someone who is trying to watch something. */
+   nags at someone who is trying to watch something. A few pulses and then it rests, lit, rather
+   than pulsing for as long as the update goes uninstalled — which can be the whole of a film, and an
+   animation that never ends is a frame out of the chrome at the monitor's refresh rate, over the
+   picture, for all of that time (see the seam, above). It pulses again each time the sidebar comes
+   back into view, which is when there is someone looking at it to catch the eye of. */
 @keyframes update-pulse {
   0%,
   100% {
@@ -960,7 +983,7 @@ body.playing .edge-strip::before {
   box-shadow: 0 0 9px rgba(143, 163, 184, 0.4);
   opacity: 0;
   pointer-events: none;
-  animation: update-pulse 2.4s ease-in-out infinite;
+  animation: update-pulse 2.4s ease-in-out 3;
 }
 #btn-update.has-update:hover::before,
 #btn-settings.has-update:hover::before {
@@ -997,22 +1020,28 @@ body.collapsed.update-available #app-version::after {
   border-radius: 50%;
   background: var(--steel);
   box-shadow: 0 0 6px var(--steel-glow);
-  animation: update-dot 2.4s ease-in-out infinite;
+  animation: update-dot 2.4s ease-in-out 3;
 }
+/* Ends where it rests, fully lit, so nothing jumps when the pulses run out. */
 @keyframes update-dot {
   0%,
   100% {
-    opacity: 0.45;
-  }
-  50% {
     opacity: 1;
   }
+  50% {
+    opacity: 0.45;
+  }
+}
+/* Stowed, none of it is on screen, so there is nothing to pulse for; peeking starts it over. */
+body.stowed:not(.peeking) #btn-settings.has-update::before,
+body.stowed:not(.peeking).collapsed.update-available #app-version::after {
+  animation: none;
 }
 
 /* Respect a reduced-motion preference. The sidebar still stows — that is a state, not an animation
    — but it goes instantly rather than sliding, and nothing pulses or turns. The seam still lights
-   while something is playing; it simply holds its brightest value instead of breathing, so the
-   on-air signal survives. */
+   while something is playing; it goes straight to the steady light it would have settled on
+   anyway, without the two breaths first, so the on-air signal survives. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1028,10 +1057,6 @@ body.collapsed.update-available #app-version::after {
   }
   #btn-settings:hover .gear {
     transform: none;
-  }
-  body.playing #sidebar::after,
-  body.playing .edge-strip::before {
-    opacity: 1;
   }
 }
 
@@ -1383,6 +1408,11 @@ body.collapsed #btn-settings .gear {
 }
 .setting:hover {
   background: var(--card-hover);
+}
+/* A switch that means nothing on this machine is left out (renderer.js sets `hidden`), and the
+   author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]`. */
+.setting[hidden] {
+  display: none;
 }
 .setting:focus-within {
   border-color: var(--steel-edge);

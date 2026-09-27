@@ -219,7 +219,23 @@ class AdBlocker {
     // ...then take the scriptlet-injecting one back off the library (see injectInto).
     ipcMain.removeHandler(INJECT_CHANNEL);
     ipcMain.handle(INJECT_CHANNEL, (event, url, msg) => this.injectCosmetics(event, url, msg));
+    this.narrowHeaderListener(ses);
     this.active.add(ses);
+  }
+
+  // The library listens to the response headers of *every* request, and each one is held while
+  // the main process — the thread that also runs the app — is asked about it. It only ever acts on
+  // documents (it adds CSP directives to pages and frames) and hands everything else straight back
+  // untouched, so the rest was a round trip through this thread per response for nothing: every
+  // video segment, every image, every API call a streaming site makes. Re-registered here for
+  // documents only; Electron keeps one listener per event, so this replaces the library's own and
+  // the library's disable still clears it.
+  narrowHeaderListener(ses) {
+    if (!this.blocker || this.blocker.config.loadNetworkFilters !== true) return;
+    ses.webRequest.onHeadersReceived(
+      { urls: ['<all_urls>'], types: ['mainFrame', 'subFrame'] },
+      this.blocker.onHeadersReceived,
+    );
   }
 
   // Stands in for the library's cosmetic handler. Same rule lookup — only the scriptlets are

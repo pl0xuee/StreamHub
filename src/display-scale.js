@@ -202,8 +202,15 @@ function cleanChoice(value) {
   return 'auto';
 }
 
+// Running as an X11 client on a Wayland desktop — through XWayland, that is. main.js keys a
+// playback workaround off this that only makes sense there.
+function onXWayland() {
+  return process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY) && onX11();
+}
+
 module.exports = {
   SCALE_CHOICES,
+  onXWayland,
   canDetect,
   detectSync,
   refresh,

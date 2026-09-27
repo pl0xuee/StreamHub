@@ -144,6 +144,32 @@ if (process.platform === 'linux' && gotInstanceLock && config.settings.hwDecode 
   app.commandLine.appendSwitch('enable-features', Array.from(new Set(merged)).join(','));
 }
 
+// Stop Chromium waiting on vsync, where the vsync it waits on is XWayland's.
+//
+// Under XWayland Chromium cannot get a trustworthy vblank signal: the timestamps it is handed are
+// inconsistent — its own log says "Frame latency is negative" over and over — so it schedules
+// frames against a clock that is wrong and misses the deadlines. On a video that is dropped frames,
+// steadily, and the streaming sites all watch for exactly that: YouTube and Netflix treat a player
+// that cannot keep up as one that should be sent a lower quality, and step the picture down, then
+// back up, then down again. Measured on a 60Hz monitor under Hyprland, a 720p60 YouTube stream
+// dropped 3–8% of its frames with vsync on; with it off, none, over the same forty seconds, with GPU
+// decoding still in use and a percent or two more CPU — the cost of drawing the frames it had been
+// dropping.
+//
+// It cannot tear: an X11 window on a Wayland desktop is always composited, so the compositor still
+// presents on vblank — only Chromium's own wait on a vblank it cannot see properly goes. The cost is
+// that a page's own animations run at the fastest monitor's rate rather than this one's, which is a
+// little more GPU while something on the page is animating and nothing otherwise.
+//
+// So only there. On a real X11 session nothing is guaranteed to composite and this would tear;
+// natively on Wayland Chromium has a vblank signal of its own and nothing needs fixing. Like GPU
+// decoding it is a launch flag, so it is read from the config before ready and the switch in
+// Settings applies on the next start.
+const smoothPlaybackApplies = gotInstanceLock && displayScale.onXWayland();
+if (smoothPlaybackApplies && config.settings.smoothPlayback !== false) {
+  app.commandLine.appendSwitch('disable-gpu-vsync');
+}
+
 // Ask the compositor how big the monitor wants things, where Chromium cannot find out for itself.
 // Blocking and before ready, so the very first frame is drawn at the right size. See
 // display-scale.js for the desktop this exists for.
@@ -510,6 +536,9 @@ function statePayload() {
       detectable: displayScale.canDetect(),
     },
     hwDecode: config.settings.hwDecode !== false,
+    smoothPlayback: config.settings.smoothPlayback !== false,
+    // The switch only means anything under XWayland, so the sheet hides it everywhere else.
+    smoothPlaybackApplies,
   };
 }
 
@@ -1633,6 +1662,14 @@ ipcMain.handle('set-hw-decode', (_e, on) => {
   persist();
   broadcast();
   return config.settings.hwDecode;
+});
+
+// The XWayland vsync workaround (see the top of this file). A launch flag too, same as above.
+ipcMain.handle('set-smooth-playback', (_e, on) => {
+  config.settings.smoothPlayback = on === true;
+  persist();
+  broadcast();
+  return config.settings.smoothPlayback;
 });
 
 ipcMain.handle('set-enhance', (_e, key, on) => {

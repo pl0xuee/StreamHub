@@ -759,6 +759,9 @@ const scaleSubEl = document.getElementById('scale-sub');
 const scaleNoteEl = document.getElementById('scale-note');
 const hwDecodeEl = document.getElementById('chk-hwdecode');
 const hwDecodeSubEl = document.getElementById('sub-hwdecode');
+const smoothRowEl = document.getElementById('row-smooth');
+const smoothEl = document.getElementById('chk-smooth');
+const smoothSubEl = document.getElementById('sub-smooth');
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -863,6 +866,10 @@ function renderSheets() {
   trayEl.checked = state.minimizeToTray === true;
   renderDisplayScale();
   hwDecodeEl.checked = state.hwDecode !== false;
+  // Only offered where it does anything: under XWayland. Anywhere else it would be a switch that
+  // silently changes nothing.
+  smoothRowEl.hidden = state.smoothPlaybackApplies !== true;
+  smoothEl.checked = state.smoothPlayback !== false;
   renderUpdate();
   renderRemoved(state.removed || []);
 }
@@ -1017,6 +1024,10 @@ async function init() {
   hwDecodeEl.addEventListener('change', async () => {
     await window.shell.setHwDecode(hwDecodeEl.checked);
     hwDecodeSubEl.textContent = 'Restart StreamHub for this to take effect';
+  });
+  smoothEl.addEventListener('change', async () => {
+    await window.shell.setSmoothPlayback(smoothEl.checked);
+    smoothSubEl.textContent = 'Restart StreamHub for this to take effect';
   });
 
   // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the
