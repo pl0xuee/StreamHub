@@ -1,10 +1,9 @@
 // System media controls on Linux (MPRIS), so KDE's panel, the lock screen and the media
 // applet can see what is playing and drive it.
 //
-// Chromium implements MPRIS, and the strings are still in the binary, but Electron never
-// instantiates it — verified: playing audible video in Electron registers no
-// org.mpris.MediaPlayer2.* name on the bus, with or without the MediaSessionService feature
-// flag. So we serve the interface ourselves.
+// Chromium implements MPRIS, and this build of it now registers a player of its own for a page
+// playing audible media. It cannot know about mpv, the grid or which service is showing, so the
+// app turns it off (HardwareMediaKeyHandling, in main.js) and serves the interface itself.
 //
 // This is deliberately the small half of the spec: the properties a panel actually reads and
 // the methods it actually calls. Everything else is declared false/unsupported rather than
@@ -65,7 +64,7 @@ function guardAgainstDbusCrashes() {
 }
 
 class Mpris {
-  // `controls` is the bridge to the app: playPause/seek/raise, plus what is playing now.
+  // `controls` is the bridge to the app: playPause/play/pause/seek/raise/quit.
   constructor(controls) {
     this.controls = controls;
     this.bus = null;
@@ -175,17 +174,20 @@ class Mpris {
     const self = this;
     this.props = this.bus.exportInterface(
       {
+        // Each one means what it says. They used to all toggle, so a client sending Play to a video
+        // that was already playing paused it, and one sending Pause to a paused video started it.
+        // There is nothing to stop on a website, so Stop pauses.
         PlayPause() {
           self.controls.playPause();
         },
         Play() {
-          self.controls.playPause();
+          self.controls.play();
         },
         Pause() {
-          self.controls.playPause();
+          self.controls.pause();
         },
         Stop() {
-          self.controls.playPause();
+          self.controls.pause();
         },
         // These sites have no notion of a next track, so the media keys are wired to seek
         // instead — the same ±10s the app's own media-key handling does, so the hardware

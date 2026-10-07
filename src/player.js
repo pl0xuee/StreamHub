@@ -13,9 +13,10 @@
 // got above mpv, by parenting, always-on-top or window type. mpv's own OSC can, because it is
 // drawn inside mpv's window, which is why the controls are its and not ours.
 //
-// The chrome is therefore hidden for the duration, on the same reasoning the app already
-// applies to a site going fullscreen: a strip of sidebar over the film is the one thing left on
-// screen that is not the film.
+// So the chrome cannot float over the film — but it does not have to leave either. The video
+// steps aside for it instead: the host window starts where the sidebar ends, and follows it as it
+// slides out and back (see `insetLeft`). Only when mpv itself has taken the screen does the chrome
+// go, on the same reasoning the app already applies to a site going fullscreen.
 const { BrowserWindow, screen } = require('electron');
 const { EventEmitter } = require('events');
 const { Mpv, isAvailable } = require('./mpv');
@@ -36,6 +37,7 @@ const PAGE_TICK_MS = 1000;
  *   'position' ({ positionSeconds, durationSeconds, paused }) — every second, for the page
  *   'progress' (same)                 — every ten seconds, for the server
  *   'finished' (reason)               — an item ended; 'eof' means it played to the end
+ *   'fullscreen' (bool)               — mpv took the screen, or gave it back
  *   'error'    (Error)
  */
 class Player extends EventEmitter {
@@ -46,11 +48,30 @@ class Player extends EventEmitter {
    * It is a callback rather than a value because the answer changes without the player being
    * told: the grid re-tiles when a pane is added, removed or dragged. Asking at layout time is
    * what keeps the video inside its own tile instead of covering the other services.
+   *
+   * `insetLeft` is asked the same way, for how much of the window's left edge the app's chrome is
+   * holding — the strip while the sidebar is stowed, the whole sidebar while it is out. Nothing can
+   * be drawn over mpv, so the video starts where that ends; that is what leaves the sidebar
+   * reachable while a film plays.
    */
-  constructor({ baseWindow, paneBounds }) {
+  constructor({ baseWindow, paneBounds, insetLeft, hwdec }) {
     super();
     this.baseWindow = baseWindow;
+    this.hwdec = hwdec !== false;
     this.paneBounds = typeof paneBounds === 'function' ? paneBounds : () => null;
+    this.insetLeft = typeof insetLeft === 'function' ? insetLeft : () => 0;
+    // Why the video is off screen while still loaded, if it is: something the app has to show
+    // over it (a sheet, the quick switch), the user having switched to another service, or a site
+    // in another grid pane having gone fullscreen. Kept as a set of reasons rather than a flag so
+    // that one of them ending cannot put the video back while another still holds.
+    this.hiddenFor = new Set();
+    // Whether we paused the film when the user switched away, so coming back resumes exactly
+    // that and not a film they had paused themselves.
+    this.autoPaused = false;
+    // Whether mpv asked for the screen (its button, or 'f'). Distinct from the window merely being
+    // fullscreen: F11 on a grid fullscreens the grid, with the film staying in its tile, while
+    // mpv's own fullscreen means the film and nothing else.
+    this.ownsFullscreen = false;
     this.host = null;
     this.mpv = null;
     this.current = null; // what is playing, for the progress reports
@@ -173,7 +194,15 @@ class Player extends EventEmitter {
    */
   setFullscreen(on) {
     if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
-    if (this.baseWindow.isFullScreen() === on) return;
+    const owned = this.ownsFullscreen;
+    this.ownsFullscreen = on;
+    if (owned !== on) this.emit('fullscreen', on);
+    // Already in the state asked for — F11 got there first, say. The window needs nothing, but the
+    // picture may: in a grid it goes from its tile to the whole screen, or back.
+    if (this.baseWindow.isFullScreen() === on) {
+      this.layout();
+      return;
+    }
     this.baseWindow.setFullScreen(on);
     // The frame changes shape here — a fullscreen window has no resize border — so the measured
     // margin no longer applies. Drop it and let it be measured again for the new shape.
@@ -188,16 +217,138 @@ class Player extends EventEmitter {
     setTimeout(() => this.calibrate().catch(() => {}), 900);
   }
 
+  /**
+   * The window left fullscreen without mpv asking — F11, or the compositor's own fullscreen key.
+   * mpv still believes it is fullscreen, and its button would then do nothing on the first press.
+   */
+  windowLeftFullscreen() {
+    // In a window of its own, mpv's fullscreen is its own window's, and the app's window leaving
+    // fullscreen says nothing about it.
+    if (this.embedded === false) {
+      this.ownsFullscreen = false;
+      return;
+    }
+    if (!this.ownsFullscreen) return;
+    this.ownsFullscreen = false;
+    this.emit('fullscreen', false);
+    if (this.mpv) this.mpv.setProperty('fullscreen', false).catch(() => {});
+    this.frameInset = { w: 0, h: 0 };
+    this.layout();
+    setTimeout(() => this.calibrate().catch(() => {}), 900);
+  }
+
+  // Whether the film fills the whole window, chrome and grid neighbours included.
+  coversWindow() {
+    return Boolean(
+      this.ownsFullscreen &&
+        this.baseWindow &&
+        !this.baseWindow.isDestroyed() &&
+        this.baseWindow.isFullScreen(),
+    );
+  }
+
+  /**
+   * Take the video off screen for `reason`, or put it back once nothing is holding it off.
+   * Playback carries on underneath — this is about what is in front, not what is playing.
+   *
+   * The reason is always recorded, even while nothing is loaded yet: mpv's first start takes a
+   * moment, and a service picked in that moment has to be honoured once the film arrives. See
+   * applyHidden, which play() runs again when it does.
+   */
+  setHidden(reason, on) {
+    if (on) this.hiddenFor.add(reason);
+    else this.hiddenFor.delete(reason);
+    this.applyHidden();
+  }
+
+  // Bring the host's visibility in line with the reasons. Judged against what the host is actually
+  // doing rather than against what changed, so a reason that arrived at an awkward moment is never
+  // lost: hidden whenever anything holds it, shown again only with a film loaded to show.
+  applyHidden() {
+    if (!this.embedded || !this.host || this.host.isDestroyed()) return;
+    const visible = this.host.isVisible();
+    if (this.hiddenFor.size) {
+      if (visible) this.host.hide();
+      return;
+    }
+    if (visible || !this.current) return;
+    this.layout();
+    this.host.showInactive();
+    this.layout();
+  }
+
+  /**
+   * The Jellyfin view went off screen (another service was picked) or came back. Leaving pauses
+   * the film, the way leaving any service pauses its video; coming back resumes it, but only if it
+   * was us that paused it.
+   *
+   * Only for a film inside the app. One in a window of its own (Wayland) is still in plain sight
+   * whatever the app's window is showing, so it is left alone.
+   */
+  setAway(away) {
+    if (this.embedded === false) {
+      this.hiddenFor.delete('away');
+      return;
+    }
+    const was = this.hiddenFor.has('away');
+    this.setHidden('away', away);
+    if (was === away) return;
+    this.applyAwayPause();
+  }
+
+  // Pause for 'away', or resume from it. Split out because a film that started while the user was
+  // already elsewhere needs the same treatment once it is loaded — see play().
+  applyAwayPause() {
+    if (!this.mpv || !this.current) return;
+    const away = this.hiddenFor.has('away');
+    if (away && !this.state.paused) {
+      this.autoPaused = true;
+      this.mpv.pause().catch(() => {});
+    } else if (!away && this.autoPaused) {
+      this.autoPaused = false;
+      this.mpv.play().catch(() => {});
+    }
+  }
+
+  // Whether the film is what the user is looking at — loaded, its page not left for another
+  // service, and not covered by a site fullscreen in another pane. That is when the media keys and
+  // the desktop's play/pause belong to mpv. A film in a window of its own is always in front.
+  inFront() {
+    if (!this.isActive()) return false;
+    if (this.embedded === false) return true;
+    return !this.hiddenFor.has('away') && !this.hiddenFor.has('covered');
+  }
+
+  // Play (true), pause (false) or toggle (null), for the media keys and the desktop's controls.
+  // A deliberate press is the user's own choice, so it also cancels any resume we were holding.
+  async setPlaying(want = null) {
+    if (!this.mpv || !this.current) return;
+    const play = want === null ? this.state.paused : want;
+    this.autoPaused = false;
+    if (play && this.state.paused) await this.mpv.play();
+    else if (!play && !this.state.paused) await this.mpv.pause();
+  }
+
+  // Hand the keyboard to mpv, when its picture is actually on screen to take it.
+  focusVideo() {
+    if (!this.embedded || !this.host || this.host.isDestroyed() || !this.host.isVisible()) return;
+    this.host.focus();
+  }
+
+  async seekBy(seconds) {
+    if (!this.mpv || !this.current) return;
+    await this.mpv.command('seek', Number(seconds) || 0, 'relative');
+  }
+
   static available() {
     return isAvailable();
   }
 
+  // mpv is kept alive and idle between items, so its mere existence is not playback — what is
+  // loaded is. Not the host window's visibility either: it is hidden while a sheet is open over it,
+  // or the user is on another service, and the film is still very much in progress then.
   isActive() {
-    if (!this.mpv) return false;
-    // Not embedded, so there is no host window whose visibility answers this. mpv is kept alive
-    // and idle between items, so its mere existence is not playback — what is loaded is.
-    if (!this.embedded) return Boolean(this.current);
-    return Boolean(this.host && !this.host.isDestroyed() && this.host.isVisible());
+    return Boolean(this.mpv && this.current);
   }
 
   // The host window is made once and reused. Destroying it between items would take its X11
@@ -243,9 +394,11 @@ class Player extends EventEmitter {
     if (!this.baseWindow || this.baseWindow.isDestroyed()) return;
     const content = this.baseWindow.getContentBounds();
     // Which part of the window the video belongs in. Normally the whole content area; in a grid,
-    // only the tile Jellyfin is showing in, so the other services stay visible beside it.
-    const pane = this.paneBounds();
-    const b = pane
+    // only the tile Jellyfin is showing in, so the other services stay visible beside it. When mpv
+    // has taken the screen it is the whole window regardless — that is what its fullscreen means.
+    const covers = this.coversWindow();
+    const pane = covers ? null : this.paneBounds();
+    let b = pane
       ? {
           x: content.x + pane.x,
           y: content.y + pane.y,
@@ -253,6 +406,14 @@ class Player extends EventEmitter {
           height: pane.height,
         }
       : content;
+    // Leave the chrome its edge. Only a tile that actually reaches under the sidebar is trimmed;
+    // one further right is already clear of it.
+    const edge = covers ? 0 : Math.max(0, Math.round(this.insetLeft() || 0));
+    const clearOf = content.x + edge;
+    if (b.x < clearOf) {
+      const cut = Math.min(b.width - 1, clearOf - b.x);
+      b = { x: b.x + cut, y: b.y, width: b.width - cut, height: b.height };
+    }
     // The size the picture should end up. Remembered because that — not the smaller size actually
     // requested below — is what a measurement has to be judged against. See calibrate().
     this.targetSize = { w: b.width, h: b.height };
@@ -332,7 +493,11 @@ class Player extends EventEmitter {
 
     // Only put the host on screen when something is going to be drawn into it, and only *before*
     // mpv starts: it reparents into a window that is already mapped.
-    if (this.embedded) {
+    // Not while something is holding it off screen, though — a sheet open over the page, say — and
+    // it goes up when that lets go (see applyHidden). The exception is mpv's very first start: it
+    // has to be handed a window that is already mapped, so the host goes up for that and is taken
+    // down again once the film is loaded.
+    if (this.embedded && (!this.hiddenFor.size || !this.mpv)) {
       this.layout();
       host.showInactive();
       this.layout(); // again after mapping: the WM may have adjusted it
@@ -341,8 +506,8 @@ class Player extends EventEmitter {
 
     if (!this.mpv) {
       const mpv = this.embedded
-        ? new Mpv({ wid: this.wid })
-        : new Mpv({ extraArgs: ['--fullscreen=yes'] });
+        ? new Mpv({ wid: this.wid, hwdec: this.hwdec })
+        : new Mpv({ hwdec: this.hwdec, extraArgs: ['--fullscreen=yes'] });
       this.mpv = mpv;
       this.wireMpv();
       try {
@@ -365,7 +530,9 @@ class Player extends EventEmitter {
       }
     }
 
-    this.current = meta || null;
+    // Never null while something is loaded, metadata or not: isActive() and the hide reasons
+    // both key off it.
+    this.current = meta || {};
     this.state = { positionSeconds: startSeconds, durationSeconds: 0, paused: false };
     // Held until the file is open and mpv has a track list to match these against.
     this.pendingTracks = { audioIndex, subtitleIndex };
@@ -389,6 +556,10 @@ class Player extends EventEmitter {
 
     this.emit('active', true);
     this.startProgress();
+    // Anything that asked for the film to be off screen, or paused, while it was still starting —
+    // or before it was asked for at all, as when another service is showing — applies now.
+    this.applyHidden();
+    this.applyAwayPause();
     return true;
   }
 
@@ -570,6 +741,9 @@ class Player extends EventEmitter {
     if (showing) this.host.hide();
     const was = this.current;
     this.current = null;
+    // A film that is over has nothing to resume. The hide reasons stay: they describe the app
+    // (a sheet is open, another service is showing), and the next item has to respect them too.
+    this.autoPaused = false;
     // Only say playback ended if it had actually begun. A stop that arrives when nothing was
     // playing — jellyfin-web sends one on navigation — would otherwise announce itself, and the
     // listener that restores the sidebar would put it back over a site that is in fullscreen.
@@ -604,6 +778,8 @@ class Player extends EventEmitter {
     this.targetSize = null;
     this.current = null;
     this.pendingTracks = null;
+    this.autoPaused = false;
+    this.ownsFullscreen = false;
   }
 }
 

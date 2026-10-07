@@ -41,7 +41,8 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   The settings, the removed list and the quick switch float the same way. Both halves are
   switchable in Settings: pin it open, or dock it beside the page opaque, the way it used to sit.
 - Sidebar with one-click switching; drag to reorder, delete to a "Removed" list, click to
-  restore. Collapses to an icon rail.
+  restore. Collapses to an icon rail. Each service is shown with its own logo, learned from its
+  site the first time you open it.
 - **Quick switch** — `Ctrl+K`, a few letters, Enter. Shift+Enter tiles it as another grid pane.
   Works from inside a service too, not just when the sidebar is already open.
 - **Pause on switch** — leaving a service pauses its video, returning resumes it. The services you
@@ -65,8 +66,9 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   in Settings.
 - **Your own Jellyfin server** — see below.
 - **Jellyfin plays through mpv** — no DRM is involved on your own server, so a real player can
-  take the original file instead of the browser asking the server to transcode it. Needs mpv
-  installed; single view only; the switch is in Settings.
+  take the original file instead of the browser asking the server to transcode it, decoded on the
+  graphics card. The sidebar stays usable while a film plays. Needs mpv installed; the switch is in
+  Settings.
 - **Keeps the screen awake** during playback; picture-in-picture; fullscreen (F11).
 - **Remembers where you left off** — window, last service, sidebar state.
 - **Sized for the monitor it is on.** On a desktop that scales its monitors differently (a 4K
@@ -120,9 +122,17 @@ audio, PGS and VOBSUB image subtitles and 10-bit video all direct-play that way.
 player cannot decode any of them, so it makes the server transcode instead — burning CPU on the
 server and losing quality on the way.
 
-Press play and mpv takes over the content area in its own window; the sidebar steps aside for
-the duration, the same way it does when a site goes fullscreen. Stop, and you are back on the
+Press play and mpv takes over the content area in its own window. The sidebar stays where it is:
+reach for the left edge and it slides out as usual, with the film moving over to make room for it
+(nothing can be drawn *over* mpv, so the picture steps aside instead). Pick another service and
+the film pauses and goes with the page; come back to Jellyfin and it carries on. Settings and the
+quick switch open over the page while the film plays on behind them. Stop, and you are back on the
 page you were on.
+
+mpv decodes on the graphics card (VA-API or NVDEC, falling back to the processor for anything they
+cannot take) and reads well ahead of the picture, so a busy server or a Wi-Fi hiccup is absorbed
+rather than seen. Settings → Playback → "Decode video on the graphics card" turns the GPU half off
+for mpv as well as for the browser.
 
 The controls are drawn by mpv rather than by StreamHub's glass chrome, and mpv's usual keys work
 — space to pause, arrows to seek, `f` for fullscreen.
@@ -149,11 +159,13 @@ view.
 
 Honest caveats:
 
-- **Single view only.** In grid mode Jellyfin keeps the browser player. One mpv window cannot be
-  tiled into four panes.
+- **In a grid, one film at a time.** mpv plays inside Jellyfin's tile; there is one mpv, so a
+  second Jellyfin pane cannot play a second film alongside it. mpv's own fullscreen (`f`, or its
+  button) takes the whole screen; F11 fullscreens the grid with the film staying in its tile.
 - **The glass chrome cannot float over the video.** An Electron window cannot be composited
   above the window mpv renders into — this was tried, and it does not work. That is why the
-  controls are mpv's rather than the app's.
+  controls are mpv's rather than the app's, and why the film moves aside for the sidebar rather
+  than sitting under it.
 - **It runs on X11, on a Wayland session too.** mpv can only be handed a window to draw into on
   X11 — it has no such support on Wayland — so the app asks for the X11 backend at launch and
   XWayland hosts it. This is why `npm start` and the packaged launcher both pass

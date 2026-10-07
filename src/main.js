@@ -30,6 +30,7 @@ const { Player } = require('./player');
 const { jellyfinShellJs } = require('./jellyfin-shell');
 const { JellyfinApi } = require('./jellyfin-api');
 const displayScale = require('./display-scale');
+const icons = require('./icons');
 
 // StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot work at
 // all: mpv renders into a window the app owns, and mpv can only be handed a window that way on
@@ -142,6 +143,21 @@ if (process.platform === 'linux' && gotInstanceLock && config.settings.hwDecode 
   const wanted = ['AcceleratedVideoDecodeLinuxGL', 'VaapiVideoDecodeLinuxGL', 'VaapiVideoDecoder'];
   const merged = (existing ? existing.split(',') : []).concat(wanted).filter(Boolean);
   app.commandLine.appendSwitch('enable-features', Array.from(new Set(merged)).join(','));
+}
+
+// One set of media controls, not two.
+//
+// This build of Chromium now serves MPRIS on Linux by itself — an org.mpris.MediaPlayer2.chromium.*
+// player appears on the bus as soon as a page plays audible media — and grabs the media keys for
+// the page in front. StreamHub has always served its own (mpris.js, shortcuts.js), because only the
+// app knows about mpv, the grid and which service is showing. With both, the desktop sees two
+// players for one film and a play/pause can reach both: one toggle each, and the video stops and
+// starts again on its own. Electron's guidance for an app that handles media keys itself is to turn
+// Chromium's handling off, which takes its MPRIS player with it.
+if (process.platform === 'linux' && gotInstanceLock) {
+  const existing = app.commandLine.getSwitchValue('disable-features');
+  const merged = (existing ? existing.split(',') : []).concat(['HardwareMediaKeyHandling']);
+  app.commandLine.appendSwitch('disable-features', Array.from(new Set(merged)).join(','));
 }
 
 // Stop Chromium waiting on vsync, where the vsync it waits on is XWayland's.
@@ -286,7 +302,8 @@ let mediaPlaying = false; // is anything playing right now — drives the sideba
 // The two things that can be playing, tracked apart so neither can cancel the other out: a
 // site's own <video> in a service view, and mpv on the Jellyfin player. See reportPlaying.
 let viewsPlaying = false;
-let mpvPlaying = false;
+let mpvPlaying = false; // mpv has a film loaded, playing or paused
+let mpvPaused = false; // …and that film is paused
 let saveWindowTimer = null;
 let mpris = null; // Linux system media controls (KDE panel, lock screen)
 // mpv, and the window it draws into, for Jellyfin. Made on first play and kept afterwards —
@@ -310,7 +327,33 @@ function layout() {
   viewManager.layout(width, height);
   // The player's window is a separate top-level window, so it is positioned in screen
   // coordinates and has to be told to follow rather than being laid out by the parent.
-  if (jellyfinPlayer) jellyfinPlayer.layout();
+  syncPlayer();
+}
+
+// What the media keys and the desktop's play/pause act on: mpv while it holds the film in front,
+// otherwise the page in front. `want` is true to play, false to pause, null to toggle.
+function mediaPlayPause(want = null) {
+  if (jellyfinPlayer && jellyfinPlayer.inFront()) {
+    jellyfinPlayer.setPlaying(want).catch(() => {});
+    return;
+  }
+  if (viewManager) viewManager.playPause(want);
+}
+
+function mediaSeek(seconds) {
+  if (jellyfinPlayer && jellyfinPlayer.inFront()) {
+    jellyfinPlayer.seekBy(seconds).catch(() => {});
+    return;
+  }
+  const wc = viewManager && viewManager.getActiveWebContents();
+  if (!wc || wc.isDestroyed()) return;
+  // The playing video rather than merely the first: a page can hold a preview or an ad before it.
+  const delta = Number(seconds) || 0;
+  wc.executeJavaScript(`(() => {
+    const vids = Array.from(document.querySelectorAll('video'));
+    const v = vids.find((x) => x.readyState > 2) || vids[0];
+    if (v) v.currentTime = Math.max(0, v.currentTime + (${delta}));
+  })()`).catch(() => {});
 }
 
 // Hold the display awake while a service is playing. Watching a film is the one time a
@@ -443,9 +486,75 @@ function applyDisplayScaleSoon() {
 // over a film that still owns the whole window.
 let siteFullscreen = false;
 
+// mpv only takes the chrome with it when it has taken the screen. Otherwise the sidebar stays, and
+// the video makes room for it — see insetLeft in player.js.
+function chromeHidden() {
+  return siteFullscreen || Boolean(mpvPlaying && jellyfinPlayer && jellyfinPlayer.coversWindow());
+}
+
 function updateChromeVisible() {
   if (!chromeView || chromeView.webContents.isDestroyed()) return;
-  chromeView.setVisible(!(siteFullscreen || mpvPlaying));
+  chromeView.setVisible(!chromeHidden());
+}
+
+// Everything the app does that changes whether mpv's window may be on screen, and where.
+//
+// mpv draws into a top-level window of its own, above the main window, so nothing the app draws
+// can go over it. Three things the app has to draw therefore take it off screen for as long as they
+// last: an overlay the chrome needs the whole window for (a sheet, the quick switch, a menu), the
+// Jellyfin view not being on screen at all (another service was picked — the film pauses, as any
+// service's video does), and a site in another grid pane having gone fullscreen.
+// The Jellyfin view the film belongs to: the one that pressed play, while it exists. A grid can
+// hold more than one Jellyfin pane, and the film is that pane's, not merely the first one's.
+let jellyfinOwnerId = null;
+
+function jellyfinViews() {
+  const service = jellyfinService();
+  return service && viewManager ? viewManager.viewsForService(service.id) : [];
+}
+
+function jellyfinOwnerView() {
+  const views = jellyfinViews();
+  if (jellyfinOwnerId === null) return views[0] || null;
+  const owns = (v) =>
+    v.webContents && !v.webContents.isDestroyed() && v.webContents.id === jellyfinOwnerId;
+  return views.find(owns) || null;
+}
+
+// Whether the renderer was last told a film is beside the sidebar. See 'player-active'.
+let filmBesideChrome = false;
+
+function syncPlayer() {
+  if (!jellyfinPlayer || !viewManager) return;
+  // The page that started the film is gone — its pane was closed, Jellyfin was removed from the
+  // list. Nothing can report on the film or bring it back, so it stops rather than playing unseen.
+  const owner = jellyfinOwnerView();
+  if (!owner && jellyfinPlayer.isActive()) {
+    jellyfinPlayer.stop().catch(() => {});
+    return;
+  }
+  const fsView = viewManager.videoFullscreen ? viewManager.fullscreenView : null;
+  // Only while the sheet is actually there to be seen: with the chrome hidden for a fullscreen film,
+  // a sheet asked for from the menu would otherwise take the film away for nothing.
+  jellyfinPlayer.setHidden('overlay', chromeRegion === 'full' && !chromeHidden());
+  jellyfinPlayer.setHidden('covered', Boolean(fsView && fsView !== owner));
+  jellyfinPlayer.setAway(!(owner && viewManager.visible.has(owner)));
+  jellyfinPlayer.layout();
+  // The chrome goes when the film has taken the screen, which is only knowable once the window
+  // has actually got there — this runs on every layout, so it is where that is caught.
+  updateChromeVisible();
+  // The sidebar's edge is drawn on black only while a film is actually beside it. A film paused
+  // behind another service leaves that service's page to be seen through the glass as usual.
+  const beside = Boolean(
+    mpvPlaying &&
+      jellyfinPlayer.embedded &&
+      !jellyfinPlayer.hiddenFor.has('away') &&
+      !jellyfinPlayer.hiddenFor.has('covered'),
+  );
+  if (beside !== filmBesideChrome) {
+    filmBesideChrome = beside;
+    sendToUi('player-active', beside);
+  }
 }
 
 // Something is playing if either source says so. Both call this instead of onPlaybackChange
@@ -466,7 +575,10 @@ const PLAYBACK_SETTLE_MS = 900;
 let playbackSettleTimer = null;
 
 function reportPlaying() {
-  const playing = viewsPlaying || mpvPlaying;
+  // A film that is loaded but paused is not playing: it should not hold the screen awake, and the
+  // desktop's controls should offer play. Left paused behind another service, it otherwise kept the
+  // display on for as long as the app was open.
+  const playing = viewsPlaying || (mpvPlaying && !mpvPaused);
   clearTimeout(playbackSettleTimer);
   playbackSettleTimer = null;
   // A start goes out at once, and goes out again even if something was already playing: the title
@@ -477,7 +589,7 @@ function reportPlaying() {
     playbackSettleTimer = null;
     // Re-read rather than trusting the reading that scheduled this: something may have started in
     // the meantime through a path that did not come back here.
-    if (!(viewsPlaying || mpvPlaying)) onPlaybackChange(false);
+    if (!(viewsPlaying || (mpvPlaying && !mpvPaused))) onPlaybackChange(false);
   }, PLAYBACK_SETTLE_MS);
   return Promise.resolve();
 }
@@ -520,6 +632,10 @@ function statePayload() {
     autoHideSidebar: config.settings.autoHideSidebar !== false,
     // Only the opening value — after this it is pushed on the 'playback' channel above.
     playing: mediaPlaying,
+    // Each service's own logo, where its site has been visited to learn one (icons.js).
+    icons: icons.all(),
+    // Likewise, pushed on 'player-active' afterwards.
+    playerActive: filmBesideChrome,
     enhance: cleanEnhance(config.settings.enhance),
     gridMode,
     gridPanes,
@@ -722,26 +838,30 @@ function createWindow() {
 
   jellyfinPlayer = new Player({
     baseWindow,
+    // The same switch as Chromium's GPU decoding: a driver that gets one wrong gets both wrong.
+    hwdec: config.settings.hwDecode !== false,
     // Where the video belongs. Only interesting once the grid is tiling more than one thing: on
     // its own, the Jellyfin view already fills the content area, and null says exactly that.
     // Otherwise mpv would cover the whole window and hide the services beside it.
     paneBounds: () => {
       if (!gridMode || gridPanes.length < 2 || !viewManager) return null;
-      const service = jellyfinService();
-      if (!service) return null;
-      const view = viewManager.viewsForService(service.id)[0];
+      const view = jellyfinOwnerView();
       if (!view) return null;
       const b = view.getBounds();
       return b && b.width && b.height ? b : null;
     },
+    // The slice of the window the sidebar is holding: the strip while it is stowed, the rail or
+    // the whole sidebar while it is out. The chrome cannot be drawn over mpv, so the video starts
+    // where this ends — which is what keeps the sidebar usable while a film plays. Nothing when
+    // the chrome is hidden, since there is then nothing to make room for.
+    insetLeft: () => (chromeHidden() ? 0 : Math.round(dockInsetWidth * uiZoom)),
   });
-  // While mpv is up it owns the content area outright. The chrome goes for the same reason it
-  // goes when a site enters fullscreen — a strip of sidebar over the film is the one thing left
-  // on screen that is not the film — and in this case it could not be drawn over the video
-  // anyway; see the note in player.js.
+  // While mpv is up the sidebar stays: the video steps aside for it rather than the other way
+  // round. It only goes when mpv takes the screen, the same way it goes for a site in fullscreen.
   jellyfinPlayer.on('active', (on, was) => {
     mpvPlaying = on;
-    updateChromeVisible();
+    if (!on) mpvPaused = false;
+    syncPlayer(); // the chrome, and whether the sidebar's edge sits beside a film
     reportPlaying();
     // Read the position off the player that raised this, not off the module-level one: closing
     // the window destroys the player and clears that reference before mpv has finished exiting,
@@ -778,6 +898,9 @@ function createWindow() {
   // showing the item as playing. Tell it, and tell the server, without waiting for the tick.
   jellyfinPlayer.on('paused', (paused, current) => {
     sendToJellyfin({ type: paused ? 'paused' : 'playing' });
+    // The screen-sleep inhibitor and the desktop's media controls follow a pause too.
+    mpvPaused = paused;
+    reportPlaying();
     if (!jellyfinApi || !current || !current.itemId) return;
     jellyfinApi
       .reportProgress({
@@ -824,6 +947,12 @@ function createWindow() {
       jellyfinApi.markPlayed(current.itemId).catch(() => {});
     }
   });
+  // mpv took the screen or gave it back: the chrome goes or returns with it, and the picture is
+  // placed again for whichever it now is.
+  jellyfinPlayer.on('fullscreen', () => {
+    updateChromeVisible();
+    syncPlayer();
+  });
   jellyfinPlayer.on('error', (err) => {
     // eslint-disable-next-line no-console
     console.warn('[jellyfin] player:', err && err.message);
@@ -844,6 +973,28 @@ function createWindow() {
   viewManager.onFullscreenChange = (on) => {
     siteFullscreen = on;
     updateChromeVisible();
+    syncPlayer();
+  };
+  // A different set of views on screen: the Jellyfin view may just have left it, or come back.
+  viewManager.onVisibleChange = () => syncPlayer();
+  // A film paused because the user switched away still belongs to the Jellyfin page behind it —
+  // that page is how its progress is reported and how it is resumed — so the page is not one of
+  // the idle views the manager may release while there is a film in it.
+  viewManager.keepAlive = (view) => {
+    const service = jellyfinService();
+    if (!service || view.__serviceId !== service.id) return false;
+    return Boolean(jellyfinPlayer && jellyfinPlayer.isActive());
+  };
+  // A page told us its icons: keep the service's logo, and show it once there is a new one.
+  viewManager.onIcons = (serviceId, ses, pageUrl, homeUrl, readUrls) => {
+    const service = config.services.find((s) => s.id === serviceId);
+    if (!service || !icons.wants(serviceId)) return;
+    readUrls()
+      .then((urls) => icons.learn(service, ses, pageUrl, homeUrl, urls))
+      .then((changed) => {
+        if (changed) broadcast();
+      })
+      .catch(() => {});
   };
   // Ctrl+K pressed inside a service view: the page owns the keystroke, so views.js takes this one
   // chord back and hands it here.
@@ -862,6 +1013,10 @@ function createWindow() {
   baseWindow.on('resize', layoutSettled);
   baseWindow.on('enter-full-screen', layoutSettled);
   baseWindow.on('leave-full-screen', layoutSettled);
+  // However the window left fullscreen, mpv no longer has the screen it was given.
+  baseWindow.on('leave-full-screen', () => {
+    if (jellyfinPlayer) jellyfinPlayer.windowLeftFullscreen();
+  });
   baseWindow.on('maximize', layoutSettled);
   baseWindow.on('unmaximize', layoutSettled);
 
@@ -910,7 +1065,7 @@ function createWindow() {
   // other players (Spotify, etc.) when the app is in the background. The window opens
   // focused, so register now; then track focus/blur.
   const wireMediaKeys = () =>
-    registerMediaKeys(() => viewManager.getActiveWebContents(), viewManager);
+    registerMediaKeys({ playPause: () => mediaPlayPause(null), seek: (s) => mediaSeek(s) });
   wireMediaKeys();
   baseWindow.on('focus', wireMediaKeys);
   baseWindow.on('blur', unregisterMediaKeys);
@@ -1046,6 +1201,8 @@ ipcMain.on('set-grid-layout', (_e, layout) => {
   if (!GRID_LAYOUTS.includes(layout)) return;
   gridLayout = layout;
   viewManager.setGridLayout(layout);
+  // The tiles moved, and mpv's window is not one of the views that just followed them.
+  syncPlayer();
   persist();
   broadcast();
 });
@@ -1091,9 +1248,20 @@ ipcMain.on('set-chrome-region', (_e, region, inset) => {
   const insetWidth = CHROME_REGIONS[inset];
   const nextInset = typeof insetWidth === 'number' ? insetWidth : dockInsetWidth;
   if (region === chromeRegion && nextInset === dockInsetWidth) return;
+  const was = chromeRegion;
   chromeRegion = region;
   dockInsetWidth = nextInset;
   layout();
+  // The sidebar (or a sheet) has just gone back to the edge with a film in front. Using it took the
+  // keyboard from mpv, so give it back: space and the arrows should go on working without a click
+  // on the picture first.
+  // Only from the chrome itself, though: in a grid the user may have moved from the sidebar into a
+  // neighbouring pane's chat, and the keyboard is theirs there.
+  if (region === 'peek' && was !== 'peek' && jellyfinPlayer && jellyfinPlayer.inFront()) {
+    if (chromeView && !chromeView.webContents.isDestroyed() && chromeView.webContents.isFocused()) {
+      jellyfinPlayer.focusVideo();
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1211,6 +1379,9 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
         }
         if (!expected || target.origin !== expected) return false;
         if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+        // This pane is the film's from now on: where it is tiled, whether it is on screen.
+        jellyfinOwnerId = event.sender.id;
+        syncPlayer();
         const startSeconds = Number(p.startPositionTicks || 0) / JELLYFIN_TICKS_PER_SECOND;
         // audioIndex/subtitleIndex are Jellyfin's stream numbering, not mpv's track ids; the
         // player maps them once the file is open. See trackIdForStreamIndex in player.js.
@@ -1480,6 +1651,8 @@ ipcMain.handle('probe-server', async (event, input) => {
 function applyServerUrl(serviceId, url) {
   const service = config.services.find((s) => s.id === serviceId);
   if (!service || !service.selfHosted) return false;
+  // Whatever icon was kept came from the old address.
+  icons.forget(service.id);
   if (url) {
     service.url = url;
   } else {
@@ -2036,15 +2209,10 @@ app.whenReady().then(async () => {
   // shortcuts.js. (Windows' own SMTC overlay is a possible future addition, not wired here.)
   if (process.platform === 'linux') {
     mpris = new Mpris({
-      playPause: () => viewManager.playPause(),
-      seek: (seconds) => {
-        const wc = viewManager.getActiveWebContents();
-        if (wc) {
-          wc.executeJavaScript(
-            `(() => { const v = document.querySelector('video'); if (v) v.currentTime += ${seconds}; })()`,
-          ).catch(() => {});
-        }
-      },
+      playPause: () => mediaPlayPause(null),
+      play: () => mediaPlayPause(true),
+      pause: () => mediaPlayPause(false),
+      seek: (seconds) => mediaSeek(seconds),
       raise: () => showWindow(),
       quit: () => {
         quitting = true;

@@ -91,14 +91,18 @@ function isNavigable(url) {
   }
 }
 
-// JS injected to play/pause the currently visible <video>.
-const PLAYPAUSE_JS = `(() => {
+// JS injected to play, pause or toggle the currently visible <video>: a function, called with true
+// to play, false to pause, null to toggle. The system media controls send all three, and "play" must
+// never pause a video that is already playing.
+const PLAYPAUSE_JS = `((want) => {
   const vids = Array.from(document.querySelectorAll('video'));
   const v = vids.find(x => x.readyState > 2) || vids[0];
   if (!v) return 'no-video';
-  v.paused ? v.play() : v.pause();
-  return v.paused ? 'paused' : 'playing';
-})()`;
+  const play = want === null ? v.paused : want;
+  if (play && v.paused) { const r = v.play(); if (r && r.catch) r.catch(() => {}); }
+  else if (!play && !v.paused) v.pause();
+  return play ? 'playing' : 'paused';
+})`;
 
 // JS injected to pause every playing <video>/<audio> on a page — run on the service being
 // switched away from so it doesn't keep playing in the background. Each element we stop is
@@ -338,6 +342,11 @@ class ViewManager {
     this.onStackChange = () => {};
     this.onFullscreenChange = () => {};
     this.onCommandPalette = () => {}; // Ctrl+K pressed inside a service view; main.js opens ours
+    this.onVisibleChange = () => {}; // the set of views on screen changed; main.js places mpv
+    this.onIcons = () => {}; // a service's page listed its icons; main.js keeps its logo
+    // A hidden view main.js still needs, whatever the trim below thinks of it: the Jellyfin page
+    // behind a paused mpv film, which is what that film reports its progress through.
+    this.keepAlive = () => false;
     // How many *hidden* service views may stay resident. See trimIdleViews.
     this.maxIdleViews = MAX_IDLE_VIEWS;
     // A monotonic stamp per view, bumped whenever it is on screen, so the trim above can tell
@@ -470,7 +479,13 @@ class ViewManager {
     wc.setUserAgent(CHROME_UA);
     // Zoom is per origin in Chromium, so a page that arrives at a new host arrives at 1x unless
     // it is told again. Every navigation, and the first load with it.
-    wc.on('did-navigate', () => this.applyZoom(view));
+    wc.on('did-navigate', (_e, url) => {
+      this.applyZoom(view);
+      // Where the service actually lives: wherever its address first landed, redirects and all —
+      // Max's play.max.com lands on hbomax.com. That, and not a sign-in page visited later, is the
+      // site whose icon the sidebar may show for it (see icons.js).
+      if (!view.__homeUrl) view.__homeUrl = url;
+    });
 
     // The Jellyfin shell runs inside the page, and a page throws where the main process cannot
     // see it — a shell that breaks jellyfin-web's bootstrap looks exactly like a server that is
@@ -566,6 +581,30 @@ class ViewManager {
       if (!this.visible.has(view)) this.enforcePaused(view);
     });
     wc.on('media-paused', () => this.onMediaChange(view, false));
+
+    // The site names its icons, and one of them is the logo the sidebar shows for it (icons.js).
+    // Chromium's own list is the desktop favicons only, which are mostly 16px; the page's <link>s
+    // also carry the large touch icons, so those are read out of it too. Our own setup page has
+    // nothing to say here.
+    wc.on('page-favicon-updated', (_e, favicons) => {
+      if (view.__setupPage) return;
+      const pageUrl = wc.getURL();
+      // Read lazily: main.js only asks once the service has no logo yet, so a page load of a
+      // service whose logo is already known costs nothing here.
+      const readUrls = () =>
+        wc
+          .executeJavaScript(
+            'Array.from(document.querySelectorAll(\'link[rel*="icon" i]\'), (l) => l.href)' +
+              '.slice(0, 12)',
+          )
+          .catch(() => [])
+          .then((links) => {
+            // A navigation while that ran would pair these icons with the wrong page; none, then.
+            if (wc.isDestroyed() || wc.getURL() !== pageUrl) return [];
+            return [...(Array.isArray(links) ? links : []), ...(favicons || [])];
+          });
+      this.onIcons(view.__serviceId, wc.session, pageUrl, view.__homeUrl, readUrls);
+    });
 
     // Per document load, since the injected controller lives in the page and goes with it. It
     // survives the site's own in-page navigations, which is what YouTube does between videos. The
@@ -685,6 +724,7 @@ class ViewManager {
     this.layout(this.bounds.width, this.bounds.height);
     // Raising a service view put it above the chrome; put the chrome back on top.
     this.onStackChange();
+    this.onVisibleChange();
   }
 
   show(service) {
@@ -777,6 +817,7 @@ class ViewManager {
       if (this.visible.has(view)) continue;
       if (this.playing.has(view)) continue;
       if (view.__setupPage) continue;
+      if (this.keepAlive(view)) continue;
       idle.push(view);
     }
     if (idle.length <= this.maxIdleViews) return;
@@ -887,8 +928,10 @@ class ViewManager {
     // of a fullscreen the user chose with F11.
     if (!on && (!this.fullscreenView || (view && view !== this.fullscreenView))) return;
     this.videoFullscreen = on;
-    this.onFullscreenChange(on);
+    // Which pane before telling anyone: main.js reads it to decide whether mpv, in another pane,
+    // has just been covered.
     this.fullscreenView = on ? view || this.active : null;
+    this.onFullscreenChange(on);
     // Bring the fullscreen pane to the top so it covers its grid neighbours while it owns the window.
     if (on && this.fullscreenView) this.win.contentView.addChildView(this.fullscreenView);
     if (this.win.setFullScreen) this.win.setFullScreen(on);
@@ -977,9 +1020,11 @@ class ViewManager {
     this.eachFrame(wc, PAUSE_ALL_JS).catch(() => {});
   }
 
-  playPause() {
+  // `want`: true plays, false pauses, anything else toggles.
+  playPause(want = null) {
     const wc = this.getActiveWebContents();
-    if (wc) wc.executeJavaScript(PLAYPAUSE_JS).catch(() => {});
+    const arg = want === true || want === false ? String(want) : 'null';
+    if (wc) wc.executeJavaScript(`${PLAYPAUSE_JS}(${arg})`).catch(() => {});
   }
 
   reloadActive() {

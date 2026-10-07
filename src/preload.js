@@ -63,5 +63,8 @@ contextBridge.exposeInMainWorld('shell', {
   // Whether anything is playing. Its own channel rather than the state payload, so the sidebar
   // can dim and lift without re-rendering the service list mid-drag.
   onPlayback: (cb) => ipcRenderer.on('playback', (_e, playing) => cb(playing)),
+  // Whether mpv is showing a film beside the sidebar. The chrome cannot be seen through to it, so
+  // the sidebar's edge is drawn on black instead of over the page.
+  onPlayerActive: (cb) => ipcRenderer.on('player-active', (_e, on) => cb(on)),
   onState: (cb) => ipcRenderer.on('state', (_e, state) => cb(state)),
 });

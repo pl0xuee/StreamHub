@@ -150,6 +150,13 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
+/* Beside an mpv film, the chrome's slice of the window is not over the picture — mpv cannot be
+   drawn over, so it stepped aside instead — but over the Jellyfin page left behind it. Black there,
+   so the edge reads as the letterbox of the film rather than a sliver of the library. Not while a
+   sheet is up: the film is taken off screen for those, and the sheet belongs over the page. */
+body.mpv:not(.overlay) {
+  background: #000;
+}
 
 /* Scrollbars. Steel, like everything else here that is drawn rather than lit — and asleep until
    used: at rest the thumb is transparent, so an idle scrollbar is simply not there and the pane
@@ -438,6 +445,20 @@ body.stowed:not(.peeking) #sidebar::after {
 .service:hover .icon,
 .service.active .icon {
   filter: none;
+}
+
+/* A service's own logo, learned from its site (renderer.js paintMark). One rule for every place a
+   mark is drawn — the rows, the quick switch, the removed list, the grid preview — since each sets
+   only its own size and corner. A free-standing mark sits inset on a dark tile of the window's own
+   ink; an app-style icon that already fills its square is given the whole tile. */
+.logo {
+  background-color: #10141b;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 72%;
+}
+.logo.logo-full {
+  background-size: cover;
 }
 
 .service .label {

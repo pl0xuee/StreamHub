@@ -217,9 +217,10 @@ class Mpv extends EventEmitter {
   // cases that genuinely need to differ from the defaults: a harness running without a window
   // (--vo=null), and any per-machine tuning a later setting might expose. It is not a general
   // pass-through for user input — nothing reaches it from a web view.
-  constructor({ wid, binary, extraArgs } = {}) {
+  constructor({ wid, binary, extraArgs, hwdec } = {}) {
     super();
     this.wid = wid;
+    this.hwdec = hwdec;
     this.binary = binary || resolveBinary();
     this.extraArgs = Array.isArray(extraArgs) ? extraArgs : [];
     this.proc = null;
@@ -273,6 +274,17 @@ class Mpv extends EventEmitter {
       // move or close by hand, and some window managers will not fullscreen it properly either.
       ...(this.wid !== undefined && this.wid !== null ? ['--no-border'] : []),
       '--fullscreen=no',
+      // Decode on the graphics card, which --no-config above would otherwise leave off: mpv's own
+      // default is software, and a 4K HEVC remux decoded on the processor is several cores for the
+      // length of a film. auto-safe only picks the decoders mpv considers reliable (VA-API, NVDEC)
+      // and falls back to software for anything they cannot take, so it cannot cost a film. The
+      // app's "decode on the graphics card" setting turns this off along with Chromium's.
+      `--hwdec=${this.hwdec === false ? 'no' : 'auto-safe'}`,
+      // A network stream off the user's own server: read well ahead so a busy NAS or a Wi-Fi
+      // hiccup is absorbed by the cache rather than seen as a stall.
+      '--cache=yes',
+      '--demuxer-max-bytes=512MiB',
+      '--demuxer-max-back-bytes=128MiB',
       // Quiet, but not silent: errors still reach the log, which is how a failed direct play
       // gets diagnosed.
       '--msg-level=all=error',
@@ -324,8 +336,8 @@ class Mpv extends EventEmitter {
   /**
    * Keys that have to mean something different in here than they do in a standalone mpv.
    *
-   * While a film is playing mpv has the keyboard and the app's own chrome is hidden, so mpv's
-   * idea of "quit" is the user's only way back to the library — and mpv's default for it is to
+   * While a film is playing mpv has the keyboard, so mpv's idea of "quit" is the quickest way
+   * back to the library — and mpv's default for it is to
    * end the process, which would leave nothing to start the next episode with.
    *
    * So both of the keys a person reaches for to get out of something are turned into a message

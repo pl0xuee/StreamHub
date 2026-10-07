@@ -67,6 +67,26 @@ function initial(name) {
   return name.replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase() || '?';
 }
 
+// A service's mark: its own logo once one has been learned from its site (icons.js in the main
+// process), otherwise its coloured initial. A full-bleed app icon fills the tile; a free-standing
+// logo on transparency is set on a dark tile rather than its brand colour, which a red mark on a
+// red tile would vanish into.
+function paintMark(el, svc) {
+  const logo = state.icons && state.icons[svc.id];
+  if (logo && logo.data) {
+    el.textContent = '';
+    el.classList.add('logo');
+    el.classList.toggle('logo-full', Boolean(logo.full));
+    el.style.background = '';
+    el.style.backgroundImage = `url("${logo.data}")`;
+    return;
+  }
+  el.classList.remove('logo', 'logo-full');
+  el.style.backgroundImage = '';
+  el.style.background = svc.color;
+  el.textContent = initial(svc.name);
+}
+
 // One of the icons drawn in index.html's sprite, as an element. The rows this file builds carry the
 // same line icons the static chrome does, so a delete cross here is the same cross as the one on a
 // sheet's close button.
@@ -92,8 +112,7 @@ function makeServiceEl(svc) {
 
   const icon = document.createElement('span');
   icon.className = 'icon';
-  icon.style.background = svc.color;
-  icon.textContent = initial(svc.name);
+  paintMark(icon, svc);
 
   const label = document.createElement('span');
   label.className = 'label';
@@ -231,8 +250,7 @@ function renderGridPreview() {
 
     const mark = document.createElement('span');
     mark.className = 'pane-tile-mark';
-    mark.style.background = svc.color;
-    mark.textContent = initial(svc.name);
+    paintMark(mark, svc);
 
     // The last pane cannot be closed — an empty grid would show nothing, and the grid toggle is the
     // way out of the mode. Drop the button rather than offering a dead one.
@@ -575,6 +593,10 @@ function syncChromeRegion() {
   const send = () => {
     region = want;
     dockInset = inset;
+    // While the chrome covers the whole window, mpv's film is taken off screen so the sheet can be
+    // seen (see syncPlayer in main.js); the black behind the sidebar goes with it, so the sheet sits
+    // over the page rather than over nothing.
+    document.body.classList.toggle('overlay', want === 'full');
     window.shell.setChromeRegion(want, inset);
   };
   if (REGION_ORDER[want] >= REGION_ORDER[region]) {
@@ -684,8 +706,7 @@ function renderPalette() {
 
     const icon = document.createElement('span');
     icon.className = 'icon';
-    icon.style.background = svc.color;
-    icon.textContent = initial(svc.name);
+    paintMark(icon, svc);
 
     const label = document.createElement('span');
     label.textContent = svc.name;
@@ -830,8 +851,7 @@ function renderRemoved(removed) {
 
     const icon = document.createElement('span');
     icon.className = 'icon';
-    icon.style.background = svc.color;
-    icon.textContent = initial(svc.name);
+    paintMark(icon, svc);
 
     const label = document.createElement('span');
     label.className = 'label';
@@ -938,6 +958,7 @@ async function init() {
   // Not `initial` — that name is already the icon-letter helper above.
   const boot = await window.shell.getConfig();
   playing = Boolean(boot.playing);
+  document.body.classList.toggle('mpv', Boolean(boot.playerActive));
   applyState(boot);
 
   // Reopen whatever was being watched last, so the app comes back where it was left rather
@@ -1070,6 +1091,7 @@ async function init() {
     playing = on;
     renderStow();
   });
+  window.shell.onPlayerActive((on) => document.body.classList.toggle('mpv', Boolean(on)));
 
   // Reaching for the strip holds the sidebar in; leaving it lets go. Entering the sidebar itself
   // counts as reaching too — the strip sits underneath it, so a pointer that arrives while the
