@@ -58,6 +58,10 @@
         <path d="M10 12.8h4" />
       </symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="10.8" cy="10.8" r="6.3" />
+        <path d="M15.6 15.6l4.4 4.4" />
+      </symbol>
     </svg>
 
     <!-- What is left on screen while the sidebar is stowed: a strip down the left edge that catches
@@ -72,7 +76,7 @@
           <span class="bars"></span>
         </button>
         <svg class="ico brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
-        <span class="brand-text">StreamHub</span>
+        <span class="brand-text">Stream<b>Hub</b></span>
       </div>
 
       <ul id="service-list" class="services"></ul>
@@ -149,17 +153,23 @@
          without going to fetch the sidebar first: type a few letters, Enter switches, Shift+Enter
          tiles it as another grid pane. -->
     <div id="palette" class="palette" hidden role="dialog" aria-label="Quick switch">
-      <input
-        id="palette-input"
-        class="palette-input"
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="Switch to…"
-      />
+      <label class="palette-field">
+        <svg class="ico" aria-hidden="true"><use href="#i-search" /></svg>
+        <input
+          id="palette-input"
+          class="palette-input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Switch to…"
+        />
+        <kbd>Esc</kbd>
+      </label>
       <ul id="palette-list" class="palette-list"></ul>
       <p class="palette-hint">
-        <span>Enter — switch</span><span>Shift+Enter — add a pane</span><span>Esc — close</span>
+        <span><kbd>↑</kbd><kbd>↓</kbd> choose</span>
+        <span><kbd>Enter</kbd> switch</span>
+        <span><kbd>Shift</kbd><kbd>Enter</kbd> add a pane</span>
       </p>
     </div>
 

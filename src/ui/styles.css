@@ -1,10 +1,12 @@
-/* StreamHub — "gunmetal glass".
+/* StreamHub — "cinema glass".
  *
  * The chrome is a pane of tinted glass laid over the picture: one cold material, lit with one cold
- * accent. Everything at rest is gunmetal; anything *lit* — the active service, a hovered control,
- * keyboard focus — is steel. Nothing else carries colour, with two deliberate exceptions: the
- * services' own brand marks (the posters on the wall) and the exit-sign red, which is only ever
- * used for leaving or removing.
+ * accent. Everything at rest is gunmetal; anything *lit* — a hovered control, keyboard focus, a
+ * switch that is on — is steel. The exceptions are deliberate. A *service* that is lit — the one
+ * showing, the one aimed at, the one the quick switch would pick — is lit in its own colour rather
+ * than steel, like a marquee: the colour arrives as --brand on the element (renderer.js `brand`),
+ * so the chrome never names a service in here. The on-air light takes the colour of what is on
+ * (--onair, on the body). And the exit-sign red is only ever used for leaving or removing.
  *
  * The glass is tinted, not frosted. backdrop-filter samples the current rendering context and the
  * video is a different WebContents entirely, so there is nothing there for Chromium to blur — the
@@ -71,8 +73,18 @@
   --steel-edge: rgba(157, 178, 200, 0.34);
   --steel-glow: rgba(157, 178, 200, 0.5);
 
+  /* A service's own colour, where one is lit. Set inline per element by renderer.js; these are the
+     fallbacks for anything that has none, which is steel — so an unlit or unknown service simply
+     reads as the rest of the chrome. */
+  --brand: #9db2c8;
+  --onair: #9db2c8;
+
   /* Exit sign. Removing, signing out, closing a pane — nothing else. */
   --exit: #c94a52;
+
+  /* A hairline that fades out at both ends, for the rules that divide the panel. A full-width line
+     reads as the panel being cut in two; one that fades reads as light catching a ridge. */
+  --rule: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12) 18%, rgba(255, 255, 255, 0.12) 82%, transparent);
 
   /* Depth. The panel floats, so it casts: one wide soft shadow for the ambient contact and one
      tight dark one to keep its edge legible against a pale frame. */
@@ -234,18 +246,42 @@ body.mpv:not(.overlay) {
 }
 
 .brand {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 2px 4px 14px;
-  border-bottom: 1px solid var(--edge);
+  gap: 10px;
+  padding: 2px 4px 15px;
 }
+/* The rules in the panel fade at their ends — see --rule. */
+.brand::after,
+.sidebar-footer::before,
+.grid-panel::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 1px;
+  background: var(--rule);
+  pointer-events: none;
+}
+.brand::after {
+  bottom: 0;
+}
+/* The mark is the projector lamp: lit steel with a halo at rest, and the colour of what is on while
+   something plays. The halo is a drop-shadow on the icon rather than a box, so it follows the
+   rounded square and the triangle instead of glowing as a rectangle. */
 .brand-mark {
-  font-size: 18px;
-  color: var(--steel);
+  font-size: 20px;
+  color: var(--steel-hot);
+  filter: drop-shadow(0 0 5px rgba(157, 178, 200, 0.55));
   /* The play triangle is filled from the sprite; the ring is a stroke like every other icon. */
-  transition: opacity 0.45s ease;
+  transition: opacity 0.45s ease, color 0.6s ease, filter 0.6s ease;
 }
+body.playing .brand-mark {
+  color: color-mix(in srgb, var(--onair) 55%, #fff);
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--onair) 80%, transparent));
+}
+/* Marquee lettering, in two weights of light: STREAM in the type's own white, HUB in steel. */
 .brand-text {
   flex: 1;
   min-width: 0;
@@ -253,9 +289,14 @@ body.mpv:not(.overlay) {
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.18em;
   color: var(--text);
+  white-space: nowrap;
   transition: opacity 0.45s ease;
+}
+.brand-text b {
+  font-weight: 600;
+  color: var(--steel);
 }
 
 /* ---- The seam ---- */
@@ -275,8 +316,11 @@ body.mpv:not(.overlay) {
   position: absolute;
   inset: -1px;
   border-radius: inherit;
-  border: 1px solid rgba(157, 178, 200, 0.6);
-  box-shadow: 0 0 26px -2px rgba(157, 178, 200, 0.45);
+  /* In the colour of what is on — Netflix red, Twitch purple — mixed toward white for the edge
+     itself, so a dark brand blue still reads as light rather than as a dark outline. */
+  border: 1px solid color-mix(in srgb, var(--onair) 65%, #fff 10%);
+  box-shadow: 0 0 28px -2px color-mix(in srgb, var(--onair) 55%, transparent),
+    inset 0 0 22px -8px color-mix(in srgb, var(--onair) 40%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.6s ease;
@@ -316,6 +360,48 @@ body.stowed:not(.peeking) #sidebar::after {
   }
 }
 
+/* As playback starts, a bead of light runs once down the seam — the projector catching. A short
+   lit bar travelling by transform alone, so it is composited, and it runs exactly once: by the time
+   the breaths have settled it has gone. Coming back into view does not replay it; the breaths are
+   enough of a "still on air" for that. */
+#sidebar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -1px;
+  width: 2px;
+  height: 22%;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--onair) 45%, #fff) 50%,
+    transparent
+  );
+  box-shadow: 0 0 14px color-mix(in srgb, var(--onair) 70%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+body.playing #sidebar::before {
+  animation: seam-sweep 2.2s cubic-bezier(0.45, 0, 0.25, 1) 0.15s 1 both;
+}
+@keyframes seam-sweep {
+  0% {
+    transform: translateY(-20%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(360%);
+    opacity: 0;
+  }
+}
+
 /* Hamburger: collapses the sidebar to an icon rail and back. */
 #btn-collapse {
   width: 28px;
@@ -327,10 +413,13 @@ body.stowed:not(.peeking) #sidebar::after {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background var(--ease);
+  transition: background var(--ease), transform var(--ease);
 }
 #btn-collapse:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.06);
+}
+#btn-collapse:active {
+  transform: scale(0.92);
 }
 .bars,
 .bars::before,
@@ -368,7 +457,7 @@ body.stowed:not(.peeking) #sidebar::after {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   flex: 1;
   overflow-y: auto;
 }
@@ -389,33 +478,50 @@ body.stowed:not(.peeking) #sidebar::after {
   position: relative;
   transition: background var(--ease), color var(--ease);
 }
-/* The light marking the row that is showing. Drawn always, unlit until it is. */
+/* The light marking the row that is showing: a short lit bar in the service's own colour, held at
+   zero height until the row is chosen and then drawn out from its middle. Scaled rather than
+   resized, so the growth is composited. */
 .service::before {
   content: "";
   position: absolute;
-  left: 4px;
+  left: 3px;
   top: 50%;
-  width: 4px;
-  height: 4px;
-  margin-top: -2px;
-  border-radius: 50%;
-  background: transparent;
-  transition: background 0.2s ease, box-shadow 0.2s ease;
+  width: 3px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--brand) 70%, #fff 30%);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--brand) 85%, transparent);
+  transform: scaleY(0);
+  opacity: 0;
+  transition: transform var(--ease-move), opacity 0.2s ease;
 }
+/* Aimed at: the faintest wash of the service's colour, so the row says whose it is before it is
+   chosen. */
 .service:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--brand) 10%, rgba(255, 255, 255, 0.035));
 }
-/* The row that is showing: the steel wash, plus a hairline of the same light around it. On glass
-   this thin, a wash alone was starting to read as a smudge rather than as a selection. */
+.service:active {
+  transform: scale(0.985);
+}
+/* The row that is showing, lit in its own colour: a wash that is strongest at the bar and fades
+   across the row, and a hairline of the same light around it. Against a white frame behind the
+   glass the strongest point of the wash keeps the name above 4.5:1 for every shipped colour —
+   which is why it stops at 26% rather than going richer. */
 .service.active {
   color: var(--text);
-  background: var(--steel-wash);
-  box-shadow: inset 0 0 0 1px rgba(157, 178, 200, 0.16);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--brand) 26%, transparent),
+    color-mix(in srgb, var(--brand) 7%, transparent) 78%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .service.active::before {
-  background: var(--steel);
-  box-shadow: 0 0 7px var(--steel-glow);
+  transform: scaleY(1);
+  opacity: 1;
 }
 
 /* The service's own mark is the poster on the wall: dimmed while the row is at rest and lit to
@@ -440,11 +546,81 @@ body.stowed:not(.peeking) #sidebar::after {
      reads as "washed out" rather than "in shadow". Brightness alone keeps the mark recognisably
      Netflix-red or Twitch-purple while it waits its turn. */
   filter: brightness(0.58);
-  transition: filter 0.2s ease;
+  transition: filter 0.2s ease, box-shadow 0.2s ease, transform var(--ease-move);
 }
 .service:hover .icon,
 .service.active .icon {
   filter: none;
+}
+/* Lit, the mark throws its own light onto the glass around it. */
+.service.active .icon {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 16px -3px color-mix(in srgb, var(--brand) 80%, transparent);
+}
+.service:hover .icon {
+  transform: scale(1.06);
+}
+
+/* Now playing: three bars dancing in the row that is on, where the blocked count would be. They
+   dance a few beats as playback starts and then hold, mid-step — the same rule as the seam: an
+   animation that never ends is a frame out of this view, over the picture, for the whole film.
+   Scaled rather than resized, so the dance is composited. Not in grid mode, where several rows
+   are lit at once and "the one playing" is not something this view knows. */
+.service .eq {
+  display: none;
+  flex-shrink: 0;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+}
+body.playing:not(.grid-mode) .service.active .eq {
+  display: flex;
+}
+body.playing:not(.grid-mode) .service.active .shield {
+  display: none;
+}
+.service .eq i {
+  display: block;
+  width: 2.5px;
+  height: 100%;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--brand) 55%, #fff);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--brand) 70%, transparent);
+  transform-origin: bottom;
+  transform: scaleY(0.5);
+  animation: eq 0.86s ease-in-out 10 alternate;
+}
+.service .eq i:nth-child(2) {
+  transform: scaleY(0.85);
+  animation-duration: 0.62s;
+  animation-delay: -0.2s;
+}
+.service .eq i:nth-child(3) {
+  transform: scaleY(0.35);
+  animation-duration: 0.74s;
+  animation-delay: -0.4s;
+}
+/* An even count with alternate, so each bar comes to rest on its own `from` — the uneven skyline
+   it started on, rather than three bars of the same height. */
+@keyframes eq {
+  from {
+    transform: scaleY(var(--eq-rest, 0.5));
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.service .eq i:nth-child(1) {
+  --eq-rest: 0.5;
+}
+.service .eq i:nth-child(2) {
+  --eq-rest: 0.85;
+}
+.service .eq i:nth-child(3) {
+  --eq-rest: 0.35;
+}
+body.stowed:not(.peeking) .service .eq i {
+  animation: none;
 }
 
 /* A service's own logo, learned from its site (renderer.js paintMark). One rule for every place a
@@ -572,11 +748,14 @@ body.grid-full .service {
    A rule above it, because the service list scrolls under this panel: without one the last row
    visible looks like the end of the list rather than the point where it is clipped. */
 .grid-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--edge);
+  gap: 9px;
+  padding-top: 13px;
+}
+.grid-panel::before {
+  top: 0;
 }
 .grid-panel[hidden] {
   display: none;
@@ -588,12 +767,14 @@ body.grid-full .service {
    view, so nothing reloads and nothing playing is interrupted). */
 .grid-preview {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   aspect-ratio: 16 / 10;
-  padding: 3px;
+  padding: 4px;
   border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
+  /* A little screen: the window's own ink, sunk into the glass. */
   background: var(--ink);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55);
 }
 /* One pane fills the screen whatever the arrangement says, so this must come after — and beat —
    nothing: no arrangement rule below matches a count of one. */
@@ -639,14 +820,23 @@ body.grid-full .service {
   place-items: center;
   min-width: 0;
   min-height: 0;
-  border-radius: 3px;
-  background: var(--gun-raised);
+  border-radius: 5px;
+  /* Each pane glows faintly in the colour of what is in it, so the arrangement reads at a glance
+     as "Netflix top left, Twitch along the bottom" before any mark is made out. */
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--brand) 30%, #161a22),
+    color-mix(in srgb, var(--brand) 9%, #101319)
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   cursor: grab;
-  transition: background var(--ease), box-shadow var(--ease);
+  transition: filter var(--ease), box-shadow var(--ease);
 }
 .pane-tile:hover {
-  background: var(--gun-hover);
-  box-shadow: inset 0 0 0 1px var(--steel-edge);
+  filter: brightness(1.2);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 60%, transparent),
+    0 0 12px -3px color-mix(in srgb, var(--brand) 70%, transparent);
 }
 .pane-tile:active {
   cursor: grabbing;
@@ -657,16 +847,16 @@ body.grid-full .service {
 /* The same coloured initial the service row uses, so a tile is identifiable at a glance without
    room for the name. */
 .pane-tile-mark {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   font-family: var(--font-display);
   font-size: 10px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 18px;
   text-align: center;
   color: #fff;
-  filter: brightness(0.8);
 }
 .pane-tile-num {
   position: absolute;
@@ -714,33 +904,47 @@ body.grid-full .service {
 
 /* Arrangement picker. A segmented row rather than a cycling button, so which arrangements exist —
    and which is in use — is visible without clicking through them. */
+/* Sunk into the glass as a tray, with the chosen arrangement standing up out of it — the same
+   material as the toolbar below. */
+.grid-layout,
+.toolbar {
+  padding: 3px;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
 .grid-layout {
   display: flex;
-  gap: 3px;
+  gap: 2px;
 }
 .grid-layout button {
   flex: 1;
   display: grid;
   place-items: center;
-  height: 24px;
+  height: 26px;
   padding: 0;
-  border: 1px solid var(--edge);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--dim-2);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  transition: background var(--ease), color var(--ease), border-color var(--ease);
+  transition: background var(--ease), color var(--ease), border-color var(--ease),
+    box-shadow var(--ease), transform var(--ease);
 }
 .grid-layout button:hover:not(:disabled) {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.06);
+}
+.grid-layout button:active:not(:disabled) {
+  transform: scale(0.92);
 }
 .grid-layout button.active {
-  color: var(--steel);
+  color: var(--steel-hot);
   border-color: var(--steel-edge);
-  background: var(--steel-wash);
+  background: linear-gradient(180deg, rgba(157, 178, 200, 0.26), rgba(157, 178, 200, 0.12));
+  box-shadow: 0 0 12px -4px var(--steel-glow), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 /* One pane has no arrangement to speak of; dim the row rather than removing it, so the sidebar
    does not reflow every time a pane is added or closed. */
@@ -766,10 +970,11 @@ body.grid-full .service {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
   color: var(--dim-2);
   border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   padding: 8px 6px;
   font-family: var(--font-display);
   font-size: 11px;
@@ -777,12 +982,16 @@ body.grid-full .service {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color var(--ease), border-color var(--ease), background var(--ease);
+  transition: color var(--ease), border-color var(--ease), background var(--ease),
+    transform var(--ease);
 }
 .list-actions button:hover {
-  color: var(--steel);
+  color: var(--steel-hot);
   border-color: var(--steel-edge);
   background: var(--steel-wash);
+}
+.list-actions button:active {
+  transform: scale(0.97);
 }
 .list-actions button .ico {
   font-size: 13px;
@@ -797,19 +1006,23 @@ body.grid-full .service {
 
 /* ---- Footer: navigation, version, settings ---- */
 .sidebar-footer {
-  border-top: 1px solid var(--edge);
-  padding-top: 12px;
+  position: relative;
+  padding-top: 13px;
+}
+.sidebar-footer::before {
+  top: 0;
 }
 
+/* The tray itself is shared with the arrangement picker, above. */
 .toolbar {
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 .toolbar button {
   flex: 1;
   display: grid;
   place-items: center;
-  height: 32px;
+  height: 30px;
   background: transparent;
   color: var(--dim);
   border: 1px solid transparent;
@@ -818,20 +1031,26 @@ body.grid-full .service {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  transition: color var(--ease), background var(--ease), border-color var(--ease);
+  transition: color var(--ease), background var(--ease), border-color var(--ease),
+    box-shadow var(--ease), transform var(--ease);
 }
+/* A key that rises to meet the pointer and gives under the click. */
 .toolbar button:hover {
-  color: var(--steel);
-  background: rgba(255, 255, 255, 0.035);
+  color: var(--steel-hot);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 .toolbar button:active {
-  background: rgba(0, 0, 0, 0.35);
+  transform: scale(0.9);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: none;
 }
 /* Grid-view toggle while it is on: lit, so the mode is obvious at a glance. */
 .toolbar button.active {
-  color: var(--steel);
+  color: var(--steel-hot);
   border-color: var(--steel-edge);
-  background: var(--steel-wash);
+  background: linear-gradient(180deg, rgba(157, 178, 200, 0.26), rgba(157, 178, 200, 0.12));
+  box-shadow: 0 0 12px -4px var(--steel-glow), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .app-meta {
@@ -855,24 +1074,30 @@ body.grid-full .service {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
   color: var(--dim);
   border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  padding: 5px 10px;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.25);
+  padding: 6px 12px;
   font-family: var(--font-display);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color var(--ease), border-color var(--ease), background var(--ease);
+  transition: color var(--ease), border-color var(--ease), background var(--ease),
+    transform var(--ease);
 }
 #btn-update:hover,
 #btn-settings:hover {
-  color: var(--steel);
+  color: var(--steel-hot);
   border-color: var(--steel-edge);
   background: var(--steel-wash);
+}
+#btn-update:active:not(:disabled),
+#btn-settings:active {
+  transform: scale(0.96);
 }
 #btn-update:disabled {
   opacity: 0.55;
@@ -943,8 +1168,9 @@ body.stowed.peeking #sidebar {
   bottom: var(--float);
   width: 2px;
   border-radius: 2px;
-  background: rgba(157, 178, 200, 0.72);
-  box-shadow: 0 0 18px rgba(157, 178, 200, 0.5);
+  /* The colour of what is on, as the panel's own seam is — see #sidebar::after. */
+  background: color-mix(in srgb, var(--onair) 60%, #fff 25%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--onair) 60%, transparent);
   opacity: 0;
 }
 .edge-strip[hidden] {
@@ -1099,14 +1325,34 @@ body.collapsed .service .label {
 }
 body.collapsed .service {
   justify-content: center;
-  padding: 8px 0;
+  padding: 7px 0;
   gap: 0;
 }
+/* The rail's rows are barely wider than the mark, so a bar beside it would sit on it. Lit, the mark
+   wears a ring of its own colour instead — the same light, moved to where there is room for it. */
 body.collapsed .service::before {
-  left: 1px;
+  display: none;
+}
+body.collapsed .service.active {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+}
+/* A touch smaller in the rail, so the ring has room inside the list's clip on either side. */
+body.collapsed .service .icon {
+  width: 24px;
+  height: 24px;
+}
+body.collapsed .service.active .icon {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 65%, #fff 20%),
+    0 0 14px -2px color-mix(in srgb, var(--brand) 80%, transparent);
 }
 body.collapsed .toolbar {
   flex-direction: column;
+}
+/* Stacked, the buttons keep their own height; flex: 1 would share out a height the column does
+   not have, and squeeze them to the size of their icons. */
+body.collapsed .toolbar button {
+  flex: none;
+  height: 26px;
 }
 /* The blocked count goes with the label: in the rail there is no name beside it to say what the
    number counts, so it reads as a stray digit crammed against the mark. The grid panel and the
@@ -1114,6 +1360,7 @@ body.collapsed .toolbar {
    the picker is a labelled row of three. */
 body.collapsed .service .del,
 body.collapsed .service .shield,
+body.playing:not(.grid-mode).collapsed .service.active .eq,
 body.collapsed .service .grid-num,
 body.collapsed .grid-panel,
 body.collapsed .list-actions {
@@ -1142,8 +1389,8 @@ body.collapsed #btn-settings .gear {
 .context-menu {
   position: fixed;
   z-index: 50;
-  min-width: 190px;
-  padding: 5px;
+  min-width: 210px;
+  padding: 6px;
   border: 1px solid var(--edge-strong);
   border-radius: var(--radius);
   background: var(--sheen), var(--gun-raised);
@@ -1158,29 +1405,44 @@ body.collapsed #btn-settings .gear {
     opacity: 0;
   }
 }
+/* Headed with the service's name and a lamp in its colour, so it is plain which row the menu
+   belongs to once the pointer has left it. */
 .context-title {
-  padding: 6px 8px 7px;
-  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px 9px;
+  margin-bottom: 4px;
   font-family: var(--font-display);
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--dim-2);
+  color: var(--dim);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--edge);
+}
+.context-title::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand) 70%, #fff 30%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--brand) 85%, transparent);
 }
 .context-item {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 7px 8px;
+  padding: 8px 10px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font-family: var(--font-body);
   font-size: 12.5px;
   cursor: pointer;
+  transition: background var(--ease), color var(--ease);
 }
 /* `display: block` above is an author rule, so it outranks the UA stylesheet's `[hidden]` no matter
    the specificity — without this, an item hidden from script (Change server, which only a
@@ -1207,12 +1469,14 @@ body.collapsed #btn-settings .gear {
    had nowhere to put a panel, and the service view owned everything to its right. Now they are
    sheets over the page. The scrim is what puts one in front of the page rather than floating in it,
    and it doubles as the click target that dismisses it. */
+/* Darker toward the edges than the middle — a vignette, the way a cinema dims, rather than a flat
+   grey sheet over the picture. */
 .scrim {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(6, 8, 12, 0.5);
-  animation: fade var(--ease);
+  background: radial-gradient(ellipse at 50% 40%, rgba(6, 8, 12, 0.38), rgba(6, 8, 12, 0.72));
+  animation: fade 0.22s ease;
 }
 @keyframes fade {
   from {
@@ -1233,7 +1497,7 @@ body.collapsed #btn-settings .gear {
   z-index: 41;
   display: flex;
   flex-direction: column;
-  width: min(460px, 60vw);
+  width: min(480px, 62vw);
   height: calc(100% - var(--float) * 2);
   background: var(--sheen), var(--gun-raised);
   border: 1px solid var(--edge-strong);
@@ -1247,25 +1511,76 @@ body.collapsed #btn-settings .gear {
 }
 @keyframes sheet-in {
   from {
-    transform: translateX(20px);
+    transform: translateX(28px) scale(0.99);
+    opacity: 0;
+  }
+}
+/* What is on the sheet follows it in, a beat behind and one after another, so it settles rather
+   than arrives all at once. Replays each time the sheet opens, since [hidden] takes it out of
+   rendering altogether. */
+.sheet-body > * {
+  animation: rise 0.42s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.sheet-body > :nth-child(2) {
+  animation-delay: 30ms;
+}
+.sheet-body > :nth-child(3) {
+  animation-delay: 60ms;
+}
+.sheet-body > :nth-child(4) {
+  animation-delay: 90ms;
+}
+.sheet-body > :nth-child(5) {
+  animation-delay: 120ms;
+}
+.sheet-body > :nth-child(6) {
+  animation-delay: 150ms;
+}
+.sheet-body > :nth-child(n + 7) {
+  animation-delay: 180ms;
+}
+@keyframes rise {
+  from {
+    transform: translateY(8px);
     opacity: 0;
   }
 }
 
 .sheet-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--edge);
+  padding: 20px 22px 16px;
 }
+.sheet-head::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 1px;
+  background: var(--rule);
+}
+/* The title gets the same lit tick as the sections under it, larger — one family of headings. */
 .sheet-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
+}
+.sheet-head h1::before {
+  content: "";
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--steel-hot);
+  box-shadow: 0 0 10px var(--steel-glow);
 }
 .sheet-close {
   display: grid;
@@ -1281,94 +1596,168 @@ body.collapsed #btn-settings .gear {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  transition: background var(--ease), color var(--ease);
+  transition: background var(--ease), color var(--ease), transform var(--ease-move);
 }
 .sheet-close:hover {
   background: var(--gun-hover);
   color: var(--text);
+  transform: rotate(90deg);
 }
 
 .sheet-body {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 20px 24px;
+  padding: 18px 22px 28px;
 }
 .sheet-lede {
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--dim);
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 /* ---- Quick switch ---- */
+/* Spotlight-grade: a big field to type into, results with the chosen one lit in its own colour, and
+   the keys that work it drawn as keys. It carries a faint steel bloom under it so it reads as lit
+   from within, sitting in front of the dimmed picture. */
 .palette {
   position: fixed;
   z-index: 45;
-  top: 16vh;
+  top: 14vh;
   left: 50%;
   transform: translateX(-50%);
-  width: min(440px, 76vw);
-  padding: 7px;
+  width: min(560px, 80vw);
+  padding: 8px;
   border: 1px solid var(--edge-strong);
-  border-radius: var(--radius-lg);
+  border-radius: 18px;
   background: var(--sheen), var(--gun-raised);
-  box-shadow: var(--lift-high);
-  animation: pop 0.16s cubic-bezier(0.32, 0.72, 0, 1);
+  box-shadow: var(--lift-high), 0 30px 120px -30px rgba(157, 178, 200, 0.28);
+  animation: palette-in 0.2s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .palette[hidden] {
   display: none;
 }
+/* The palette is centred by its transform, so its entrance cannot borrow `pop`, which would
+   overwrite the centring for the length of the animation. */
+@keyframes palette-in {
+  from {
+    transform: translateX(-50%) translateY(-6px) scale(0.98);
+    opacity: 0;
+  }
+}
 
-.palette-input {
-  width: 100%;
-  padding: 11px 12px;
-  border: none;
+.palette-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 14px 12px;
+  margin-bottom: 6px;
   border-bottom: 1px solid var(--edge);
+  color: var(--dim-2);
+  font-size: 20px; /* the search icon's size */
+  cursor: text;
+}
+.palette-field:focus-within > .ico {
+  color: var(--steel);
+}
+.palette-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: none;
   background: transparent;
   color: var(--text);
   font-family: var(--font-body);
-  font-size: 14px;
+  font-size: 19px;
+  letter-spacing: -0.005em;
   outline: none;
 }
 .palette-input::placeholder {
   color: var(--dim-2);
 }
 
+/* Keys, drawn as keys: a raised cap with a heavier bottom edge. */
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--edge-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
 .palette-list {
   list-style: none;
   max-height: 46vh;
   overflow-y: auto;
-  margin: 4px 0;
+  margin: 0 0 6px;
 }
 .palette-list li {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 11px;
   color: var(--dim);
-  font-size: 13.5px;
+  font-size: 14.5px;
   cursor: pointer;
+  transition: background var(--ease), color var(--ease);
 }
+.palette-list li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.palette-list li:hover:not(.on):not(.palette-empty) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+/* The one Enter would take, lit in its own colour — the same light as the row that is showing in
+   the sidebar. */
 .palette-list li.on {
-  background: var(--steel-wash);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--brand) 26%, transparent),
+    color-mix(in srgb, var(--brand) 6%, transparent)
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 32%, transparent);
   color: var(--text);
 }
 .palette-list .icon {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  filter: brightness(0.7);
+  transition: filter var(--ease), box-shadow var(--ease);
+}
+.palette-list li.on .icon,
+.palette-list li:hover .icon {
+  filter: none;
+}
+.palette-list li.on .icon {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 18px -3px color-mix(in srgb, var(--brand) 80%, transparent);
+}
+.palette-list .go {
+  color: var(--text);
 }
 /* Says what a match would do without a second column of type: a service already tiled is offering
    another pane, not a switch. */
 .palette-list .where {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 9.5px;
   color: var(--dim-2);
@@ -1376,59 +1765,91 @@ body.collapsed #btn-settings .gear {
 
 .palette-hint {
   display: flex;
-  gap: 14px;
-  padding: 7px 10px 4px;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 10px 12px 4px;
   border-top: 1px solid var(--edge);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--dim-2);
+}
+.palette-hint span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.palette-hint kbd {
+  margin-right: 2px;
 }
 
 .palette-empty {
-  padding: 14px 10px;
-  font-size: 12.5px;
+  padding: 16px 12px;
+  font-size: 13px;
   color: var(--dim-2);
 }
 
 .settings-section {
-  margin-bottom: 22px;
+  margin-bottom: 26px;
 }
+/* A lit tick and the name, rather than a rule under it: the card below is boundary enough. */
 .settings-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-family: var(--font-display);
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--dim-2);
+  color: var(--dim);
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  margin-bottom: 10px;
-  padding-bottom: 7px;
-  border-bottom: 1px solid var(--edge);
+  margin: 0 2px 10px;
+}
+.settings-section h2::before {
+  content: "";
+  width: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--steel);
+  box-shadow: 0 0 6px var(--steel-glow);
 }
 .section-note {
-  margin-top: 9px;
+  margin: 10px 2px 0;
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--dim-2);
 }
 
+/* One card per section with its switches as rows inside it, divided by hairlines — rather than a
+   card per switch, which stacked into a wall of outlines. Light laid on the glass, as before. */
 .settings {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
 }
 
 .setting {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 11px;
+  gap: 14px;
+  padding: 13px 14px;
+  cursor: pointer;
+  transition: background var(--ease), box-shadow var(--ease);
+}
+.settings > .setting + .setting {
+  border-top: 1px solid var(--edge);
+}
+/* A row standing on its own (the update row) is its own card. */
+.settings-section > .setting {
   border: 1px solid var(--edge);
   border-radius: var(--radius);
   background: var(--card);
-  cursor: pointer;
-  transition: border-color var(--ease), background var(--ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .setting:hover {
-  background: var(--card-hover);
+  background: rgba(255, 255, 255, 0.035);
 }
 /* A switch that means nothing on this machine is left out (renderer.js sets `hidden`), and the
    author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]`. */
@@ -1436,24 +1857,26 @@ body.collapsed #btn-settings .gear {
   display: none;
 }
 .setting:focus-within {
-  border-color: var(--steel-edge);
+  box-shadow: inset 0 0 0 1px var(--steel-edge);
 }
 
-/* The checkbox is a switch, on the right of the row where a settings switch is expected: a short
-   dark track with a knob that travels, and the knob is the lamp — dim at rest, lit steel when on.
-   Same rule as everything else here: active is lit, nothing else carries colour. */
+/* The checkbox is a switch, on the right of the row where a settings switch is expected: a sunken
+   track with a knob that travels. On, the track fills with lit steel and glows — active is lit,
+   nothing else carries colour. The knob stretches while it is pressed, the way a real one gives
+   under a thumb, and travels on the moving ease so it lands rather than snaps. */
 .setting input[type="checkbox"] {
   appearance: none;
   order: 2;
   flex-shrink: 0;
   position: relative;
   align-self: center;
-  width: 32px;
-  height: 18px;
+  width: 38px;
+  height: 22px;
   margin-left: auto;
   border: 1px solid var(--edge-strong);
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.38);
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
   cursor: pointer;
   transition: background var(--ease), border-color var(--ease), box-shadow var(--ease);
 }
@@ -1462,20 +1885,30 @@ body.collapsed #btn-settings .gear {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--dim-2);
-  transition: transform var(--ease-move), background var(--ease), box-shadow var(--ease);
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #c9d1dc, #99a5b5);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform var(--ease-move), width var(--ease-move), background var(--ease),
+    box-shadow var(--ease);
+}
+.setting input[type="checkbox"]:active:not(:disabled)::after {
+  width: 20px;
 }
 .setting input[type="checkbox"]:checked {
-  background: var(--steel-wash);
-  border-color: var(--steel-edge);
+  background: linear-gradient(180deg, rgba(167, 189, 211, 0.8), rgba(122, 144, 168, 0.7));
+  border-color: rgba(214, 226, 239, 0.45);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 14px -3px var(--steel-glow);
 }
 .setting input[type="checkbox"]:checked::after {
-  transform: translateX(14px);
-  background: var(--steel-hot);
-  box-shadow: 0 0 7px var(--steel-glow);
+  transform: translateX(16px);
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+/* Pressed while on, the stretched knob grows leftward, so its right edge stays put. */
+.setting input[type="checkbox"]:checked:active:not(:disabled)::after {
+  transform: translateX(12px);
 }
 .setting input[type="checkbox"]:disabled {
   opacity: 0.45;
@@ -1526,7 +1959,7 @@ body.collapsed #btn-settings .gear {
   min-width: 0;
 }
 .setting-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
   line-height: 1.3;
@@ -1545,7 +1978,8 @@ body.collapsed #btn-settings .gear {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 4px 0 12px; /* line up under the row's text */
+  padding: 0 14px 12px; /* inside the card, under the row's text */
+  margin-top: -4px;
 }
 /* The row is only shown once the engine is actually loaded (renderer.js sets `hidden`), and the
    author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]` — leaving a
@@ -1560,11 +1994,11 @@ body.collapsed #btn-settings .gear {
   white-space: nowrap; /* "Updated today" must not wrap beside the button */
 }
 #btn-refresh-filters {
-  background: transparent;
-  color: var(--dim-2);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--dim);
   border: 1px solid var(--edge);
-  border-radius: 4px;
-  padding: 3px 8px;
+  border-radius: 999px;
+  padding: 3px 10px;
   font-family: var(--font-display);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -1599,16 +2033,22 @@ body.collapsed #btn-settings .gear {
 
 /* ---- Removed services ---- */
 #sheet-removed .service.restorable {
-  padding: 10px 12px;
-  margin-bottom: 6px;
+  padding: 11px 14px;
+  margin-bottom: 7px;
   border: 1px solid var(--edge);
   background: var(--card);
-  transition: background var(--ease), border-color var(--ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: background var(--ease), border-color var(--ease), transform var(--ease);
 }
+/* Aimed at, a removed service lights in its own colour — the same light it would have back in the
+   list. */
 #sheet-removed .service.restorable:hover {
-  background: var(--card-hover);
-  border-color: var(--steel-edge);
+  background: color-mix(in srgb, var(--brand) 14%, var(--card));
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
   color: var(--text);
+}
+#sheet-removed .service.restorable:hover .icon {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32), 0 0 16px -3px color-mix(in srgb, var(--brand) 80%, transparent);
 }
 #sheet-removed .service .restore-plus {
   flex-shrink: 0;
@@ -1617,7 +2057,7 @@ body.collapsed #btn-settings .gear {
   transition: color var(--ease);
 }
 #sheet-removed .service.restorable:hover .restore-plus {
-  color: var(--steel);
+  color: var(--text);
 }
 .empty {
   color: var(--dim-2);

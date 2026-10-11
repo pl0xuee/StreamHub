@@ -87,6 +87,19 @@ function paintMark(el, svc) {
   el.textContent = initial(svc.name);
 }
 
+// The service's own colour, handed to the stylesheet as --brand on whatever represents it — a row,
+// a tile, a quick-switch entry, the menu opened on it. The chrome stays steel at rest; it is only
+// where a service is lit (active, aimed at, chosen) that its light is the service's own, so the
+// colour has to travel with the element rather than live in a rule per service. Anything without
+// one falls back to steel in the stylesheet.
+function brand(el, svc, prop = '--brand') {
+  if (svc && typeof svc.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(svc.color)) {
+    el.style.setProperty(prop, svc.color);
+  } else {
+    el.style.removeProperty(prop);
+  }
+}
+
 // One of the icons drawn in index.html's sprite, as an element. The rows this file builds carry the
 // same line icons the static chrome does, so a delete cross here is the same cross as the one on a
 // sheet's close button.
@@ -106,6 +119,7 @@ function makeServiceEl(svc) {
   li.className = 'service' + (isSelected(svc.id) ? ' active' : '');
   li.dataset.id = svc.id;
   li.draggable = true;
+  brand(li, svc);
   // The label is dropped in the collapsed rail, which leaves only a coloured initial —
   // and two services can share one (YouTube and YouTube TV both give "Y").
   li.title = svc.name;
@@ -145,7 +159,15 @@ function makeServiceEl(svc) {
     window.shell.removeService(svc.id);
   });
 
-  li.append(icon, label, shield, del);
+  // Three bars that dance while this row is what is playing, where the blocked count sits. Always
+  // built and shown by the stylesheet off body.playing, because playback arrives on its own channel
+  // and must not re-render the list (see `playing`, above).
+  const eq = document.createElement('span');
+  eq.className = 'eq';
+  eq.setAttribute('aria-hidden', 'true');
+  eq.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+
+  li.append(icon, label, eq, shield, del);
 
   // In grid mode a tiled service shows a numbered badge per pane it occupies, so the sidebar
   // mirrors the on-screen layout even when one service holds several tiles. Clicking a badge
@@ -242,6 +264,7 @@ function renderGridPreview() {
     tile.className = 'pane-tile';
     tile.dataset.paneId = pane.paneId;
     tile.draggable = true;
+    brand(tile, svc);
     tile.title = `Pane ${i + 1}: ${svc.name} — drag to move it`;
 
     const num = document.createElement('span');
@@ -352,6 +375,7 @@ function closeServiceMenu() {
 function openServiceMenu(svc, x, y) {
   menuServiceId = svc.id;
   menuTitleEl.textContent = svc.name;
+  brand(menuEl, svc);
 
   const globallyOn = Boolean(state.adblock && state.adblock.enabled);
   const onHere = adblockOnFor(svc.id);
@@ -703,6 +727,7 @@ function renderPalette() {
   matches.forEach((svc, i) => {
     const li = document.createElement('li');
     if (i === paletteIndex) li.className = 'on';
+    brand(li, svc);
 
     const icon = document.createElement('span');
     icon.className = 'icon';
@@ -712,6 +737,14 @@ function renderPalette() {
     label.textContent = svc.name;
 
     li.append(icon, label);
+
+    // What Enter would do with the highlighted row, said on the row itself as a keycap.
+    if (i === paletteIndex) {
+      const key = document.createElement('kbd');
+      key.className = 'go';
+      key.textContent = state.gridMode ? 'Add ↵' : '↵';
+      li.appendChild(key);
+    }
 
     // In grid mode every choice adds a pane rather than switching, so say which panes this service
     // already holds — otherwise a second Enter on the same row looks like it did nothing.
@@ -847,6 +880,7 @@ function renderRemoved(removed) {
     const li = document.createElement('li');
     li.className = 'service restorable';
     li.dataset.id = svc.id;
+    brand(li, svc);
     li.title = `Add ${svc.name} back`;
 
     const icon = document.createElement('span');
@@ -950,6 +984,13 @@ function applyState(next) {
   renderGridToggle();
   renderGridPreview();
   if (state.version) document.getElementById('app-version').textContent = `v${state.version}`;
+  // The on-air light is the colour of what is on: the seam glows Netflix red while Netflix plays.
+  // In grid mode there is no one service in front, so it stays steel.
+  brand(
+    document.body,
+    state.gridMode ? null : (state.services || []).find((s) => s.id === state.activeServiceId),
+    '--onair',
+  );
   // Last, because it asks for the chrome region that all of the above has just settled.
   renderStow();
 }
