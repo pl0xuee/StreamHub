@@ -19,6 +19,7 @@
 // go, on the same reasoning the app already applies to a site going fullscreen.
 const { BrowserWindow, screen } = require('electron');
 const { EventEmitter } = require('events');
+const { execFile } = require('child_process');
 const { Mpv, isAvailable } = require('./mpv');
 
 // How often to tell the server where we are. Jellyfin's own clients report every ten seconds;
@@ -27,6 +28,35 @@ const PROGRESS_INTERVAL_MS = 10000;
 // How often to tell the *page*. It is in the same process tree and it reads the position out of
 // its own mirror the moment anything asks — so this is what the resume point is rounded to.
 const PAGE_TICK_MS = 1000;
+
+// What the host window is called, so it can be told apart from the app's own window — on Hyprland
+// both are class "streamhub" and belong to the same process. See undecorateHost().
+const HOST_TITLE = 'StreamHub Player';
+
+// The window properties Hyprland is asked to drop from the host, as [name, value].
+//
+// Hyprland floats the host — it is transient for the main window — and decorates it the way it
+// decorates any window: a border, rounded corners, a shadow. Around a picture that is meant to be
+// part of the app, that reads as a second window sitting inside the first, and in fullscreen it
+// keeps the film off the edges of the screen, with the wallpaper showing in the rounded corners.
+// It is animated like any window as well, so as the sidebar slides out the picture trails behind
+// it instead of moving with it.
+const HOST_HYPRLAND_PROPS = [
+  ['border_size', '0'],
+  ['rounding', '0'],
+  ['decorate', '0'],
+  ['no_anim', '1'],
+];
+
+// Run hyprctl, resolving to its output or null. Never rejects: failing to undecorate the window
+// costs a border, not the film.
+function hyprctl(args) {
+  return new Promise((resolve) => {
+    execFile('hyprctl', args, { timeout: 2000 }, (err, stdout) => {
+      resolve(err ? null : String(stdout || ''));
+    });
+  });
+}
 
 /**
  * Owns the host window and the mpv talking to it.
@@ -275,6 +305,47 @@ class Player extends EventEmitter {
     this.layout();
     this.host.showInactive();
     this.layout();
+    this.undecorateHost();
+  }
+
+  /**
+   * Ask Hyprland not to decorate or animate the host. See HOST_HYPRLAND_PROPS for why.
+   *
+   * Done every time the host is shown rather than once. Hiding an X window unmaps it, and a window
+   * Hyprland maps again can come back as a new window with its defaults, so the properties are
+   * re-asserted rather than trusted to have survived; asking again for what is already set costs
+   * nothing. A window rule would last, but window rules are the user's config, and this is the
+   * app's own window.
+   *
+   * Both dispatcher syntaxes are tried: Hyprland with a Lua config (0.56 here) takes
+   * hl.dsp.window.set_prop and answers the classic `setprop` with "unknown request"; older
+   * releases only know the classic one. The window is found by process and title, and is looked
+   * for a few times, because a window shown a moment ago may not have been mapped yet.
+   */
+  async undecorateHost(attempt = 0) {
+    if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return;
+    if (!this.embedded || !this.host || this.host.isDestroyed() || !this.host.isVisible()) return;
+    let clients = null;
+    try {
+      clients = JSON.parse((await hyprctl(['clients', '-j'])) || 'null');
+    } catch {
+      clients = null;
+    }
+    const me = Array.isArray(clients)
+      ? clients.find((c) => c && c.pid === process.pid && c.title === HOST_TITLE)
+      : null;
+    if (!me || !me.address) {
+      if (attempt < 4) setTimeout(() => this.undecorateHost(attempt + 1), 150);
+      return;
+    }
+    const target = `address:${me.address}`;
+    for (const [prop, value] of HOST_HYPRLAND_PROPS) {
+      const lua = `hl.dsp.window.set_prop({ window = "${target}", prop = "${prop}", value = "${value}" })`;
+      const answer = await hyprctl(['dispatch', lua]);
+      if (!answer || !/^ok\b/i.test(answer.trim())) {
+        await hyprctl(['dispatch', 'setprop', target, prop, value]);
+      }
+    }
   }
 
   /**
@@ -373,11 +444,16 @@ class Player extends EventEmitter {
       // Opaque black: this window is a backdrop for mpv, and a transparent one would let the
       // page show through in the letterbox bars.
       backgroundColor: '#000000',
+      title: HOST_TITLE,
       webPreferences: { contextIsolation: true, nodeIntegration: false },
     });
     // Nothing is ever displayed by this window's own web contents — mpv covers it — but it
-    // still needs a document for the window to be realised.
-    this.host.loadURL('data:text/html,<body style="margin:0;background:#000"></body>');
+    // still needs a document for the window to be realised. The <title> is there because the
+    // page's title replaces the window's, and the window has to keep its name. See HOST_TITLE.
+    this.host.loadURL(
+      `data:text/html,<title>${encodeURIComponent(HOST_TITLE)}</title>` +
+        '<body style="margin:0;background:#000"></body>',
+    );
     this.host.on('closed', () => {
       this.host = null;
     });
@@ -468,10 +544,16 @@ class Player extends EventEmitter {
       audioIndex,
       subtitleIndex,
       externalSubtitles = [],
+      streams = [],
       title,
       meta,
     } = {},
   ) {
+    // Which play this is. A second play can arrive while the first is still waiting on mpv to
+    // start; whichever was asked for last is the one that goes ahead, and the earlier one stands
+    // down at its next wait rather than loading its item over the newer one.
+    this.playGen = (this.playGen || 0) + 1;
+    const gen = this.playGen;
     const host = this.ensureHost();
 
     // Can the video go inside the app at all? Settled once, on the first play.
@@ -510,6 +592,7 @@ class Player extends EventEmitter {
       host.showInactive();
       this.layout(); // again after mapping: the WM may have adjusted it
       host.focus();
+      this.undecorateHost();
     }
 
     if (!this.mpv) {
@@ -518,8 +601,9 @@ class Player extends EventEmitter {
         : new Mpv({ hwdec: this.hwdec, extraArgs: ['--fullscreen=yes'] });
       this.mpv = mpv;
       this.wireMpv();
+      this.starting = mpv.start();
       try {
-        await mpv.start();
+        await this.starting;
       } catch (err) {
         // Reap it, and cut it loose from this Player.
         //
@@ -535,8 +619,19 @@ class Player extends EventEmitter {
         host.hide();
         this.emit('error', err);
         return false;
+      } finally {
+        this.starting = null;
+      }
+    } else if (this.starting) {
+      // mpv exists but is still connecting — a play that arrived during the first one's start.
+      // Commands sent now would fail with "not connected"; wait for it like the first play does.
+      try {
+        await this.starting;
+      } catch {
+        return false; // the first play reported the failure
       }
     }
+    if (gen !== this.playGen || !this.mpv) return false;
 
     // Never null while something is loaded, metadata or not: isActive() and the hide reasons
     // both key off it.
@@ -547,6 +642,8 @@ class Player extends EventEmitter {
     // Jellyfin stream index -> the URL mpv was given for it. Set now, not when the files are
     // added, so a subtitle change during the film maps through it too.
     this.externalSubtitles = new Map(externalSubtitles.map((s) => [s.index, s.url]));
+    // And how Jellyfin numbers the rest. See trackIdForStreamIndex.
+    this.streamLayout = Array.isArray(streams) ? streams : [];
     if (title) await this.mpv.setProperty('force-media-title', title).catch(() => {});
 
     // If the file will not open, put the window away again.
@@ -556,7 +653,11 @@ class Player extends EventEmitter {
     // covering Jellyfin with nothing in it and no way to tell why — the 'active' event that
     // would eventually hide it is never reached.
     try {
-      await this.mpv.load(url, { startSeconds, headers });
+      await this.mpv.load(url, {
+        startSeconds,
+        headers,
+        transcoding: Boolean(meta && meta.playMethod === 'Transcode'),
+      });
     } catch (err) {
       this.current = null;
       this.pendingTracks = null;
@@ -577,16 +678,23 @@ class Player extends EventEmitter {
   /**
    * Turn a Jellyfin stream index into an mpv track id.
    *
-   * The two number tracks differently. Jellyfin's `Index` counts every stream in the media
-   * source together — video, audio and subtitle in container order — while mpv numbers each kind
-   * from 1 and exposes the container's own position separately as `ff-index`. So `ff-index` is
-   * the common ground, and matching on it is what makes "the audio track Jellyfin picked" and
-   * "the audio track mpv is playing" the same one.
+   * The two number tracks differently. Jellyfin's `Index` counts every stream of the media source
+   * together, external files included — and it numbers the external files *first*, then the
+   * file's own streams after them. mpv numbers each kind from 1, and exposes the container's own
+   * position as `ff-index`. So the two only line up when there is no external file at all;
+   * with a sidecar .srt, matching Index against ff-index picked the stream one along, which is
+   * how the Japanese audio played when English was asked for.
+   *
+   * What does line up is order. The file's own audio streams are in the same order in both lists,
+   * and so are its subtitles, so the third embedded audio stream in Jellyfin's list is the third
+   * non-external audio track in mpv's. External subtitle files are matched by the URL mpv loaded
+   * them from instead, since they have no place in the file's order. Without a layout from the
+   * page (an older shell), ff-index is still the best guess there is.
    *
    * This holds because the file mpv opened is the file Jellyfin described — which is exactly the
-   * direct-play case this feature exists for. If the server ever transcodes, it rewrites the
-   * stream layout and no mapping survives; returning null then leaves mpv on its own default,
-   * which is the right answer rather than a confidently wrong one.
+   * direct-play case this feature exists for. A transcode rewrites the stream layout; a stream
+   * the mapping cannot find returns null, which leaves mpv on its own default rather than a
+   * confidently wrong track.
    */
   async trackIdForStreamIndex(type, index) {
     if (!this.mpv) return null;
@@ -599,11 +707,25 @@ class Player extends EventEmitter {
     // Which is also why container tracks are matched only among tracks that are not external.
     const externalUrl =
       type === 'sub' && this.externalSubtitles ? this.externalSubtitles.get(wanted) : undefined;
-    const match = list.find((t) => {
-      if (!t || t.type !== type) return false;
-      if (externalUrl) return Boolean(t.external) && t['external-filename'] === externalUrl;
-      return !t.external && t['ff-index'] === wanted;
-    });
+    if (externalUrl) {
+      const file = list.find(
+        (t) => t && t.type === type && t.external && t['external-filename'] === externalUrl,
+      );
+      return file ? file.id : null;
+    }
+    const layout = (this.streamLayout || []).filter((s) => s.type === type);
+    if (layout.length) {
+      const own = layout.filter((s) => !s.external).sort((a, b) => a.index - b.index);
+      const position = own.findIndex((s) => s.index === wanted);
+      if (position < 0) return null; // an external stream with no file loaded, or not this kind
+      const tracks = list
+        .filter((t) => t && t.type === type && !t.external)
+        .sort((a, b) => (a['ff-index'] ?? a.id) - (b['ff-index'] ?? b.id));
+      return tracks[position] ? tracks[position].id : null;
+    }
+    const match = list.find(
+      (t) => t && t.type === type && !t.external && t['ff-index'] === wanted,
+    );
     return match ? match.id : null;
   }
 
@@ -681,7 +803,10 @@ class Player extends EventEmitter {
         // transport goes on claiming the item is playing.
         if (changed && this.current) this.emit('paused', paused, this.current);
       } else if (name === 'fullscreen') {
-        this.setFullscreen(Boolean(value));
+        // Only for a film inside the app. In a window of its own (Wayland) mpv's fullscreen is
+        // that window's, and it starts fullscreen — following it here put the app's own window
+        // into fullscreen as mpv started, and left it there after the film.
+        if (this.embedded) this.setFullscreen(Boolean(value));
       }
     });
 
@@ -702,6 +827,7 @@ class Player extends EventEmitter {
         if (reason === 'error') {
           this.emit('error', new Error('mpv could not play this item'));
         }
+        this.endReason = reason;
         this.stop().catch(() => {});
       }
     });
@@ -710,6 +836,7 @@ class Player extends EventEmitter {
     // page with nothing drawing into it.
     this.mpv.on('exit', () => {
       this.mpv = null;
+      this.endReason = 'exit';
       this.teardown();
     });
 
@@ -778,7 +905,12 @@ class Player extends EventEmitter {
     // Only say playback ended if it had actually begun. A stop that arrives when nothing was
     // playing — jellyfin-web sends one on navigation — would otherwise announce itself, and the
     // listener that restores the sidebar would put it back over a site that is in fullscreen.
-    if (showing || was) this.emit('active', false, was);
+    //
+    // Why it ended goes along: only a film played to its end ('eof') may be followed by the next
+    // episode. Anything else — the user leaving, an error, mpv going away — is a stop.
+    const reason = this.endReason || 'stop';
+    this.endReason = null;
+    if (showing || was) this.emit('active', false, was, reason);
   }
 
   // Full shutdown, for quitting the app or leaving Jellyfin entirely.
@@ -790,7 +922,10 @@ class Player extends EventEmitter {
   // answers by dying outright with "BadWindow". That is the whole of why turning mpv playback off
   // and back on left Jellyfin unable to play anything until the app was restarted.
   async destroy() {
-    this.stopProgress();
+    // Say playback has ended now, while what was playing and how far it got are still here to be
+    // reported. Left to mpv's exit, it came after the app had already let go of this player, and
+    // closing the window mid-film lost the resume point.
+    this.teardown();
     if (this.mpv) {
       const mpv = this.mpv;
       this.mpv = null;

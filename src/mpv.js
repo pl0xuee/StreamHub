@@ -288,12 +288,17 @@ class Mpv extends EventEmitter {
       // Quiet, but not silent: errors still reach the log, which is how a failed direct play
       // gets diagnosed.
       '--msg-level=all=error',
+      // No yt-dlp. Every file here is a stream off the user's own server, and on any failed open
+      // — a 401, a 404, the server down — mpv would otherwise hand the token-bearing URL to
+      // yt-dlp, on a command line every local user can read, and make the error seconds late.
+      '--ytdl=no',
     ];
     // Under XWayland the X11 EGL context is the one that works; letting mpv autodetect can
     // land it on a Wayland context that cannot reparent into an X11 window id.
     // Whose controls to draw. Ours if we have them — mpv's built-in OSC cannot be given the
     // app's colours — otherwise mpv's, which is a working player rather than no player at all.
     const osc = oscScriptPath();
+    this.ownControls = Boolean(osc);
     if (osc) {
       args.push('--no-osc', `--script=${osc}`);
     } else {
@@ -309,17 +314,35 @@ class Mpv extends EventEmitter {
     }
     args.push(...this.extraArgs);
 
+    this.spawnError = null;
     this.proc = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    this.proc.stderr.on('data', (d) => {
-      // Jellyfin's stream URLs carry the access token as a query parameter, and mpv prints the
-      // URL it failed to open. That would put a working credential into the journal, so it is
-      // taken out on the way past.
-      const text = String(d).replace(/([?&](?:api_key|X-Emby-Token)=)[^&\s]+/gi, '$1[redacted]').trim();
+    // Both pipes are read, and stdout matters more than it looks: with no terminal to write to,
+    // mpv sends its log to stdout, not stderr. Left unread, the pipe fills — 64 KiB of decode
+    // warnings over a long session is enough — and mpv's core blocks on the write: the film
+    // freezes and every command times out.
+    //
+    // Jellyfin's URLs carry the access token as a query parameter (api_key, or ApiKey in current
+    // releases), and mpv prints the URL it failed to open. That would put a working credential
+    // into the journal, so it is taken out on the way past.
+    const log = (d) => {
+      const text = String(d)
+        .replace(/([?&](?:api_key|apikey|X-Emby-Token)=)[^&\s]+/gi, '$1[redacted]')
+        .trim();
       // eslint-disable-next-line no-console
       if (text) console.warn('[mpv]', text);
-    });
+    };
+    this.proc.stdout.on('data', log);
+    this.proc.stderr.on('data', log);
     this.proc.on('error', (err) => {
+      // A binary that could not be started at all (ENOENT, EACCES) gets 'error' and never 'exit'.
+      // Let go of it now, so connect() stops waiting on a process that does not exist; start()
+      // rejects with the reason, and that is the one error the caller reports.
+      if (this.proc && this.proc.pid === undefined) {
+        this.proc = null;
+        this.spawnError = err;
+        return;
+      }
       this.emit('error', err);
     });
     this.proc.on('exit', (code) => {
@@ -344,10 +367,35 @@ class Mpv extends EventEmitter {
    * to the app instead. The app decides what leaving means (see the handler in player.js): out of
    * fullscreen if it is fullscreen, otherwise back to the library, with mpv left running and idle.
    */
+  //
+  // And with StreamHub's own controls loaded, the keys that change subtitle timing and volume stay
+  // what they were but lose mpv's own top-left message: the controls answer them themselves (a
+  // toast for the timing, the bar for the volume), and mpv's text landed on top of the film's
+  // title card. With mpv's built-in controller as the fallback, its message is the only answer
+  // these keys get, so they are left alone.
   bindKeys() {
+    const quiet = this.ownControls
+      ? [
+          ['z', 'no-osd add sub-delay -0.1'],
+          ['Z', 'no-osd add sub-delay +0.1'],
+          ['x', 'no-osd add sub-delay +0.1'],
+          ['9', 'no-osd add volume -2'],
+          ['0', 'no-osd add volume 2'],
+          ['/', 'no-osd add volume -2'],
+          ['*', 'no-osd add volume 2'],
+          ['m', 'no-osd cycle mute'],
+        ]
+      : [];
     return Promise.all([
       this.command('keybind', 'ESC', 'script-message streamhub-escape').catch(() => {}),
       this.command('keybind', 'q', 'script-message streamhub-escape').catch(() => {}),
+      // The rest of mpv's ways out mean the same here. Left as they are, Q quits and writes a
+      // resume file into the user's own mpv state, STOP and POWER end the process, and closing
+      // mpv's own window (Wayland) does too — all of them read by the app as mpv going away.
+      ...['Q', 'STOP', 'POWER', 'CLOSE_WIN'].map((key) =>
+        this.command('keybind', key, 'script-message streamhub-escape').catch(() => {}),
+      ),
+      ...quiet.map(([key, cmd]) => this.command('keybind', key, cmd).catch(() => {})),
     ]);
   }
 
@@ -356,7 +404,13 @@ class Mpv extends EventEmitter {
   async connect() {
     const deadline = Date.now() + CONNECT_TIMEOUT_MS;
     for (;;) {
-      if (!this.proc) throw new Error('mpv exited before its socket appeared');
+      if (!this.proc) {
+        throw new Error(
+          this.spawnError
+            ? `could not start mpv: ${this.spawnError.message}`
+            : 'mpv exited before its socket appeared',
+        );
+      }
       try {
         this.socket = await this.tryConnectOnce();
         break;
@@ -491,7 +545,7 @@ class Mpv extends EventEmitter {
    * been stable throughout, and this module has to work against both a bundled mpv and
    * whatever the system happens to have.
    */
-  async load(url, { startSeconds = 0, audioId, subtitleId, headers } = {}) {
+  async load(url, { startSeconds = 0, audioId, subtitleId, headers, transcoding = false } = {}) {
     // A header list is how the Jellyfin access token reaches the server: the stream URL is
     // authenticated, and mpv is a separate process that knows nothing about the web view's
     // session.
@@ -511,9 +565,19 @@ class Mpv extends EventEmitter {
       if (key && val) fields.push(`${key}: ${val}`);
     }
     await this.setProperty('http-header-fields', fields).catch(() => {});
-    await this.setProperty('start', startSeconds > 0 ? String(startSeconds) : '0').catch(
-      () => {},
-    );
+    // Unpaused, always. pause is a player-wide property and survives the file it was set on, so a
+    // film paused before it was left (or paused by the app when the user switched away) made the
+    // next one open paused — with the page showing it as playing.
+    await this.setProperty('pause', false).catch(() => {});
+    // The position is the file's own clock for a transcode. The server starts a resumed
+    // transcode at the resume point with its timestamps kept (CopyTimestamps), and mpv's default
+    // rebases them to zero — so it reported the time since the transcode began, and the resume
+    // point went back to the start. A transcode also cannot be seeked into, so no start position.
+    await this.setProperty('rebase-start-time', transcoding ? 'no' : 'yes').catch(() => {});
+    await this.setProperty(
+      'start',
+      !transcoding && startSeconds > 0 ? String(startSeconds) : 'none',
+    ).catch(() => {});
     // 'auto' rather than 'no': the server's default track is the right one until the user says
     // otherwise, and mpv picks it the same way any player would.
     await this.setProperty('aid', audioId === undefined ? 'auto' : audioId).catch(() => {});

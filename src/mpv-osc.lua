@@ -131,6 +131,11 @@ local D = {
   menu_min_w = 230,
   menu_max_w = 420,
   menu_gap = 14, -- between a menu's right-hand meta column and the name it belongs to
+  -- The subtitle menu's timing row: the step buttons, the readout between them, and the width the
+  -- menu needs to hold them all beside their label.
+  timing_btn = 40,
+  timing_val = 64,
+  menu_timing_w = 320,
   chip_pad_x = 10, -- the hover timestamp and the track toast
   chip_h = 24,
   chip_lift = 8,
@@ -504,6 +509,13 @@ local function region_at(x, y)
     if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then return r end
   end
   return nil
+end
+
+-- Whether the pointer is in the window and inside `box` (a laid-out area, or nil).
+local function pointer_in(box)
+  return box ~= nil and mouse.hover
+    and mouse.x >= box.x and mouse.x <= box.x + box.w
+    and mouse.y >= box.y and mouse.y <= box.y + box.h
 end
 
 local function toast(text)
@@ -948,7 +960,7 @@ local function layout()
       rows[#rows + 1] = {
         value = tostring(t.id),
         name = ass_escape(name),
-        meta = table.concat(bits, '  '),
+        meta = ass_escape(table.concat(bits, '  ')),
         on = t.selected == true,
       }
       if t.selected then any = true end
@@ -966,20 +978,25 @@ local function layout()
       if r.meta ~= '' then w = w + u(D.menu_gap) + text_width(r.meta, meta_tags, W, H) end
       if w > widest then widest = w end
     end
+    local timed = menu.kind == 'sub'
     local mw = clamp(widest + 2 * u(D.pill_pad) + 2 * u(D.menu_row),
-      u(D.menu_min_w), u(D.menu_max_w))
+      u(timed and D.menu_timing_w or D.menu_min_w), u(D.menu_max_w))
 
     local row_h = u(D.menu_row)
     local pad = u(D.menu_pad)
     local head_h = u(D.menu_head)
+    -- The subtitle menu carries a timing row under the list, outside the part that scrolls: a
+    -- subtitle file made for a different cut of the film is early or late by the same amount
+    -- throughout, and the place to fix that is next to where the file was picked.
+    local foot_h = timed and (row_h + pad) or 0
     local bottom = L.seam_y - u(D.chip_lift)
-    local content = head_h + 2 * pad + #rows * row_h
+    local content = head_h + 2 * pad + #rows * row_h + foot_h
     -- Never taller than about two thirds of the window: a list that runs from the bar to the top
     -- of the screen has stopped being a menu over a film and started being a page in front of it,
     -- and twenty-seven tracks scroll perfectly well in less room than that.
     local mh = math.min(content, bottom - m, H * 0.62)
     local view_y = bottom - mh + head_h + pad
-    local view_h = mh - head_h - 2 * pad
+    local view_h = mh - head_h - 2 * pad - foot_h
     menu.scroll = clamp(menu.scroll, 0, math.max(0, #rows * row_h - view_h))
 
     -- Centred over the pill that opened it, and kept inside the row's span.
@@ -991,6 +1008,28 @@ local function layout()
       view_y = view_y, view_h = view_h, scroll = menu.scroll,
       scrollable = #rows * row_h > view_h + 0.5,
     }
+    if timed then
+      -- Laid out right to left from the menu's edge: the larger step outermost, the readout in
+      -- the middle. The readout is a button too — clicking it puts the subtitles back where the
+      -- file has them.
+      local ty = bottom - pad - row_h
+      local bw, vw = u(D.timing_btn), u(D.timing_val)
+      local x = mx + mw - pad
+      local buttons = {}
+      for _, b in ipairs({
+        { value = '0.5', text = '+0.5', w = bw },
+        { value = '0.1', text = '+0.1', w = bw },
+        { value = 'reset', w = vw },
+        { value = '-0.1', text = '−0.1', w = bw },
+        { value = '-0.5', text = '−0.5', w = bw },
+      }) do
+        x = x - b.w
+        b.x, b.y, b.h, b.id = x, ty, row_h, 'subdelay:' .. b.value
+        buttons[#buttons + 1] = b
+        regions[#regions + 1] = { id = b.id, x = b.x, y = b.y, w = b.w, h = b.h, live = true }
+      end
+      L.menu.timing = { y = ty, h = row_h, buttons = buttons, rule_y = ty - pad / 2 }
+    end
     for i, r in ipairs(rows) do
       r.y = view_y + (i - 1) * row_h - menu.scroll
       -- Only what is inside the view can be hit, and a row half out of it is clipped to what can
@@ -1292,6 +1331,50 @@ local function draw_menu(out, L, hovered_id)
           L.menu_meta_tags .. clip, row.meta
         )
       end
+    end
+  end
+
+  -- The timing row, below a hairline that keeps it apart from the list it is not part of.
+  if m.timing then
+    local t = m.timing
+    out[#out + 1] = shape(
+      fill(WHITE, ALPHA_EDGE),
+      rect(m.x + m.pad, t.rule_y - 0.5 * s, m.w - 2 * m.pad, s)
+    )
+    out[#out + 1] = label(
+      m.x + m.pad + D.pill_pad * s, t.y + t.h / 2, 4,
+      L.label_tags .. colour_tags(DIM_2), 'TIMING'
+    )
+    local delay = mp.get_property_number('sub-delay') or 0
+    local shifted = math.abs(delay) >= 0.05
+    for _, b in ipairs(t.buttons) do
+      local on = hovered_id == b.id
+      if on then
+        out[#out + 1] = shape(
+          fill(WHITE, A(0.07)),
+          rrect(b.x + s, b.y + s, b.w - 2 * s, b.h - 2 * s, rr)
+        )
+      end
+      local text, colour
+      if b.value == 'reset' then
+        -- Lit when the subtitles have been moved, so it is plain at a glance that they are not
+        -- where the file puts them — and that this is the thing to click to put them back.
+        text = shifted and string.format('%+.1f s', delay) or '0.0 s'
+        colour = shifted and STEEL_HOT or DIM
+        if shifted and not on then
+          out[#out + 1] = shape(
+            fill(STEEL, A(0.16)) .. hairline(1, STEEL, A(0.22)),
+            rrect(b.x + s, b.y + s, b.w - 2 * s, b.h - 2 * s, rr)
+          )
+        end
+      else
+        text = b.text
+        colour = on and WHITE or TEXT
+      end
+      out[#out + 1] = label(
+        b.x + b.w / 2, b.y + b.h / 2, 5,
+        L.menu_meta_tags .. colour_tags(colour), text
+      )
     end
   end
 
@@ -1606,10 +1689,15 @@ local function should_stay()
   -- A menu waits to be read. Nothing about it is in the way of the film that the bar under it is
   -- not already in the way of, and having it vanish mid-list would be its own kind of rude.
   if menu then return true end
+  -- A pointer resting on the controls is a hand about to use them. Hiding the bar from under it
+  -- leaves the hand over controls it can no longer see.
+  if pointer_in(slab) or pointer_in(menu_box) then return true end
   if mp.get_property_bool('pause') then return true end
   if mp.get_property_bool('idle-active') then return true end
   if mp.get_property_bool('paused-for-cache') then return true end
-  if (mp.get_property_number('duration') or 0) <= 0 then return true end
+  -- Still opening. Not "no duration": a stream with no known length has none for as long as it
+  -- plays, and the bar would never leave it.
+  if not file_ready then return true end
   if toast_text and mp.get_time() < toast_until then return true end
   return false
 end
@@ -1820,6 +1908,15 @@ local function activate(id)
           state.text, track_name(state.track)))
       end))
     end
+  elseif id:sub(1, 9) == 'subdelay:' then
+    -- Positive is later, as mpv has it: a subtitle that arrives before the line is spoken needs
+    -- a positive delay. The menu stays open, because a step is rarely the last one.
+    local value = id:sub(10)
+    if value == 'reset' then
+      mp.set_property_number('sub-delay', 0)
+    else
+      mp.commandv('add', 'sub-delay', value)
+    end
   elseif id == 'fullscreen' then
     -- Embedded, mpv cannot take the screen for itself — the window it draws into is not its own.
     -- Flipping the property is still the whole job: StreamHub observes it and puts *its* window
@@ -1864,7 +1961,15 @@ local on_mouse = guard(function(_, value)
 end)
 
 local function press()
+  -- A click on controls that cannot be seen only brings them back. Their regions outlive the fade,
+  -- so without this a click on the picture where the bar had been would press whatever was there —
+  -- pause, or the X that leaves the film.
+  local was_hidden = not shown or vis_target == 0
   wake()
+  if was_hidden then
+    pressed = nil
+    return
+  end
   local L = layout()
   if not L then return end
   local at = region_at(mouse.x, mouse.y)
@@ -1873,7 +1978,16 @@ local function press()
   -- the click that closes it still does whatever it landed on.
   if menu then
     local id = at and at.id or ''
-    local own = id:sub(1, 6) == 'track:' or id == (menu.kind == 'audio' and 'audio' or 'subs')
+    local own = id:sub(1, 6) == 'track:' or id:sub(1, 9) == 'subdelay:'
+      or id == (menu.kind == 'audio' and 'audio' or 'subs')
+    -- The menu's own glass — its heading, its padding, the gaps between the timing buttons — is
+    -- part of the menu. A click there is a near miss on something in it, not a click outside it,
+    -- and it must not fall through to whatever the menu is standing over either.
+    if not own and pointer_in(menu_box) then
+      pressed = nil
+      render()
+      return
+    end
     if not own then close_menu() end
   end
   if not at then
@@ -1940,13 +2054,16 @@ mp.observe_property('mouse-pos', 'native', on_mouse)
 -- gone: these are all things the user just did, or things they are waiting to see.
 for _, name in ipairs({
   'mute', 'volume', 'track-list', 'aid', 'sid', 'fullscreen',
-  'chapter', 'playlist-count', 'paused-for-cache',
+  'playlist-count', 'paused-for-cache',
 }) do
   mp.observe_property(name, 'native', guard(function()
     if shown then render() else wake() end
   end))
 end
-for _, name in ipairs({ 'media-title', 'duration', 'chapter-list' }) do
+-- These only redraw. A chapter changing is the film playing on, not anything the user did — waking
+-- the bar for it would darken the picture under the title card at every chapter of every film.
+-- Stepping chapters from the bar wakes it through the click anyway.
+for _, name in ipairs({ 'media-title', 'duration', 'chapter-list', 'chapter' }) do
   mp.observe_property(name, 'native', guard(function()
     if shown then render() end
   end))
@@ -1964,6 +2081,42 @@ mp.observe_property('pause', 'bool', guard(function(_, paused)
   end
   last_pause = paused
   if shown then render() else wake() end
+end))
+
+-- Subtitle timing, however it was changed — the timing row, or the z and x keys. The keys are
+-- rebound without mpv's own on-screen message (see src/mpv.js), which landed in the corner the
+-- title card now occupies, so this toast is their feedback too. Said in words rather than as a
+-- signed number, because "+0.3" does not tell anyone which way the subtitles went.
+--
+-- Not while the subtitle menu is open: the readout in it already says it, and the toast would sit
+-- beside the menu repeating it. And not for the reset a new file brings (see start-file below),
+-- which nobody asked for.
+local delay_reset_pending = false
+mp.observe_property('sub-delay', 'number', guard(function(_, delay)
+  if delay == nil then return end
+  if delay_reset_pending then
+    delay_reset_pending = false
+    return
+  end
+  if not file_ready then return end
+  if not (menu and menu.kind == 'sub') then
+    if math.abs(delay) < 0.05 then
+      toast('Subtitles  in sync with the file')
+    else
+      toast(string.format('Subtitles  %.1f s %s', math.abs(delay), delay > 0 and 'later' or 'earlier'))
+    end
+  end
+  if shown then render() else wake() end
+end))
+
+-- A timing fix belongs to the subtitle file it was made for. mpv stays running from one episode to
+-- the next and sub-delay is a player-wide option, so without this the half-second an earlier film
+-- needed would quietly be applied to the next one, whose subtitles were fine.
+mp.register_event('start-file', guard(function()
+  if (mp.get_property_number('sub-delay') or 0) ~= 0 then
+    delay_reset_pending = true
+    mp.set_property_number('sub-delay', 0)
+  end
 end))
 
 -- A different file is a different timeline, so a position aimed at in the last one means nothing
@@ -1992,6 +2145,19 @@ mp.register_event('shutdown', guard(function()
 end))
 
 mp.add_forced_key_binding('MBTN_LEFT', 'streamhub-osc-click', on_click, { complex = true })
+
+-- Double-click. mpv makes one out of any two presses close together, whatever they landed on, and
+-- its default binding for it is fullscreen — so two quick presses of a skip button, or of the
+-- subtitle timing steps, which are made to be pressed repeatedly, would throw the whole app in or
+-- out of fullscreen. Over the controls the two presses were two clicks and have been handled as
+-- such; on the picture a double-click still means fullscreen, as it does in every player.
+mp.add_forced_key_binding('MBTN_LEFT_DBL', 'streamhub-osc-dblclick', guard(function()
+  if shown and vis_target > 0
+    and (region_at(mouse.x, mouse.y) or pointer_in(slab) or pointer_in(menu_box)) then
+    return
+  end
+  mp.commandv('cycle', 'fullscreen')
+end))
 
 mp.add_periodic_timer(FRAME, tick)
 

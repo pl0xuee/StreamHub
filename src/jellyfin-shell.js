@@ -393,6 +393,7 @@ function jellyfinShellJs(options) {
         audioIndex: audioIndex,
         subtitleIndex: subtitleIndex,
         externalSubtitles: externalSubtitles(source),
+        streams: streamLayout(source),
         headers: authHeaders(),
         // Who to report progress to. jellyfin-web does its own reporting for players it drives
         // itself, but playback is happening in another process here and the page cannot see how
@@ -424,6 +425,22 @@ function jellyfinShellJs(options) {
           title: s.DisplayTitle || s.Title || null,
           language: s.Language || null,
         });
+      });
+      return out;
+    }
+
+    // The source's audio and subtitle streams as Jellyfin numbers them, and which of them are
+    // files of their own. Main matches the file's own streams to mpv's tracks by their order
+    // among streams of the same kind, because Jellyfin's numbering is not the file's: it puts
+    // external files first and numbers the file's streams after them, so with a sidecar .srt
+    // every embedded stream is one higher than its place in the file.
+    function streamLayout(source) {
+      const streams = Array.isArray(source.MediaStreams) ? source.MediaStreams : [];
+      const out = [];
+      streams.forEach(function (s) {
+        if (!s || (s.Type !== 'Audio' && s.Type !== 'Subtitle')) return;
+        if (num(s.Index) === null) return;
+        out.push({ index: s.Index, type: s.Type, external: s.IsExternal === true });
       });
       return out;
     }
@@ -668,6 +685,12 @@ function jellyfinShellJs(options) {
 
       // Track selection, in Jellyfin's stream indices. The mirrors are kept so jellyfin-web's
       // menus show a tick against the track that is playing without another round trip.
+      // Asked, unguarded, before any audio change jellyfin-web routes through the player — its own
+      // menu, or remote control from the dashboard or a phone. Missing, every one of them threw.
+      canSetAudioStreamIndex: function () {
+        return true;
+      },
+
       getAudioStreamIndex: function () {
         return state.audioIndex === undefined ? null : state.audioIndex;
       },
@@ -704,13 +727,25 @@ function jellyfinShellJs(options) {
     state.audioIndex = null;
     state.subtitleIndex = null;
 
+    // jellyfin-web's own playback manager, once the plugin manager has handed it over (see
+    // getPlugins). Needed to stop the way jellyfin-web itself stops — see the 'stopped' event.
+    let playbackManager = null;
+
     // What getPlugins() hands over. Returning an object from a constructor is what makes this
     // work whether the plugin manager calls it plainly or with 'new', and either way it is the
-    // one player above rather than a fresh one.
-    function MpvVideoPlayer() {
+    // one player above rather than a fresh one. The manager passes its dependencies in, and the
+    // playback manager is kept from them.
+    function MpvVideoPlayer(deps) {
+      if (deps && deps.playbackManager) playbackManager = deps.playbackManager;
       return player;
     }
     MpvVideoPlayer.prototype = player;
+
+    // Where the plugin manager finds the factory by name. See getPlugins.
+    const PLUGIN_NAME = '__streamhubMpvVideoPlayer';
+    window[PLUGIN_NAME] = function () {
+      return Promise.resolve(MpvVideoPlayer);
+    };
 
     // ---- the bridge's events ------------------------------------------------------------
     //
@@ -742,8 +777,20 @@ function jellyfinShellJs(options) {
               state.paused = true;
               emit('pause');
               break;
+            // A film that played to its end is the one stop jellyfin-web may follow with the next
+            // episode, and a bare 'stopped' is how it hears that. Any other stop — Escape, q, the
+            // close button, mpv going away — has to reach it the way its own stop button does,
+            // through the playback manager, which is what tells it not to go on to the next item.
+            // Sent as a bare 'stopped', leaving a film started the next episode.
             case 'stopped':
-              endSession();
+              if (event.ended === false && state.started && playbackManager &&
+                  typeof playbackManager.stop === 'function') {
+                Promise.resolve(playbackManager.stop(player)).catch(function () {
+                  endSession();
+                });
+              } else {
+                endSession();
+              }
               break;
             // No 'stopped' alongside this one: jellyfin-web's error handling tears the session
             // down itself, and a second teardown behind it reports the item stopped twice.
@@ -886,18 +933,18 @@ function jellyfinShellJs(options) {
       // NOTE: no backticks anywhere in this comment. It lives inside the template literal that
       // builds the injected source, so one would close that literal and break the whole module.
       //
-      // jellyfin-web loads its own plugins by dynamic import of a module path, and then
-      // constructs the module's default export. Ours has to arrive looking exactly like that: a
-      // Promise resolving to a *module namespace* — an object carrying a default property —
-      // whose default is a constructor. Not the function on its own, which fails with "S.default is
-      // not a constructor", and not a bare value, which fails with "Plugins have to be a Promise
-      // that resolves to a plugin builder function".
+      // By name: the plugin manager looks the name up on window, awaits the function it finds
+      // there, and constructs what that resolves to with its own dependencies passed in — the
+      // playback manager among them, which this player needs (see the 'stopped' event). It is
+      // the route desktop shells such as Jellyfin Media Player use, present from 10.8 onwards.
+      // Handing over a Promise of a module namespace instead also works, but is constructed with
+      // nothing passed in.
       //
-      // Both failures are quiet in the worst way: the manager logs a warning, drops our player,
-      // and falls back to the HTML5 one — which then hands Chromium an MKV it cannot decode, so
-      // the page sits on a loading spinner with nothing to say why.
+      // Getting the shape wrong fails quietly in the worst way: the manager logs a warning, drops
+      // our player, and falls back to the HTML5 one — which then hands Chromium an MKV it cannot
+      // decode, so the page sits on a loading spinner with nothing to say why.
       getPlugins: function () {
-        return [Promise.resolve({ default: MpvVideoPlayer })];
+        return [PLUGIN_NAME];
       },
     };
 
