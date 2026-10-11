@@ -1407,12 +1407,32 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
           else jellyfinApi = new JellyfinApi(opts);
         }
 
+        // Sidecar subtitle files are fetched by mpv with the same token as the stream, so they
+        // are held to the same rule: on the user's own server, or not at all.
+        const externalSubtitles = (Array.isArray(p.externalSubtitles) ? p.externalSubtitles : [])
+          .filter((s) => {
+            if (!s || !Number.isInteger(Number(s.index))) return false;
+            try {
+              const u = new URL(String(s.url || ''));
+              return u.origin === expected && (u.protocol === 'http:' || u.protocol === 'https:');
+            } catch {
+              return false;
+            }
+          })
+          .map((s) => ({
+            index: Number(s.index),
+            url: new URL(String(s.url)).href,
+            title: s.title ? String(s.title) : '',
+            language: s.language ? String(s.language) : '',
+          }));
+
         const started = await jellyfinPlayer.play(p.url, {
           startSeconds: Number.isFinite(startSeconds) ? startSeconds : 0,
           headers: p.headers,
           title: p.title,
           audioIndex: p.audioIndex,
           subtitleIndex: p.subtitleIndex,
+          externalSubtitles,
           meta: {
             itemId: p.itemId,
             mediaSourceId: p.mediaSourceId,

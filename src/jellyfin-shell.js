@@ -392,6 +392,7 @@ function jellyfinShellJs(options) {
         startPositionTicks: startTicks,
         audioIndex: audioIndex,
         subtitleIndex: subtitleIndex,
+        externalSubtitles: externalSubtitles(source),
         headers: authHeaders(),
         // Who to report progress to. jellyfin-web does its own reporting for players it drives
         // itself, but playback is happening in another process here and the page cannot see how
@@ -400,6 +401,49 @@ function jellyfinShellJs(options) {
         // item has no resume point.
         server: serverInfo(),
       };
+    }
+
+    // Subtitle files that sit beside the film on the server rather than inside it — a .srt next to
+    // the .mkv. They are not in the file mpv is handed, so mpv never sees them unless it is told
+    // where they are, and the subtitle menu offers nothing but Off. The device profile asks for
+    // text formats External, which is what makes the server give each one a DeliveryUrl.
+    //
+    // Only IsExternal streams. A text track inside the container can carry a DeliveryUrl too, but
+    // mpv already has it from the file, and fetching it again would have the server extract it.
+    function externalSubtitles(source) {
+      const streams = Array.isArray(source.MediaStreams) ? source.MediaStreams : [];
+      const out = [];
+      streams.forEach(function (s) {
+        if (!s || s.Type !== 'Subtitle' || !s.IsExternal || !s.DeliveryUrl) return;
+        if (num(s.Index) === null) return;
+        const url = serverUrl(s.DeliveryUrl);
+        if (!url) return;
+        out.push({
+          index: s.Index,
+          url: url,
+          title: s.DisplayTitle || s.Title || null,
+          language: s.Language || null,
+        });
+      });
+      return out;
+    }
+
+    // A server path made absolute. DeliveryUrl comes back as /Videos/..., rooted at the server
+    // rather than the page, so a server under a path on a reverse proxy needs its own address
+    // prefixed — which is what ApiClient.getUrl does — not the page's origin.
+    function serverUrl(path) {
+      if (/^https?:/i.test(path)) return path;
+      let out = null;
+      safely(() => {
+        const api = window.ApiClient;
+        if (api && typeof api.getUrl === 'function') out = new URL(api.getUrl(path)).href;
+      });
+      if (!out) {
+        safely(() => {
+          out = new URL(path, document.baseURI).href;
+        });
+      }
+      return out;
     }
 
     // Address, token and user id, read from the client the page is already signed in with. All

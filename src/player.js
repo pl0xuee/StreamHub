@@ -462,7 +462,15 @@ class Player extends EventEmitter {
    */
   async play(
     url,
-    { startSeconds = 0, headers, audioIndex, subtitleIndex, title, meta } = {},
+    {
+      startSeconds = 0,
+      headers,
+      audioIndex,
+      subtitleIndex,
+      externalSubtitles = [],
+      title,
+      meta,
+    } = {},
   ) {
     const host = this.ensureHost();
 
@@ -535,7 +543,10 @@ class Player extends EventEmitter {
     this.current = meta || {};
     this.state = { positionSeconds: startSeconds, durationSeconds: 0, paused: false };
     // Held until the file is open and mpv has a track list to match these against.
-    this.pendingTracks = { audioIndex, subtitleIndex };
+    this.pendingTracks = { audioIndex, subtitleIndex, externalSubtitles };
+    // Jellyfin stream index -> the URL mpv was given for it. Set now, not when the files are
+    // added, so a subtitle change during the film maps through it too.
+    this.externalSubtitles = new Map(externalSubtitles.map((s) => [s.index, s.url]));
     if (title) await this.mpv.setProperty('force-media-title', title).catch(() => {});
 
     // If the file will not open, put the window away again.
@@ -583,7 +594,16 @@ class Player extends EventEmitter {
     if (!Number.isInteger(wanted) || wanted < 0) return null;
     const list = await this.mpv.getProperty('track-list').catch(() => null);
     if (!Array.isArray(list)) return null;
-    const match = list.find((t) => t && t.type === type && t['ff-index'] === wanted);
+    // A subtitle file beside the film has no place in the container's numbering — its ff-index
+    // is its position within its own file, usually 0 — so it is found by the URL it came from.
+    // Which is also why container tracks are matched only among tracks that are not external.
+    const externalUrl =
+      type === 'sub' && this.externalSubtitles ? this.externalSubtitles.get(wanted) : undefined;
+    const match = list.find((t) => {
+      if (!t || t.type !== type) return false;
+      if (externalUrl) return Boolean(t.external) && t['external-filename'] === externalUrl;
+      return !t.external && t['ff-index'] === wanted;
+    });
     return match ? match.id : null;
   }
 
@@ -593,6 +613,17 @@ class Player extends EventEmitter {
     const pending = this.pendingTracks;
     this.pendingTracks = null;
     if (!pending || !this.mpv) return;
+
+    // Sidecar subtitle files first, so they are in the track list to be matched below. 'auto'
+    // adds without selecting; which subtitle shows is decided below, the same as for any other.
+    // One at a time, so the menu lists them in the server's order. A file that will not load
+    // costs only itself.
+    for (const sub of pending.externalSubtitles || []) {
+      if (!this.mpv) return;
+      await this.mpv
+        .command('sub-add', sub.url, 'auto', sub.title || '', sub.language || '')
+        .catch(() => {});
+    }
 
     if (pending.audioIndex !== undefined && pending.audioIndex !== null) {
       const id = await this.trackIdForStreamIndex('audio', pending.audioIndex);
