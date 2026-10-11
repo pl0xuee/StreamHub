@@ -888,7 +888,23 @@ class Player extends EventEmitter {
 
   // Stop playing and give the window back to the page. The mpv process is kept alive and idle,
   // so starting the next episode does not pay to spawn it again.
+  //
+  // Not when mpv has a window of its own (Wayland). Then the window is mpv's, not ours to hide,
+  // and an idle mpv keeps it on screen (--force-window) — closing it with its X left an empty mpv
+  // window sitting over the desktop. So there mpv is shut down instead, and the next film starts
+  // a fresh one. teardown() goes first, while what was playing and why it ended are still here to
+  // report; the old process is cut loose before it exits, so its 'exit' cannot reach a newer mpv
+  // that a quick next play may already have started.
   async stop() {
+    if (this.mpv && this.embedded === false) {
+      const mpv = this.mpv;
+      this.mpv = null;
+      this.teardown();
+      mpv.removeAllListeners();
+      mpv.on('error', () => {}); // an 'error' with no listener would throw in the main process
+      await mpv.stop().catch(() => {});
+      return;
+    }
     if (this.mpv) await this.mpv.stopPlayback();
     this.teardown();
   }
