@@ -8,7 +8,7 @@
   "private": true,
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
-    "start": "electron . --ozone-platform=x11",
+    "start": "electron .",
     "check": "node build/check-shell.js",
     "stage:mpv": "bash build/stage-mpv.sh",
     "build": "electron-builder --linux AppImage",
@@ -50,8 +50,7 @@
       "category": "AudioVideo",
       "icon": "assets/icon.png",
       "executableArgs": [
-        "--no-sandbox",
-        "--ozone-platform=x11"
+        "--no-sandbox"
       ]
     },
     "appImage": {

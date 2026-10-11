@@ -1,7 +1,9 @@
 // Per-monitor display scale, for the one desktop that cannot tell Chromium about it.
 //
-// StreamHub runs on X11 even on a Wayland session (see the top of main.js), which means it runs
-// under XWayland. On most compositors that is fine: XWayland presents the screen in logical pixels
+// StreamHub runs natively on Wayland unless it is asked for X11 (see the top of main.js), and on a
+// Wayland session that request means running under XWayland. Natively, Chromium learns every
+// monitor's scale from the compositor and none of this applies. Under XWayland, on most
+// compositors, it is fine too: XWayland presents the screen in logical pixels
 // and the compositor scales the picture up (soft, but the right size), or the compositor publishes
 // Xft.dpi and Chromium reads it. Hyprland with `xwayland { force_zero_scaling = true }` — which is
 // Omarchy's default — does neither. X clients see the monitor's physical pixels and are expected

@@ -33,63 +33,23 @@ const { JellyfinApi } = require('./jellyfin-api');
 const displayScale = require('./display-scale');
 const icons = require('./icons');
 
-// StreamHub has to run on X11, even on a Wayland session, or Jellyfin playback cannot work at
-// all: mpv renders into a window the app owns, and mpv can only be handed a window that way on
-// X11 — it has no --wid support on Wayland and none is planned.
+// StreamHub runs natively on Wayland wherever there is a Wayland session — Electron's own choice
+// when no --ozone-platform is given — and on X11 everywhere else.
 //
-// The flag cannot be set from inside the process. Electron picks its display backend before this
-// file runs, so app.commandLine.appendSwitch('ozone-platform', …) is simply ignored — tested. It
-// has to be on the command line, which means the only reliable way to guarantee it is to start
-// again with it.
+// It used to move itself onto X11 on every Wayland session, so that Jellyfin's mpv could draw
+// inside the app: mpv can only be handed another program's window on X11 (--wid), with no such
+// support on Wayland and none planned. That cost every other service its playback. Under XWayland
+// Chromium has no trustworthy vblank to schedule frames against, and even with vsync off (see
+// smoothPlaybackApplies below) Netflix dropped 1–2% of its frames in phases that came and went
+// every few minutes — read by Netflix as a player that cannot keep up, so it flushed its buffer,
+// paused, and stepped a 1080p film down to 342p. The same AppImage on native Wayland, measured on
+// the same 60Hz 4K monitor under Hyprland: no dropped frames in 27 minutes, no stalls, 1080p
+// throughout.
 //
-// Passing it in the launcher is not enough. electron-builder puts executableArgs in the *desktop
-// entry*, so it reaches the app when it is started from a menu — but an AppImage run straight
-// from the file manager or a terminal, which is exactly how the README says to run it, gets
-// nothing. That shipped as a release where playback failed for anyone who double-clicked the
-// file.
-//
-// So: on a Wayland session, with no platform already chosen, hand the same arguments back to a
-// fresh copy of ourselves with x11 added and stand down. argv carries the flag the second time,
-// which is what stops this repeating. `APPIMAGE` names the image itself rather than the binary
-// unpacked out of it, and relaunching the latter would leave the AppImage's own environment
-// behind.
-// NOTE ON WAYLAND. mpv can only be given a window to draw inside on X11 — it has no --wid support
-// on Wayland — so playback is only embedded in the app when Electron is running on X11. The flag
-// that asks for that has to be on the command line, since Electron chooses its backend before
-// this file runs; it is set in the `start` script and in electron-builder's executableArgs.
-//
-// executableArgs only reaches the *desktop entry*, though, so an AppImage started straight from a
-// file manager or a terminal — which is how the README says to run it — still comes up on
-// Wayland. Restarting ourselves with the flag was tried and does not work: an Electron child
-// spawned from an Electron parent never starts, with or without the parent still alive, and
-// app.relaunch() before the app is ready does nothing at all.
-//
-// So the app moves itself onto X11 when it can, and falls back rather than failing when it
-// cannot: on Wayland mpv opens a window of its own instead of being embedded (see player.js).
-// Playback works either way; only one of them is inside the app.
-//
-// The move has to go through the same shell hand-off the updater uses. Starting a replacement
-// from inside Electron does not work — tested three ways: app.relaunch() before ready, electron
-// spawning electron, and electron spawning the AppImage. The child never started in any of them.
-// The reason is the one relaunchAfterExit already documents: the environment here points into the
-// AppImage's own mount, so the new copy has to be started by something that outlives us, from a
-// working directory that is not about to disappear.
-//
-// Only with an X server to move to. A Wayland session without XWayland (niri's default, or
-// Hyprland with it switched off) has no DISPLAY, and the relaunched copy would die looking for one
-// with its output discarded — an app that simply never appears. Staying on Wayland works there.
-// Whatever the user started it with goes along too: a --password-store or a scale factor dropped
-// on the way through changes which logins the new copy can read.
-if (
-  process.platform === 'linux' &&
-  process.env.APPIMAGE &&
-  process.env.WAYLAND_DISPLAY &&
-  process.env.DISPLAY &&
-  !process.argv.some((a) => a.startsWith('--ozone-platform'))
-) {
-  relaunchAfterExit(process.env.APPIMAGE, ['--ozone-platform=x11', ...process.argv.slice(1)]);
-  app.exit(0);
-}
+// What Wayland costs is Jellyfin's embedding: there mpv opens a window of its own beside the app
+// instead (see player.js). Anyone who would rather have it embedded can still ask for X11 on the
+// command line with --ozone-platform=x11, and everything X11-specific — the XWayland vsync
+// workaround, the Hyprland scale detection, mpv's --wid — keys off that flag, not off the session.
 
 
 // Name the keyring to use, rather than letting Chromium work it out each launch.
@@ -2077,7 +2037,7 @@ async function pollForUpdate() {
 // our pid to disappear, then execs the new build. Its environment is stripped of the old
 // mount's variables — they point into a directory that is about to stop existing — and the
 // new AppImage's runtime sets its own on the way up.
-function relaunchAfterExit(appImagePath, extraArgs = []) {
+function relaunchAfterExit(appImagePath) {
   const env = { ...process.env };
   for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'LD_LIBRARY_PATH', 'LD_PRELOAD']) {
     delete env[key];
@@ -2101,11 +2061,10 @@ function relaunchAfterExit(appImagePath, extraArgs = []) {
     '/bin/sh',
     [
       '-c',
-      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; app="$2"; shift 2; exec "$app" "$@"',
+      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
       'streamhub-relaunch', // $0
       String(process.pid), //  $1: wait for us to exit…
       appImagePath, //         $2: …then become the new build
-      ...extraArgs, //         $3…: …carrying these arguments, when there are any
     ],
     {
       detached: true, // its own session, so our exit doesn't take it down with us

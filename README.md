@@ -166,28 +166,28 @@ Honest caveats:
   above the window mpv renders into — this was tried, and it does not work. That is why the
   controls are mpv's rather than the app's, and why the film moves aside for the sidebar rather
   than sitting under it.
-- **It runs on X11, on a Wayland session too.** mpv can only be handed a window to draw into on
-  X11 — it has no such support on Wayland — so the app asks for the X11 backend at launch and
-  XWayland hosts it. This is why `npm start` and the packaged launcher both pass
-  `--ozone-platform=x11`; started some other way without it, Jellyfin playback has nowhere to
-  draw and simply never appears.
+- **On Wayland, mpv plays in a window of its own.** mpv can only be handed a window to draw into
+  on X11 — it has no such support on Wayland — so on a Wayland session, where the app runs
+  natively, the film opens in mpv's own window beside the app rather than inside it. To have it
+  embedded, start the app on X11 instead: `StreamHub.AppImage --ozone-platform=x11` (or
+  `npm start -- --ozone-platform=x11`), and XWayland hosts it.
 
-  Worth knowing what that costs, because it applies to the whole app and not just Jellyfin: under
-  X11 any other X client on your machine can read your keystrokes, including the ones you type
-  into a service's sign-in page. Wayland isolates applications from each other in a way X11 never
-  did. On a desktop where you trust everything you have installed this changes nothing in
-  practice, and it is the same exposure as running any X11 browser — but it is a step back from a
-  pure Wayland session, taken to make playback possible at all.
+  That used to be the default, and it was given up on purpose: under XWayland, Netflix and the
+  other services drop frames (see "Smooth video under XWayland" below) and answer by pausing and
+  lowering the quality. X11 also lets any other X client on your machine read your keystrokes,
+  including the ones you type into a service's sign-in page, which Wayland does not.
 - Linux only, like the rest of the app.
 
 ## Display scaling
 
-The app runs on X11 (see the mpv note above), which on a Wayland desktop means under XWayland —
-and XWayland has no way of telling a program what scale a monitor is set to. Most compositors
-work around that by scaling X windows up themselves: the right size, a little soft. Hyprland with
-`xwayland { force_zero_scaling = true }` (Omarchy's default) does not: X programs get the
-monitor's real pixels and are expected to scale themselves. Left alone, Chromium draws at 100%,
-and on a 4K monitor at 150% the whole app comes out at two-thirds size.
+On a Wayland desktop the app runs natively, and Chromium takes each monitor's scale from the
+compositor itself. This section is about running it on X11 (see the mpv note above), which on a
+Wayland desktop means under XWayland — and XWayland has no way of telling a program what scale a
+monitor is set to. Most compositors work around that by scaling X windows up themselves: the
+right size, a little soft. Hyprland with `xwayland { force_zero_scaling = true }` (Omarchy's
+default) does not: X programs get the monitor's real pixels and are expected to scale
+themselves. Left alone, Chromium draws at 100%, and on a 4K monitor at 150% the whole app comes
+out at two-thirds size.
 
 So StreamHub asks Hyprland what each monitor is set to and draws itself accordingly, following
 the window as it moves between monitors of different scales. It is applied as page zoom rather
@@ -211,11 +211,12 @@ restart. It is a launch flag, so a change takes effect on the next start.
 
 ## Smooth video under XWayland
 
-On a Wayland desktop the app runs through XWayland (see the mpv note above), and there Chromium
-cannot get a reliable vsync signal: it schedules frames against a clock that is wrong, and video
-drops frames — measured at 3–8% of them on a 60Hz monitor under Hyprland. YouTube and Netflix
-both read dropped frames as a player that cannot keep up, and answer by lowering the quality,
-which is what makes the picture keep changing resolution mid-film.
+This only applies when the app is started on X11 on a Wayland desktop (see the mpv note above),
+which puts it under XWayland. There Chromium cannot get a reliable vsync signal: it schedules
+frames against a clock that is wrong, and video drops frames — measured at 3–8% of them on a
+60Hz monitor under Hyprland. YouTube and Netflix both read dropped frames as a player that
+cannot keep up, and answer by lowering the quality, which is what makes the picture keep
+changing resolution mid-film.
 
 So under XWayland the app stops waiting on vsync (`--disable-gpu-vsync`), which took the same
 stream to no dropped frames at all. It cannot tear — the Wayland compositor still presents every
@@ -223,6 +224,12 @@ frame on vblank. The cost is that a page's own animations run at the fastest mon
 rate rather than the one the window is on. On by default; Settings → Playback → "Keep video
 smooth under XWayland" turns it off, and applies on the next start. It is not offered anywhere
 else, where it would do nothing useful.
+
+It helps, but over a whole film it is not enough. Measured under Hyprland with it on, Netflix
+still dropped 1–2% of its frames in phases that came and went every few minutes, and each phase
+ended with Netflix pausing to flush its buffer and stepping the film down — 1080p to 342p within
+five minutes. The same build on native Wayland dropped none in 27 minutes. That is why the app
+no longer runs under XWayland unless asked to.
 
 ## Ad blocking
 
