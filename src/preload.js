@@ -57,7 +57,7 @@ contextBridge.exposeInMainWorld('shell', {
   onOpenSheet: (cb) => ipcRenderer.on('open-sheet', (_e, name) => cb(name)),
   onOpenPalette: (cb) => ipcRenderer.on('open-palette', () => cb()),
   // Running count of blocked requests, pushed every couple of seconds while blocking is on.
-  onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, blocked) => cb(blocked)),
+  onAdblockStats: (cb) => ipcRenderer.on('adblock-stats', (_e, stats) => cb(stats)),
   // Download percentage while an update is being fetched; null when it finishes or fails.
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', (_e, percent) => cb(percent)),
   // Whether anything is playing. Its own channel rather than the state payload, so the sidebar

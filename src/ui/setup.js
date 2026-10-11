@@ -39,6 +39,23 @@ let checking = false;
 // the normalised form, not the raw typing, so the two paths save the same thing.
 let unverified = '';
 
+// The save that ends this page. On success the view is replaced and nothing after it runs; a false
+// back means the address was refused, and the page is still here — so it has to come back to life
+// rather than sitting on "Opening it…" with Connect disabled for good.
+async function save(url) {
+  let saved = false;
+  try {
+    saved = await window.setup.save(serviceId, url);
+  } catch {
+    saved = false;
+  }
+  if (saved !== false) return;
+  checking = false;
+  connectEl.disabled = false;
+  setStatus('StreamHub could not use that address. Check it and try again.', 'bad');
+  inputEl.focus();
+}
+
 function setStatus(text, kind) {
   statusEl.textContent = text;
   if (kind) statusEl.dataset.kind = kind;
@@ -76,7 +93,7 @@ formEl.addEventListener('submit', async (e) => {
     // this saves, and being told which server it reached is the confirmation that it is yours.
     setStatus(`Found ${result.name} — Jellyfin ${result.version}. Opening it…`, 'good');
     inputEl.value = result.url;
-    await window.setup.save(serviceId, result.url);
+    await save(result.url);
     return;
   }
 
@@ -96,7 +113,7 @@ anywayEl.addEventListener('click', () => {
   if (!unverified || !window.setup) return;
   anywayEl.hidden = true;
   setStatus(`Opening ${unverified}…`, 'busy');
-  window.setup.save(serviceId, unverified);
+  save(unverified);
 });
 
 // Typing again after a failure clears the verdict — it applies to the old address, not this one.

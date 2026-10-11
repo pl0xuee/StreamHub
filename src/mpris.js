@@ -9,6 +9,7 @@
 // the methods it actually calls. Everything else is declared false/unsupported rather than
 // half-implemented, so a client never offers a control that does nothing.
 const dbus = require('@httptoolkit/dbus-native');
+const { dialog } = require('electron');
 
 const BUS_NAME = 'org.mpris.MediaPlayer2.streamhub';
 const OBJECT_PATH = '/org/mpris/MediaPlayer2';
@@ -25,8 +26,14 @@ const v = (signature, value) => [signature, value];
 // mode is too severe to leave standing on that alone: a panel widget must not be able to
 // crash the app.
 //
-// So swallow exactly those — errors thrown inside dbus-native — and let every other uncaught
-// exception through untouched, so real bugs still surface instead of being hidden.
+// So swallow exactly those — errors thrown inside dbus-native — and treat every other uncaught
+// exception the way Electron would have, so real bugs still surface instead of being hidden.
+//
+// Not by rethrowing. Electron's own handler — an error dialog, and the app carries on — stands
+// down as soon as any other listener exists, and a throw from inside an uncaughtException listener
+// is fatal to Node. Rethrowing here therefore turned every stray exception anywhere in the main
+// process into an instant exit, skipping will-quit: mpv orphaned, the sleep inhibitor dropped, no
+// stop report to Jellyfin. So this does what Electron's handler does instead.
 let guarded = false;
 let current = null; // the live Mpris, so the guard can put it back on the bus
 let restarts = 0;
@@ -38,7 +45,14 @@ function guardAgainstDbusCrashes() {
   process.on('uncaughtException', (err) => {
     const stack = (err && err.stack) || '';
     if (!stack.includes('dbus-native')) {
-      throw err; // not ours — restore the normal crash
+      // eslint-disable-next-line no-console
+      console.error('Uncaught exception in the main process:', err);
+      try {
+        dialog.showErrorBox('A JavaScript error occurred in the main process', stack || String(err));
+      } catch {
+        /* too early or too late for a dialog; the log has it */
+      }
+      return;
     }
     // eslint-disable-next-line no-console
     console.warn('[mpris] ignored a bad D-Bus request:', err.message);
@@ -71,7 +85,6 @@ class Mpris {
     this.playing = false;
     this.title = 'StreamHub';
     this.service = '';
-    this.props = null; // the exported Player interface, once dbus hands it to us
     // Whether the app has finished with this player, as opposed to it merely being off the bus for
     // a moment. Only stop() sets it, and it is what keeps the crash guard from resurrecting a
     // player that was deliberately put away.
@@ -122,7 +135,6 @@ class Mpris {
       /* going away anyway */
     }
     this.bus = null;
-    this.props = null; // it belonged to the connection that has just gone
   }
 
   // org.mpris.MediaPlayer2 — identity, and Raise so clicking the applet brings the window up.
@@ -131,10 +143,10 @@ class Mpris {
     this.bus.exportInterface(
       {
         Raise() {
-          self.controls.raise();
+          self.call('raise');
         },
         Quit() {
-          self.controls.quit();
+          self.call('quit');
         },
         CanRaise: true,
         CanQuit: true,
@@ -172,31 +184,31 @@ class Mpris {
   // org.mpris.MediaPlayer2.Player — the half that panels actually use.
   exportPlayer() {
     const self = this;
-    this.props = this.bus.exportInterface(
+    this.bus.exportInterface(
       {
         // Each one means what it says. They used to all toggle, so a client sending Play to a video
         // that was already playing paused it, and one sending Pause to a paused video started it.
         // There is nothing to stop on a website, so Stop pauses.
         PlayPause() {
-          self.controls.playPause();
+          self.call('playPause');
         },
         Play() {
-          self.controls.play();
+          self.call('play');
         },
         Pause() {
-          self.controls.pause();
+          self.call('pause');
         },
         Stop() {
-          self.controls.pause();
+          self.call('pause');
         },
         // These sites have no notion of a next track, so the media keys are wired to seek
         // instead — the same ±10s the app's own media-key handling does, so the hardware
         // keys and the panel buttons agree rather than doing different things.
         Next() {
-          self.controls.seek(10);
+          self.call('seek', 10);
         },
         Previous() {
-          self.controls.seek(-10);
+          self.call('seek', -10);
         },
 
         get PlaybackStatus() {
@@ -264,22 +276,51 @@ class Mpris {
     );
   }
 
+  // Run one of the app's controls for a D-Bus method call. Its own errors are caught and logged
+  // here, inside the call: one escaping would carry dbus-native frames in its stack, and the crash
+  // guard would mistake an app bug for a bad request — swallow it, and spend a bus restart on it.
+  call(name, ...args) {
+    try {
+      this.controls[name](...args);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[mpris] ${name} failed:`, err);
+    }
+  }
+
   // Tell the bus what changed. Without this the panel shows whatever was true when it first
   // looked, so a paused video still reads as playing.
+  //
+  // PropertiesChanged belongs to org.freedesktop.DBus.Properties, not to the Player interface, so
+  // it is sent as a signal of its own rather than emitted from the exported object — which is what
+  // this used to try, against a return value dbus-native never gives. Nothing was ever sent.
   update({ playing, title, service }) {
     if (playing !== undefined) this.playing = playing;
     if (title !== undefined) this.title = title || 'StreamHub';
     if (service !== undefined) this.service = service || '';
-    if (!this.props || !this.props.emit) return;
+    if (!this.bus) return;
     try {
-      this.props.emit('PropertiesChanged', 'org.mpris.MediaPlayer2.Player', {
-        PlaybackStatus: v('s', this.playing ? 'Playing' : 'Paused'),
-        Metadata: v('a{sv}', [
-          ['mpris:trackid', v('o', TRACK_ID)],
-          ['xesam:title', v('s', this.title)],
-          ['xesam:artist', v('as', this.service ? [this.service] : [])],
-        ]),
-      });
+      this.bus.sendSignal(
+        OBJECT_PATH,
+        'org.freedesktop.DBus.Properties',
+        'PropertiesChanged',
+        'sa{sv}as',
+        [
+          'org.mpris.MediaPlayer2.Player',
+          [
+            ['PlaybackStatus', v('s', this.playing ? 'Playing' : 'Paused')],
+            [
+              'Metadata',
+              v('a{sv}', [
+                ['mpris:trackid', v('o', TRACK_ID)],
+                ['xesam:title', v('s', this.title)],
+                ['xesam:artist', v('as', this.service ? [this.service] : [])],
+              ]),
+            ],
+          ],
+          [],
+        ],
+      );
     } catch {
       /* the panel will catch up on its next read */
     }

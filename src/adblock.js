@@ -21,8 +21,13 @@ const { parse: parseHost } = require('tldts-experimental');
 // handlers are bound to the blocker rather than to any one session, so a single live
 // registration correctly serves every session: we drop the pair and let the next enable()
 // put it straight back. See BlockingContext.enable() in @ghostery/adblocker-electron.
+//
+// The library's disable() removes the pair just as globally, so taking blocking off one service
+// would leave every other service without cosmetic filtering or scriptlets. So after any attach
+// or detach the pair is put back for whatever is still attached — see registerHandlers().
 const INJECT_CHANNEL = '@ghostery/adblocker/inject-cosmetic-filters';
-const COSMETIC_CHANNELS = [INJECT_CHANNEL, '@ghostery/adblocker/is-mutation-observer-enabled'];
+const OBSERVER_CHANNEL = '@ghostery/adblocker/is-mutation-observer-enabled';
+const COSMETIC_CHANNELS = [INJECT_CHANNEL, OBSERVER_CHANNEL];
 
 // Why we take the blocker's cosmetic handler off it (see injectCosmetics below).
 //
@@ -62,6 +67,15 @@ function injectInto(frame, scripts) {
 // re-fetch it once a week. Upstream rebuilds it on roughly that cadence.
 const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+// How long one list download may take. Startup waits on the engine whenever there is no cache to
+// read (see load), and Node's fetch has no deadline of its own worth the name — a stalled
+// connection would otherwise hold the window back for minutes.
+const FETCH_TIMEOUT_MS = 15000;
+
+// How long after a start from a stale cache to fetch fresh lists. Not straight away: the first
+// moments are when the services are loading, and the rebuild is a burst of work on this thread.
+const STALE_REFRESH_DELAY_MS = 60 * 1000;
+
 // Brave's "Experimental ad blocker" list (its catalog calls the row exactly that, and
 // describes it as "Brave Experimental Adblock Rules"). It is a supplement, not a blocklist:
 // a couple of dozen risky rules Brave trials before promoting them, aimed largely at
@@ -92,31 +106,65 @@ function braveListPath() {
   return path.join(app.getPath('userData'), 'brave-experimental.txt');
 }
 
-// Drop a cached engine that has gone stale so the loader re-downloads it. A missing or
-// unreadable cache is the normal first-run case, not an error.
-async function dropStaleCache(file) {
+// fetch with a deadline, and one that treats an error page as the error it is. The library reads
+// whatever body comes back as the list, so a 429 or a 503 from the list host would otherwise be
+// parsed as filter rules and cached for a week with that list missing.
+async function fetchChecked(url, init = {}) {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`${url} returned ${res.status}`);
+  return res;
+}
+
+// Whether a cached file is older than the refresh interval. Missing counts as stale.
+async function isStale(file) {
   try {
     const { mtimeMs } = await fs.stat(file);
-    if (Date.now() - mtimeMs > MAX_CACHE_AGE_MS) await fs.unlink(file);
+    return Date.now() - mtimeMs > MAX_CACHE_AGE_MS;
   } catch {
-    /* no cache yet, or it is already gone */
+    return true;
   }
 }
 
-// Brave's experimental rules, from the cached copy when it is fresh, otherwise re-fetched.
-// Returns the filter lines, comments and blanks stripped.
-async function fetchBraveRules() {
-  const file = braveListPath();
-  await dropStaleCache(file);
+// Replace a cache file in one step, so a write cut short leaves the previous copy rather than half
+// of a new one.
+async function writeAtomic(file, data) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, data);
+  await fs.rename(tmp, file);
+}
 
-  let text;
+// The cached engine, or null if there is none or it cannot be read (an engine serialized by an
+// older library version throws here, which just means a fresh download).
+async function readCachedEngine() {
   try {
-    text = await fs.readFile(file, 'utf8');
+    return ElectronBlocker.deserialize(await fs.readFile(enginePath()));
   } catch {
-    const res = await fetch(BRAVE_EXPERIMENTAL_URL);
-    if (!res.ok) throw new Error(`Brave list returned ${res.status}`);
-    text = await res.text();
-    await fs.writeFile(file, text);
+    return null;
+  }
+}
+
+// A freshly built engine, written to the cache only once it has been built in full.
+async function downloadEngine() {
+  const blocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetchChecked);
+  await writeAtomic(enginePath(), blocker.serialize());
+  return blocker;
+}
+
+// Brave's experimental rules. `fresh` fetches them anew and falls back to the cached copy if that
+// fails; otherwise the cached copy is used when there is one. Returns the filter lines, comments
+// and blanks stripped.
+async function fetchBraveRules(fresh) {
+  const file = braveListPath();
+  let text = fresh ? null : await fs.readFile(file, 'utf8').catch(() => null);
+  if (text === null) {
+    try {
+      const res = await fetchChecked(BRAVE_EXPERIMENTAL_URL);
+      text = await res.text();
+      await writeAtomic(file, text);
+    } catch (err) {
+      text = await fs.readFile(file, 'utf8').catch(() => null);
+      if (text === null) throw err;
+    }
   }
 
   return text
@@ -130,6 +178,7 @@ class AdBlocker {
     this.blocker = null;
     this.enabled = false; // the global switch
     this.loading = null; // in-flight engine load, so concurrent toggles share one download
+    this.refreshing = null; // in-flight refresh, likewise
     this.error = null;
     this.blocked = 0; // every service's blocks added up
     this.braveRules = 0; // how many of Brave's experimental rules were merged in
@@ -153,49 +202,19 @@ class AdBlocker {
     if (this.loading) return this.loading;
 
     this.loading = (async () => {
-      const file = enginePath();
-      await dropStaleCache(file);
-      const blocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetch, {
-        path: file,
-        read: fs.readFile,
-        write: fs.writeFile,
-      });
-      // Every session shares one engine, so a block only says which *webContents* made the
-      // request. Map that back to the service (see owners) to get a per-service count; a
-      // request from something we do not own still counts toward the total.
-      blocker.on('request-blocked', (request) => {
-        this.blocked += 1;
-        const serviceId = this.owners.get(request.tabId);
-        if (serviceId) this.counts.set(serviceId, (this.counts.get(serviceId) || 0) + 1);
-      });
-
-      // Layer Brave's experimental rules over the base engine. Best-effort: they are a
-      // small supplement, so if the list cannot be fetched we still have a working blocker
-      // and say so in the status rather than failing the whole load.
-      try {
-        const rules = await fetchBraveRules();
-        blocker.updateFromDiff({ added: rules });
-        this.braveRules = rules.length;
-      } catch (err) {
-        this.braveRules = 0;
-        // eslint-disable-next-line no-console
-        console.warn('[adblock] Brave experimental rules unavailable:', err.message);
-      }
-
-      // Applied last, and never over the network: an exception that failed to download would
-      // mean a silently broken service, which is exactly what these exist to prevent.
-      blocker.updateFromDiff({ added: UNBREAK_RULES });
-
-      // The engine file's mtime is when these rules were actually fetched — which is what
-      // the user wants to know when YouTube starts showing ads again.
-      try {
-        this.lastUpdated = (await fs.stat(file)).mtimeMs;
-      } catch {
-        this.lastUpdated = null;
-      }
-
+      // A cached engine is used whatever its age. One past the refresh interval is still a working
+      // blocker, and deleting it before a replacement had arrived is how one offline start used to
+      // turn blocking off for good. It is refreshed in the background instead, once things settle.
+      const stale = await isStale(enginePath());
+      let blocker = await readCachedEngine();
+      const fromCache = blocker !== null;
+      if (!blocker) blocker = await downloadEngine();
+      await this.prepare(blocker, !fromCache);
       this.blocker = blocker;
       this.error = null;
+      if (fromCache && stale) {
+        setTimeout(() => this.refresh().catch(() => {}), STALE_REFRESH_DELAY_MS);
+      }
       return blocker;
     })();
 
@@ -211,16 +230,66 @@ class AdBlocker {
     }
   }
 
+  // Everything an engine needs on top of the base lists before it is put to work. `fresh` fetches
+  // Brave's rules anew rather than reading the cached copy.
+  async prepare(blocker, fresh) {
+    // Every session shares one engine, so a block only says which *webContents* made the
+    // request. Map that back to the service (see owners) to get a per-service count; a
+    // request from something we do not own still counts toward the total.
+    blocker.on('request-blocked', (request) => {
+      this.blocked += 1;
+      const serviceId = this.owners.get(request.tabId);
+      if (serviceId) this.counts.set(serviceId, (this.counts.get(serviceId) || 0) + 1);
+    });
+
+    // Layer Brave's experimental rules over the base engine. Best-effort: they are a
+    // small supplement, so if the list cannot be fetched we still have a working blocker
+    // and say so in the status rather than failing the whole load.
+    try {
+      const rules = await fetchBraveRules(fresh);
+      blocker.updateFromDiff({ added: rules });
+      this.braveRules = rules.length;
+    } catch (err) {
+      this.braveRules = 0;
+      // eslint-disable-next-line no-console
+      console.warn('[adblock] Brave experimental rules unavailable:', err.message);
+    }
+
+    // Applied last, and never over the network: an exception that failed to download would
+    // mean a silently broken service, which is exactly what these exist to prevent.
+    blocker.updateFromDiff({ added: UNBREAK_RULES });
+
+    // The engine file's mtime is when these rules were actually fetched — which is what
+    // the user wants to know when YouTube starts showing ads again.
+    try {
+      this.lastUpdated = (await fs.stat(enginePath())).mtimeMs;
+    } catch {
+      this.lastUpdated = null;
+    }
+  }
+
   attach(ses) {
     if (!this.blocker || this.active.has(ses)) return;
-    // Re-register the shared cosmetic handlers (see COSMETIC_CHANNELS).
+    // Clear the shared cosmetic handlers so the library can register its own (see
+    // COSMETIC_CHANNELS)...
     for (const channel of COSMETIC_CHANNELS) ipcMain.removeHandler(channel);
     this.blocker.enableBlockingInSession(ses);
-    // ...then take the scriptlet-injecting one back off the library (see injectInto).
-    ipcMain.removeHandler(INJECT_CHANNEL);
-    ipcMain.handle(INJECT_CHANNEL, (event, url, msg) => this.injectCosmetics(event, url, msg));
     this.narrowHeaderListener(ses);
     this.active.add(ses);
+    // ...then put ours in their place.
+    this.registerHandlers();
+  }
+
+  // The two cosmetic handlers, for as long as any session is attached. Ours rather than the
+  // library's: the scriptlet one is injectCosmetics (see injectInto), and both read the current
+  // engine at call time, so they never answer for one that has been replaced.
+  registerHandlers() {
+    for (const channel of COSMETIC_CHANNELS) ipcMain.removeHandler(channel);
+    if (!this.blocker || this.active.size === 0) return;
+    ipcMain.handle(INJECT_CHANNEL, (event, url, msg) => this.injectCosmetics(event, url, msg));
+    ipcMain.handle(OBSERVER_CHANNEL, (event) =>
+      this.blocker ? this.blocker.onIsMutationObserverEnabled(event) : false,
+    );
   }
 
   // The library listens to the response headers of *every* request, and each one is held while
@@ -242,6 +311,9 @@ class AdBlocker {
   // run in the frame that asked for them rather than in the top frame.
   injectCosmetics(event, url, msg) {
     if (!this.blocker) return;
+    // Only for a service that is being blocked. A page that loaded while its service was still
+    // attached keeps asking after the service is switched off.
+    if (!event.sender || !this.active.has(event.sender.session)) return;
     const { hostname, domain } = parseHost(url);
     const isFirstRun = msg === undefined; // updates carry DOM info; the first call does not
     const { active, styles, scripts } = this.blocker.getCosmeticsFilters({
@@ -279,6 +351,7 @@ class AdBlocker {
     // in views.js sits on onBeforeSendHeaders and is unaffected.
     this.blocker.disableBlockingInSession(ses);
     this.active.delete(ses);
+    this.registerHandlers();
   }
 
   // Called for every service session as its view is created, so a session opened while
@@ -318,6 +391,8 @@ class AdBlocker {
       this.enabled = false;
       return false;
     }
+    // Switched off again while the engine was downloading: that is the state to honour.
+    if (!this.enabled) return false;
     this.applyAll();
     return true;
   }
@@ -337,29 +412,43 @@ class AdBlocker {
   }
 
   // Pull fresh filter lists now rather than waiting out the weekly refresh — the fix for a
-  // site's new anti-adblock arrives as a list update, not as an app update. Drops the cached
-  // engine, rebuilds, and re-attaches. Leaves the old engine in place if the fetch fails, so
-  // "update" can never leave the user with less blocking than they started with.
+  // site's new anti-adblock arrives as a list update, not as an app update. Builds the new engine
+  // alongside the old one, and only swaps them once it is complete; the cache is replaced only
+  // then too. If the fetch fails the old engine stays attached, so "update" can never leave the
+  // user with less blocking than they started with.
   async refresh() {
-    const previous = this.blocker;
-    try {
-      await fs.unlink(enginePath()).catch(() => {});
-      await fs.unlink(braveListPath()).catch(() => {});
-      this.blocker = null;
-      this.loading = null;
-      if (!(await this.load())) {
-        this.blocker = previous; // put the working engine back
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      try {
+        const next = await downloadEngine();
+        await this.prepare(next, true);
+        // Take every session off the old engine before attaching the new one. Each attach
+        // registers a preload in the session, and one left behind by the old engine would go on
+        // injecting a second copy of everything — and would survive the service being switched off.
+        const previous = this.blocker;
+        if (previous) {
+          for (const ses of this.active) {
+            try {
+              previous.disableBlockingInSession(ses);
+            } catch {
+              /* never attached to that one */
+            }
+          }
+        }
+        this.active.clear();
+        this.blocker = next;
+        this.error = null;
+        this.applyAll();
+        this.registerHandlers();
+        return true;
+      } catch (err) {
+        this.error = err.message;
         return false;
+      } finally {
+        this.refreshing = null;
       }
-      // The old engine's listeners are gone with it, so re-attach every session to the new.
-      this.active.clear();
-      this.applyAll();
-      return true;
-    } catch (err) {
-      this.blocker = previous;
-      this.error = err.message;
-      return false;
-    }
+    })();
+    return this.refreshing;
   }
 
   status() {

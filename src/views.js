@@ -122,6 +122,64 @@ const PAUSE_ALL_JS = `(() => {
   return paused;
 })()`;
 
+// The same pause, without the mark — for media that started in a view the user had already left
+// (see enforcePaused). Marking it would have RESUME_JS start a background trailer the user never
+// played as soon as they came back. A film paused on the way out keeps the mark it got then, so
+// one that quietly restarted itself and was silenced again here still resumes on return.
+const ENFORCE_PAUSE_JS = `(() => {
+  for (const m of document.querySelectorAll('video, audio')) {
+    if (m.paused || m.ended || m === document.pictureInPictureElement) continue;
+    m.pause();
+  }
+})()`;
+
+// Ask a page that is still showing something fullscreen to stop. Run on a pane the app took out of
+// fullscreen itself (see dropFullscreen): otherwise the page still believes it is fullscreen, and
+// shows its own "exit fullscreen" controls when the user comes back to it.
+const EXIT_FULLSCREEN_JS = `(() => {
+  if (!document.fullscreenElement) return;
+  const r = document.exitFullscreen();
+  if (r && r.catch) r.catch(() => {});
+})()`;
+
+// Permissions no streaming site has a reason to be granted. Electron grants every request a
+// session has no handler for, without asking anyone — so without this, any site, or any frame it
+// embeds, could switch on the camera and microphone, read the clipboard, track location, or hand a
+// URL to the desktop's external-protocol handler. The last one also covers what the navigation
+// guard below cannot see: a server redirect to a custom scheme, and links inside popup windows.
+//
+// A denylist rather than an allowlist on purpose: what playback and sign-in need — mediaKeySystem
+// for Widevine, fullscreen, pointer and keyboard lock in a fullscreen player, storage access for
+// embedded sign-in — is whatever the sites ask for next, and an allowlist would break the first
+// service that asks for something new. Names as Electron spells them (Session in electron.d.ts).
+const DENIED_PERMISSIONS = new Set([
+  'media',
+  'display-capture',
+  'geolocation',
+  'notifications',
+  'openExternal',
+  'midi',
+  'midiSysex',
+  'hid',
+  'serial',
+  'usb',
+  'idle-detection',
+  'clipboard-read',
+  'deprecated-sync-clipboard-read',
+  'window-management',
+  'fileSystem',
+]);
+
+// Install the permission policy on a service session, once.
+function restrictPermissions(ses) {
+  if (ses.__streamhubPermissions) return;
+  ses.__streamhubPermissions = true;
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(!DENIED_PERMISSIONS.has(permission));
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => !DENIED_PERMISSIONS.has(permission));
+}
+
 // JS injected when returning to a service we auto-paused: restart just the elements
 // PAUSE_ALL_JS stopped, so a background trailer we never played doesn't spring to life.
 const RESUME_JS = `(() => {
@@ -328,8 +386,12 @@ class ViewManager {
     this.fullscreenView = null; // the pane a site took HTML-fullscreen, so it alone covers the window
     this.autoPaused = new Set(); // views we paused on switch-away, to resume on return
     this.videoFullscreen = false;
+    // Whether the window was already fullscreen — F11, or the compositor's key — when a site took
+    // fullscreen. Leaving the site's fullscreen then leaves the window where the user put it.
+    this.windowWasFullscreen = false;
     this.bounds = { width: 0, height: 0 };
     this.playing = new Set(); // views with media playing, for the screen-sleep inhibitor
+    this.playerCounts = new Map(); // view -> how many of its media players are playing
     this.enhance = {}; // per-site cosmetic tweaks, from the user's settings (see enhance.js)
     this.onPlaybackChange = () => {}; // set by main.js
     this.glass = true; // service views run the full window width, with the chrome floating over them
@@ -405,10 +467,24 @@ class ViewManager {
 
   // Track which views are playing and tell main.js when that set becomes empty or non-empty,
   // so it can hold or release the display-sleep inhibitor.
-  onMediaChange(view, isPlaying) {
+  //
+  // Counted per player, not per view. Chromium reports each media element starting and stopping
+  // on its own, so a view is playing while any of its players is. A yes/no per view took the whole
+  // view out of the set the moment *one* player stopped — hovering a channel preview in Twitch's
+  // sidebar was enough to release the inhibitor under a live stream, and let the screen blank.
+  // `change` is +1 for a player starting, -1 for one stopping, and null for "none of them are
+  // playing any more" — the view going away, or its page being replaced.
+  onMediaChange(view, change) {
     const before = this.playing.size > 0;
-    if (isPlaying) this.playing.add(view);
-    else this.playing.delete(view);
+    const count =
+      change === null ? 0 : Math.max(0, (this.playerCounts.get(view) || 0) + change);
+    if (count > 0) {
+      this.playerCounts.set(view, count);
+      this.playing.add(view);
+    } else {
+      this.playerCounts.delete(view);
+      this.playing.delete(view);
+    }
     const after = this.playing.size > 0;
     if (before !== after) this.onPlaybackChange(after);
   }
@@ -448,6 +524,7 @@ class ViewManager {
     const ses = session.fromPartition(partition);
     ses.setUserAgent(CHROME_UA);
     alignClientHints(ses);
+    restrictPermissions(ses);
     // Every service has its own session, so the ad blocker has to be attached to each one.
     // This is a no-op while blocking is off for this service; turning it on later reaches
     // back through the sessions registered here.
@@ -481,6 +558,10 @@ class ViewManager {
     // it is told again. Every navigation, and the first load with it.
     wc.on('did-navigate', (_e, url) => {
       this.applyZoom(view);
+      // A new document has none of the old one's players. Their counts go with it, in case one
+      // was torn down without a "stopped" to say so — a count left behind would hold the screen
+      // awake under a page with nothing playing.
+      this.onMediaChange(view, null);
       // Where the service actually lives: wherever its address first landed, redirects and all —
       // Max's play.max.com lands on hbomax.com. That, and not a sign-in page visited later, is the
       // site whose icon the sidebar may show for it (see icons.js).
@@ -575,12 +656,12 @@ class ViewManager {
     // fire for muted/looping decorative video too; the inhibitor treats any playback as
     // reason enough to keep the display on, which is the safe way round.
     wc.on('media-started-playing', () => {
-      this.onMediaChange(view, true);
+      this.onMediaChange(view, 1);
       // Only a view that is not on screen gets put back to sleep. A visible pane is meant to
       // play — that includes every pane of a grid, not just the primary one.
       if (!this.visible.has(view)) this.enforcePaused(view);
     });
-    wc.on('media-paused', () => this.onMediaChange(view, false));
+    wc.on('media-paused', () => this.onMediaChange(view, -1));
 
     // The site names its icons, and one of them is the logo the sidebar shows for it (icons.js).
     // Chromium's own list is the desktop favicons only, which are mostly 16px; the page's <link>s
@@ -882,7 +963,7 @@ class ViewManager {
     }
     // A destroyed view cannot report that it stopped playing, so drop it from the playing
     // set by hand or the display-sleep inhibitor would be held forever.
-    this.onMediaChange(view, false);
+    this.onMediaChange(view, null);
     // Unbind whatever the state of the contents: the id is what the blocker filed this view under,
     // and skipping it for a webContents that has already gone leaves that entry in the owners map
     // for the life of the process. Read the id first, since it cannot be read afterwards.
@@ -913,12 +994,23 @@ class ViewManager {
   // the chrome hidden until the now-hidden page happened to leave fullscreen on its own.
   dropFullscreen() {
     if (!this.videoFullscreen && !this.fullscreenView) return;
+    const view = this.fullscreenView;
     this.videoFullscreen = false;
     this.fullscreenView = null;
     this.onFullscreenChange(false);
-    if (this.win.setFullScreen && !this.win.isDestroyed() && this.win.isFullScreen()) {
+    // The page is told too, or it goes on believing it is fullscreen. Harmless on a view that is
+    // being destroyed: its contents simply never run it.
+    const wc = view && view.webContents;
+    if (wc && !wc.isDestroyed()) this.eachFrame(wc, EXIT_FULLSCREEN_JS).catch(() => {});
+    if (
+      !this.windowWasFullscreen &&
+      this.win.setFullScreen &&
+      !this.win.isDestroyed() &&
+      this.win.isFullScreen()
+    ) {
       this.win.setFullScreen(false);
     }
+    this.windowWasFullscreen = false;
   }
 
   setVideoFullscreen(on, view) {
@@ -927,6 +1019,11 @@ class ViewManager {
     // and one that arrives when nothing is fullscreen at all, which must not drag the window out
     // of a fullscreen the user chose with F11.
     if (!on && (!this.fullscreenView || (view && view !== this.fullscreenView))) return;
+    // Remembered on the way in, before this changes it — and only then, so a second "enter" while
+    // already fullscreen does not overwrite what the window was doing before the first.
+    if (on && !this.videoFullscreen) {
+      this.windowWasFullscreen = Boolean(this.win.isFullScreen && this.win.isFullScreen());
+    }
     this.videoFullscreen = on;
     // Which pane before telling anyone: main.js reads it to decide whether mpv, in another pane,
     // has just been covered.
@@ -934,7 +1031,9 @@ class ViewManager {
     this.onFullscreenChange(on);
     // Bring the fullscreen pane to the top so it covers its grid neighbours while it owns the window.
     if (on && this.fullscreenView) this.win.contentView.addChildView(this.fullscreenView);
-    if (this.win.setFullScreen) this.win.setFullScreen(on);
+    // Out of fullscreen only if the site is what put the window there.
+    if (this.win.setFullScreen && (on || !this.windowWasFullscreen)) this.win.setFullScreen(on);
+    if (!on) this.windowWasFullscreen = false;
     this.layout(this.bounds.width, this.bounds.height);
     if (!on) this.onStackChange();
   }
@@ -1017,7 +1116,7 @@ class ViewManager {
     // It may have come back on screen while this was waiting, in which case it is meant to play.
     if (this.visible.has(view)) return;
     this.lastEnforced.set(view, Date.now());
-    this.eachFrame(wc, PAUSE_ALL_JS).catch(() => {});
+    this.eachFrame(wc, ENFORCE_PAUSE_JS).catch(() => {});
   }
 
   // `want`: true plays, false pauses, anything else toggles.

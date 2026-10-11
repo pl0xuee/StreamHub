@@ -91,9 +91,11 @@ function paintMark(el, svc) {
 // a tile, a quick-switch entry, the menu opened on it. The chrome stays steel at rest; it is only
 // where a service is lit (active, aimed at, chosen) that its light is the service's own, so the
 // colour has to travel with the element rather than live in a rule per service. Anything without
-// one falls back to steel in the stylesheet.
+// one falls back to steel in the stylesheet — and so does a colour that is not a real CSS hex. A
+// five-digit one would make every color-mix() it feeds invalid, which shows as nothing at all rather
+// than as steel.
 function brand(el, svc, prop = '--brand') {
-  if (svc && typeof svc.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(svc.color)) {
+  if (svc && typeof svc.color === 'string' && /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(svc.color)) {
     el.style.setProperty(prop, svc.color);
   } else {
     el.style.removeProperty(prop);
@@ -114,6 +116,37 @@ function svgIcon(name) {
   return svg;
 }
 
+// How many requests the blocker has stopped on THIS service. Only shown once it has actually
+// stopped something — a "0" on every row is noise, not information. Painted in place by the stats
+// tick too (see refreshShields), so the number keeps up without the row being rebuilt.
+function paintShield(shield, svc) {
+  const counts = (state.adblock && state.adblock.counts) || {};
+  const blocked = counts[svc.id] || 0;
+  shield.classList.remove('off');
+  shield.textContent = '';
+  shield.removeAttribute('title');
+  if (adblockOnFor(svc.id) && blocked > 0) {
+    shield.textContent = blocked > 999 ? `${Math.floor(blocked / 1000)}k` : String(blocked);
+    shield.title = `${blocked.toLocaleString()} requests blocked on ${svc.name}`;
+  } else if (state.adblock && state.adblock.enabled && !adblockOnFor(svc.id)) {
+    // Blocking is on everywhere else but deliberately off here — say so, or the user will
+    // wonder why this one service is full of ads.
+    shield.textContent = '⊘';
+    shield.classList.add('off');
+    shield.title = `Ad blocking is off for ${svc.name}`;
+  }
+}
+
+// Bring every row's count up to date from the stats tick. In place rather than through
+// renderServices: rebuilding the rows every two seconds would restart the playing row's meter.
+function refreshShields() {
+  for (const li of listEl.children) {
+    const svc = state.services.find((s) => s.id === li.dataset.id);
+    const shield = li.querySelector('.shield');
+    if (svc && shield) paintShield(shield, svc);
+  }
+}
+
 function makeServiceEl(svc) {
   const li = document.createElement('li');
   li.className = 'service' + (isSelected(svc.id) ? ' active' : '');
@@ -132,22 +165,9 @@ function makeServiceEl(svc) {
   label.className = 'label';
   label.textContent = svc.name;
 
-  // How many requests the blocker has stopped on THIS service. Only shown once it has
-  // actually stopped something — a "0" on every row is noise, not information.
-  const counts = (state.adblock && state.adblock.counts) || {};
-  const blocked = counts[svc.id] || 0;
   const shield = document.createElement('span');
   shield.className = 'shield';
-  if (adblockOnFor(svc.id) && blocked > 0) {
-    shield.textContent = blocked > 999 ? `${Math.floor(blocked / 1000)}k` : String(blocked);
-    shield.title = `${blocked.toLocaleString()} requests blocked on ${svc.name}`;
-  } else if (state.adblock && state.adblock.enabled && !adblockOnFor(svc.id)) {
-    // Blocking is on everywhere else but deliberately off here — say so, or the user will
-    // wonder why this one service is full of ads.
-    shield.textContent = '⊘';
-    shield.classList.add('off');
-    shield.title = `Ad blocking is off for ${svc.name}`;
-  }
+  paintShield(shield, svc);
 
   const del = document.createElement('button');
   del.className = 'del';
@@ -362,6 +382,10 @@ gridPreviewEl.addEventListener('dragover', (e) => {
 
 // ---- Per-service context menu (right-click a row) ----
 function closeServiceMenu() {
+  // Every click anywhere comes through here (see the window listener below). With no menu up there
+  // is nothing to close — and the releasePeek at the end would otherwise stow a sidebar the user
+  // has just clicked a button on, 180ms later, with the pointer still sitting on it.
+  if (menuEl.hidden) return;
   menuEl.hidden = true;
   menuServiceId = null;
   menuWanted = null;
@@ -420,7 +444,9 @@ menuAdblockEl.addEventListener('click', async () => {
   if (!id) return;
   const on = !adblockOnFor(id);
   closeServiceMenu();
-  applyState({ ...state, adblock: await window.shell.setServiceAdblock(id, on) });
+  // Nothing to apply from the answer: main broadcasts the new state before it replies, and spreading
+  // the reply over the `state` read before the await would put that older state back on screen.
+  await window.shell.setServiceAdblock(id, on);
 });
 
 menuServerEl.addEventListener('click', () => {
@@ -465,7 +491,7 @@ window.addEventListener('keydown', (e) => {
   const matches = paletteMatches();
   if (e.key === 'ArrowDown') {
     e.preventDefault();
-    paletteIndex = Math.min(paletteIndex + 1, matches.length - 1);
+    paletteIndex = Math.max(0, Math.min(paletteIndex + 1, matches.length - 1));
     renderPalette();
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
@@ -661,7 +687,10 @@ function stowSoon(delay) {
   }, delay);
 }
 
+// Not while the pointer is on the sidebar: a menu or sheet closing there is not the pointer
+// leaving, and nothing but a mousemove would cancel a stow the pointer is resting under.
 function releasePeek() {
+  if (sidebarEl.matches(':hover')) return;
   stowSoon(LEAVE_GRACE_MS);
 }
 
@@ -760,6 +789,10 @@ function renderPalette() {
     li.addEventListener('click', (e) => choosePalette(svc, e.shiftKey));
     paletteListEl.appendChild(li);
   });
+  // The list scrolls past about ten services, and the arrows must not walk the highlight out of
+  // sight.
+  const on = paletteListEl.querySelector('li.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
 }
 
 function openPalette() {
@@ -975,7 +1008,16 @@ function renderDisplayScale() {
 }
 
 function applyState(next) {
+  // The quick switch reads the service list, so a broadcast while it is open changes what is in it.
+  // Keep the highlight on the same service rather than the same row number, or Enter would pick
+  // whatever moved into that row.
+  const aimed = paletteOpen ? paletteMatches()[paletteIndex] : null;
   state = next;
+  if (paletteOpen) {
+    const at = aimed ? paletteMatches().findIndex((s) => s.id === aimed.id) : -1;
+    paletteIndex = Math.max(0, at);
+    renderPalette();
+  }
   renderServices();
   renderSheets();
   removedCountEl.textContent = String(state.removed.length);
@@ -1049,8 +1091,14 @@ async function init() {
     }
   });
 
-  window.shell.onAdblockStats((blocked) => {
-    if (adblockEl.checked) renderAdblockCount(blocked);
+  // Not over an error: "Filter list unavailable" is the thing to read until the state says
+  // otherwise, and a tick of the counter would quietly replace it.
+  window.shell.onAdblockStats(({ blocked, counts }) => {
+    if (state.adblock && counts) {
+      state.adblock = { ...state.adblock, blocked, counts };
+      refreshShields();
+    }
+    if (adblockEl.checked && !adblockSubEl.classList.contains('error')) renderAdblockCount(blocked);
   });
 
   // Pull fresh filter lists on demand. Rebuilding the engine reloads every open service, so report
@@ -1094,8 +1142,13 @@ async function init() {
 
   // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the
   // button rather than leaving it sitting on "Checking…".
+  // null is the download ending (done or failed), not a new check starting: the restart prompt or
+  // the error is up by then, so the button says the download is over rather than "Checking…".
+  // A number while downloading, 'done' once the download is complete, and null when it failed —
+  // which leaves the label for renderUpdate to settle, rather than claiming anything.
   window.shell.onUpdateProgress((percent) => {
-    updateBtn.textContent = percent === null ? 'Checking…' : `Downloading ${percent}%`;
+    if (percent === 'done') updateBtn.textContent = 'Downloaded';
+    else if (typeof percent === 'number') updateBtn.textContent = `Downloading ${percent}%`;
   });
 
   updateBtn.addEventListener('click', () => {

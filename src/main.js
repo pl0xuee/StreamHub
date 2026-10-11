@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const {
   app,
   BaseWindow,
+  BrowserWindow,
   WebContentsView,
   components,
   ipcMain,
@@ -73,13 +74,20 @@ const icons = require('./icons');
 // The reason is the one relaunchAfterExit already documents: the environment here points into the
 // AppImage's own mount, so the new copy has to be started by something that outlives us, from a
 // working directory that is not about to disappear.
+//
+// Only with an X server to move to. A Wayland session without XWayland (niri's default, or
+// Hyprland with it switched off) has no DISPLAY, and the relaunched copy would die looking for one
+// with its output discarded — an app that simply never appears. Staying on Wayland works there.
+// Whatever the user started it with goes along too: a --password-store or a scale factor dropped
+// on the way through changes which logins the new copy can read.
 if (
   process.platform === 'linux' &&
   process.env.APPIMAGE &&
   process.env.WAYLAND_DISPLAY &&
+  process.env.DISPLAY &&
   !process.argv.some((a) => a.startsWith('--ozone-platform'))
 ) {
-  relaunchAfterExit(process.env.APPIMAGE, '--ozone-platform=x11');
+  relaunchAfterExit(process.env.APPIMAGE, ['--ozone-platform=x11', ...process.argv.slice(1)]);
   app.exit(0);
 }
 
@@ -309,6 +317,14 @@ let mpris = null; // Linux system media controls (KDE panel, lock screen)
 // mpv, and the window it draws into, for Jellyfin. Made on first play and kept afterwards —
 // see player.js for why the video gets a window of its own rather than sharing the main one.
 let jellyfinPlayer = null;
+// Stop reports still on their way to the server. Quitting waits a moment for them (see
+// before-quit): a stop is what writes the resume point, and an exit mid-request loses it.
+const stopReports = new Set();
+// How long a quit will wait for that. Long enough for a server on the LAN, short enough that a
+// server that has gone away does not hold the app open.
+const QUIT_REPORT_GRACE_MS = 2500;
+// Set once the quit has waited, so the app.quit() that follows goes straight through.
+let quitDrained = false;
 // Telling the server where we have got to. jellyfin-web reports for players it runs itself, but
 // mpv is another process and the page cannot see its position — so without this an item has no
 // resume point and never gets marked watched. Built when a play starts, from credentials the
@@ -599,17 +615,31 @@ function reportPlaying() {
 function rememberWindowLater() {
   clearTimeout(saveWindowTimer);
   saveWindowTimer = setTimeout(() => {
-    if (!baseWindow || baseWindow.isDestroyed()) return;
-    // A maximized/fullscreen window's bounds are the screen's, not the size to restore to,
-    // so keep the last normal geometry and record the maximized state separately.
-    const maximized = baseWindow.isMaximized();
-    if (!maximized && !baseWindow.isFullScreen()) {
-      const { x, y, width, height } = baseWindow.getBounds();
-      config.window = { ...config.window, x, y, width, height };
-    }
-    config.window = { ...config.window, maximized };
-    persist();
+    saveWindowTimer = null;
+    rememberWindowNow();
   }, 600);
+}
+
+// Save a pending geometry change straight away rather than when its debounce runs out. Called
+// as the window closes, while it still has bounds to read.
+function flushWindowGeometry() {
+  if (!saveWindowTimer) return;
+  clearTimeout(saveWindowTimer);
+  saveWindowTimer = null;
+  rememberWindowNow();
+}
+
+function rememberWindowNow() {
+  if (!baseWindow || baseWindow.isDestroyed()) return;
+  // A maximized/fullscreen window's bounds are the screen's, not the size to restore to,
+  // so keep the last normal geometry and record the maximized state separately.
+  const maximized = baseWindow.isMaximized();
+  if (!maximized && !baseWindow.isFullScreen()) {
+    const { x, y, width, height } = baseWindow.getBounds();
+    config.window = { ...config.window, x, y, width, height };
+  }
+  config.window = { ...config.window, maximized };
+  persist();
 }
 
 // The single source of truth pushed to every window (main sidebar + removed window).
@@ -698,10 +728,11 @@ function startAdblockStats() {
   if (adblockStatsTimer) return;
   let last = -1;
   adblockStatsTimer = setInterval(() => {
-    const { blocked } = adblocker.status();
+    const { blocked, counts } = adblocker.status();
     if (blocked === last) return;
     last = blocked;
-    sendToUi('adblock-stats', blocked);
+    // The per-service counts ride along, so each row's number keeps up with the total.
+    sendToUi('adblock-stats', { blocked, counts });
   }, 2000);
 }
 
@@ -778,7 +809,22 @@ function setGridMode(on) {
 }
 
 function createWindow() {
-  const saved = config.window || {};
+  const saved = { ...(config.window || {}) };
+  // A position on a monitor that is no longer there — closed on a second screen that has since
+  // been unplugged — would open the window off screen wherever the window manager honours it.
+  // Kept only if the saved rectangle still overlaps some display's work area.
+  if (saved.x !== undefined && saved.y !== undefined) {
+    const rect = { x: saved.x, y: saved.y, width: saved.width || 1280, height: saved.height || 800 };
+    const visible = screen.getAllDisplays().some(({ workArea: w }) => {
+      const across = Math.min(rect.x + rect.width, w.x + w.width) - Math.max(rect.x, w.x);
+      const down = Math.min(rect.y + rect.height, w.y + w.height) - Math.max(rect.y, w.y);
+      return across >= 100 && down >= 50;
+    });
+    if (!visible) {
+      delete saved.x;
+      delete saved.y;
+    }
+  }
   baseWindow = new BaseWindow({
     width: saved.width || 1280,
     height: saved.height || 800,
@@ -818,6 +864,11 @@ function createWindow() {
       chromeView.webContents.setZoomFactor(uiZoom);
     }
   });
+  // The chrome is the app's own page and carries the app's whole bridge (preload.js), so it never
+  // goes anywhere else. Without this a link or a file dropped on the sidebar navigates it — the
+  // sidebar is gone until a restart, and whatever page was dropped is handed window.shell.
+  chromeView.webContents.on('will-navigate', (e) => e.preventDefault());
+  chromeView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   baseWindow.contentView.addChildView(chromeView);
   // Transparent so the picture shows through the chrome. The page sets its own background to
   // `transparent` too — both halves are needed, or Chromium paints the view's base colour first.
@@ -836,7 +887,7 @@ function createWindow() {
   };
   viewManager.mpvPlayback = config.settings.mpvPlayback !== false && Player.available();
 
-  jellyfinPlayer = new Player({
+  const player = new Player({
     baseWindow,
     // The same switch as Chromium's GPU decoding: a driver that gets one wrong gets both wrong.
     hwdec: config.settings.hwDecode !== false,
@@ -856,18 +907,18 @@ function createWindow() {
     // the chrome is hidden, since there is then nothing to make room for.
     insetLeft: () => (chromeHidden() ? 0 : Math.round(dockInsetWidth * uiZoom)),
   });
+  jellyfinPlayer = player;
   // While mpv is up the sidebar stays: the video steps aside for it rather than the other way
   // round. It only goes when mpv takes the screen, the same way it goes for a site in fullscreen.
-  jellyfinPlayer.on('active', (on, was) => {
+  jellyfinPlayer.on('active', (on, was, reason) => {
     mpvPlaying = on;
     if (!on) mpvPaused = false;
     syncPlayer(); // the chrome, and whether the sidebar's edge sits beside a film
     reportPlaying();
-    // Read the position off the player that raised this, not off the module-level one: closing
-    // the window destroys the player and clears that reference before mpv has finished exiting,
-    // so by the time this runs it can already be null — which threw, and lost the resume point
-    // for whatever was playing when the app was closed.
-    const player = jellyfinPlayer;
+    // The position is read off the player that raised this (`player`, above), not off the
+    // module-level one: closing the window clears that reference as it destroys the player, and
+    // reading it here used to find null and drop the stop report — the resume point for whatever
+    // was playing when the app was closed.
 
     // The position rides along with the stop. jellyfin-web reports the stop to the server itself,
     // reading the position out of its own mirror as it does — and a stop lands between ticks, so
@@ -875,13 +926,16 @@ function createWindow() {
     if (on) sendToJellyfin({ type: 'playing' });
     else {
       const positionSeconds = player ? player.state.positionSeconds : undefined;
-      sendToJellyfin({ type: 'stopped', positionSeconds });
+      // `ended` says whether the film played to its end — the one stop the page may follow with
+      // the next episode. See the 'stopped' handling in jellyfin-shell.js.
+      sendToJellyfin({ type: 'stopped', positionSeconds, ended: reason === 'eof' });
     }
 
     // Stopping is the report that must not be missed: it is what writes the resume point, and
     // what tells the server to tear down anything it had set up for this session.
-    if (!on && jellyfinApi && was && was.itemId && player) {
-      jellyfinApi
+    if (!on && jellyfinApi && was && was.itemId) {
+      // Held on to until it settles, so quitting can wait for it (see before-quit).
+      const report = jellyfinApi
         .reportStopped({
           itemId: was.itemId,
           mediaSourceId: was.mediaSourceId,
@@ -889,6 +943,8 @@ function createWindow() {
           playSessionId: was.playSessionId,
         })
         .catch(() => {});
+      stopReports.add(report);
+      report.finally(() => stopReports.delete(report));
     }
   });
 
@@ -1000,6 +1056,9 @@ function createWindow() {
   // chord back and hands it here.
   viewManager.onCommandPalette = () => {
     if (chromeView && !chromeView.webContents.isDestroyed()) {
+      // The keyboard is still the page's at this point, and focusing the input from inside the
+      // chrome does not move it across views — so the typing would go on reaching the service.
+      chromeView.webContents.focus();
       chromeView.webContents.send('open-palette');
     }
   };
@@ -1074,6 +1133,9 @@ function createWindow() {
   // point of the setting is to keep a stream running with the window out of the way. Quit
   // still quits: the tray menu and app.quit() set `quitting` first.
   baseWindow.on('close', (e) => {
+    // A move or resize just before closing is still waiting on its debounce; save it while the
+    // window still has bounds to read.
+    flushWindowGeometry();
     if (quitting || !config.settings.minimizeToTray || !tray) return;
     e.preventDefault();
     baseWindow.hide();
@@ -1081,6 +1143,12 @@ function createWindow() {
 
   baseWindow.on('closed', () => {
     baseWindow = null;
+    // Closing the window is quitting (with the tray off — on, the window only hides). Windows a
+    // site opened on its own — a sign-in popup, a link from a chat — have no parent here, and any
+    // left open would keep the app running with no window to control it.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.close();
+    }
     // The player holds a child window and an mpv process. Neither is reachable once this window
     // is gone, and an mpv whose parent window died ignores SIGTERM, so it has to be let go here
     // rather than left to the process exit.
@@ -1139,6 +1207,8 @@ function applyTraySetting() {
 // service view both need a way to raise.
 function openSheet(name) {
   if (chromeView && !chromeView.webContents.isDestroyed()) {
+    // Given the keyboard as well, so Escape closes the sheet rather than reaching the page under it.
+    chromeView.webContents.focus();
     chromeView.webContents.send('open-sheet', name);
   }
 }
@@ -1370,15 +1440,23 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
         //
         // The page has no business naming anything but a stream on its own server, so that is all
         // it may name.
+        //
+        // A refusal is also said as an error event. The page has already reported the start by
+        // the time this answers, and with no event it waits for 'playing' indefinitely — which is
+        // what pointing the page at a second server looked like: every play hung, silently.
         const expected = jellyfinOrigin();
+        const refuse = () => {
+          sendToJellyfin({ type: 'error', message: 'StreamHub only plays from the server it is set up for' });
+          return false;
+        };
         let target = null;
         try {
           target = new URL(String(p.url || ''));
         } catch {
-          return false;
+          return refuse();
         }
-        if (!expected || target.origin !== expected) return false;
-        if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+        if (!expected || target.origin !== expected) return refuse();
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') return refuse();
         // This pane is the film's from now on: where it is tiled, whether it is on screen.
         jellyfinOwnerId = event.sender.id;
         syncPlayer();
@@ -1433,6 +1511,16 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
           audioIndex: p.audioIndex,
           subtitleIndex: p.subtitleIndex,
           externalSubtitles,
+          // Jellyfin's numbering of the source's audio and subtitle streams, for the player to
+          // map onto mpv's tracks (see trackIdForStreamIndex). Shape-checked; nothing is fetched.
+          streams: (Array.isArray(p.streams) ? p.streams : [])
+            .filter((s) => s && Number.isInteger(Number(s.index)))
+            .map((s) => ({
+              index: Number(s.index),
+              type: s.type === 'Audio' ? 'audio' : s.type === 'Subtitle' ? 'sub' : null,
+              external: s.external === true,
+            }))
+            .filter((s) => s.type),
           meta: {
             itemId: p.itemId,
             mediaSourceId: p.mediaSourceId,
@@ -1481,18 +1569,26 @@ ipcMain.handle('jellyfin-player', async (event, method, payload) => {
         return jellyfinPlayer.mpv ? await jellyfinPlayer.mpv.setMuted(Boolean(p.muted)) : null;
       // The page speaks Jellyfin stream indices here too, so these go through the same mapping
       // as the initial selection rather than being passed to mpv as if they were track ids.
+      //
+      // What was picked is also remembered on the item, so the progress reports name the tracks
+      // actually playing rather than the ones the film started with.
       case 'setAudioTrack': {
         if (!jellyfinPlayer.mpv) return null;
         const id = await jellyfinPlayer.trackIdForStreamIndex('audio', p.id);
-        return id === null ? null : await jellyfinPlayer.mpv.setAudioTrack(id);
+        if (id === null) return null;
+        if (jellyfinPlayer.current) jellyfinPlayer.current.audioIndex = Number(p.id);
+        return await jellyfinPlayer.mpv.setAudioTrack(id);
       }
       case 'setSubtitleTrack': {
         if (!jellyfinPlayer.mpv) return null;
         if (p.id === null || Number(p.id) < 0) {
+          if (jellyfinPlayer.current) jellyfinPlayer.current.subtitleIndex = -1;
           return await jellyfinPlayer.mpv.setSubtitleTrack(null);
         }
         const id = await jellyfinPlayer.trackIdForStreamIndex('sub', p.id);
-        return id === null ? null : await jellyfinPlayer.mpv.setSubtitleTrack(id);
+        if (id === null) return null;
+        if (jellyfinPlayer.current) jellyfinPlayer.current.subtitleIndex = Number(p.id);
+        return await jellyfinPlayer.mpv.setSubtitleTrack(id);
       }
       case 'getState':
         return { ...jellyfinPlayer.state, active: jellyfinPlayer.isActive() };
@@ -1668,9 +1764,13 @@ ipcMain.handle('probe-server', async (event, input) => {
 // Its views are rebuilt rather than navigated: which preload a view carries is settled when it is
 // made, and the setup page holds a bridge that a website must never be handed. Rebuilding is also
 // what makes the switch immediate, since the page the user is looking at is the one being replaced.
-function applyServerUrl(serviceId, url) {
+async function applyServerUrl(serviceId, url) {
   const service = config.services.find((s) => s.id === serviceId);
   if (!service || !service.selfHosted) return false;
+  // A film from the old server is stopped while there is still a client for that server to report
+  // the stop to — below, that client is thrown away. Stopping after would leave the old server's
+  // session (and any transcode) running, and the film without a resume point.
+  if (jellyfinPlayer && jellyfinPlayer.isActive()) await jellyfinPlayer.stop().catch(() => {});
   // Whatever icon was kept came from the old address.
   icons.forget(service.id);
   if (url) {
@@ -1710,7 +1810,7 @@ ipcMain.handle('set-server-url', (event, serviceId, input) => {
 // one is kept to be offered there, and nothing else about the service — its login above all — is
 // touched, so pointing it at the same server again picks up exactly where it left off.
 ipcMain.on('change-server', (_e, serviceId) => {
-  applyServerUrl(serviceId, '');
+  applyServerUrl(serviceId, '').catch(() => {});
 });
 
 // Play Jellyfin through mpv, or leave it to the browser player.
@@ -1977,7 +2077,7 @@ async function pollForUpdate() {
 // our pid to disappear, then execs the new build. Its environment is stripped of the old
 // mount's variables — they point into a directory that is about to stop existing — and the
 // new AppImage's runtime sets its own on the way up.
-function relaunchAfterExit(appImagePath, extraArg) {
+function relaunchAfterExit(appImagePath, extraArgs = []) {
   const env = { ...process.env };
   for (const key of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'LD_LIBRARY_PATH', 'LD_PRELOAD']) {
     delete env[key];
@@ -2001,13 +2101,11 @@ function relaunchAfterExit(appImagePath, extraArg) {
     '/bin/sh',
     [
       '-c',
-      extraArg
-        ? 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2" "$3"'
-        : 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"',
+      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; app="$2"; shift 2; exec "$app" "$@"',
       'streamhub-relaunch', // $0
       String(process.pid), //  $1: wait for us to exit…
       appImagePath, //         $2: …then become the new build
-      ...(extraArg ? [extraArg] : []), // $3: …carrying this argument, when one is given
+      ...extraArgs, //         $3…: …carrying these arguments, when there are any
     ],
     {
       detached: true, // its own session, so our exit doesn't take it down with us
@@ -2037,7 +2135,7 @@ async function downloadAndInstall(info) {
   } finally {
     autoUpdater.off('download-progress', onProgress);
   }
-  sendToUi('update-progress', null);
+  sendToUi('update-progress', 'done');
 
   // Windows: hand off to the NSIS installer, which swaps the files and relaunches the app
   // itself, so none of the AppImage in-place / manual-relaunch handling below applies.
@@ -2275,8 +2373,21 @@ app.on('window-all-closed', () => {
 
 // Any route to quitting (menu, Ctrl+Q, session logout) has to get past the close-to-tray
 // handler, which only stands aside once this is set.
-app.on('before-quit', () => {
+//
+// A film still playing is stopped first, and the stop report given a moment to reach the server:
+// otherwise the process exits mid-request and the resume point is lost. Closing the window gets
+// here the same way — the window's closed handler stops the player, and window-all-closed quits.
+app.on('before-quit', (e) => {
   quitting = true;
+  if (quitDrained) return;
+  const filmPlaying = Boolean(jellyfinPlayer && jellyfinPlayer.isActive());
+  if (!filmPlaying && stopReports.size === 0) return;
+  e.preventDefault();
+  quitDrained = true;
+  const stopped = filmPlaying ? jellyfinPlayer.stop().catch(() => {}) : Promise.resolve();
+  const drained = stopped.then(() => Promise.allSettled([...stopReports]));
+  const grace = new Promise((resolve) => setTimeout(resolve, QUIT_REPORT_GRACE_MS));
+  Promise.race([drained, grace]).then(() => app.quit());
 });
 
 app.on('will-quit', () => {

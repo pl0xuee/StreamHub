@@ -36,10 +36,9 @@ let cache = { monitors: [], zeroScaling: false };
 function onX11() {
   const flag = process.argv.find((a) => a.startsWith('--ozone-platform='));
   if (flag) return flag.endsWith('=x11');
-  const hint = String(process.env.ELECTRON_OZONE_PLATFORM_HINT || '').toLowerCase();
-  if (hint === 'wayland') return false;
-  if (hint === 'auto') return !process.env.WAYLAND_DISPLAY;
-  return true;
+  // No flag: Electron picks the platform itself, and current releases go native on Wayland
+  // whenever there is a Wayland session — the old ELECTRON_OZONE_PLATFORM_HINT is no longer read.
+  return !process.env.WAYLAND_DISPLAY;
 }
 
 // Only Hyprland, only under XWayland, and only when nothing else has already spoken for the scale:

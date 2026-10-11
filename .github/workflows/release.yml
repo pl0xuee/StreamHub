@@ -67,6 +67,11 @@ jobs:
       - name: Install dependencies (also downloads the castLabs Electron + Widevine binary)
         run: npm install
 
+      # The injected Jellyfin shell is one long template literal, and a stray backtick in it
+      # breaks the app in a way only this check notices before users do. See build/check-shell.js.
+      - name: Check the injected scripts parse
+        run: npm run check
+
       # `--publish never` keeps electron-builder from auto-publishing to GitHub; the `release`
       # job owns that, so the release notes stay ours. The build still writes the electron-updater
       # metadata into dist/, which the in-app updater needs published alongside the installer to
@@ -110,6 +115,16 @@ jobs:
           path: artifacts
           pattern: dist-*
           merge-multiple: true # flatten dist-linux/ and dist-windows/ into one directory
+
+      # `if: always()` above lets one OS publish when the other fails, but with nothing built at all
+      # it would publish an empty release — and the in-app updater reads the latest release, so
+      # every installed copy would start failing its update check. Stop here instead.
+      - name: Require something to publish
+        run: |
+          if ! ls artifacts/latest*.yml >/dev/null 2>&1; then
+            echo "::error::No build produced update metadata; refusing to publish an empty release."
+            exit 1
+          fi
 
       # Build the changelog from git commits since the previous tag. GitHub's own
       # generate_release_notes only lists merged PRs; this repo commits straight to main,

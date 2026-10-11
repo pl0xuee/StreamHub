@@ -110,6 +110,13 @@ exports.default = async function afterPack(context) {
         'mpv was bundled without mpv-COPYING.txt — re-run `npm run stage:mpv` and read its output',
       );
     }
+    // stage-mpv writes a placeholder in its place when it cannot find the GPL text, so existing is
+    // not enough: a placeholder is the same violation with a file standing in front of it.
+    if (fs.readFileSync(licence, 'utf8').startsWith('PLACEHOLDER')) {
+      throw new Error(
+        'mpv-COPYING.txt is still the placeholder stage-mpv wrote — add the GPL text before building',
+      );
+    }
     // eslint-disable-next-line no-console
     console.log(`  • mpv bundled  file=${bundledMpv}`);
   } else {

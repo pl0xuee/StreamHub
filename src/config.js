@@ -221,7 +221,17 @@ function load() {
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
-  } catch {
+  } catch (err) {
+    // A file that exists but will not parse is the user's whole setup — services, order, server,
+    // settings — and the defaults about to replace it get saved over it at the first window move.
+    // Keep the damaged copy beside it, so it can be recovered by hand.
+    if (err && err.code !== 'ENOENT') {
+      try {
+        fs.copyFileSync(configPath(), `${configPath()}.bad`);
+      } catch {
+        /* unreadable as well as unparseable; nothing to keep */
+      }
+    }
     return defaults();
   }
   const cfg = {
@@ -248,10 +258,14 @@ function load() {
   return cfg;
 }
 
+// Written to a temporary file and renamed into place, which replaces the file in one step. Writing
+// in place truncates it first, so a crash or a power cut mid-write — and this runs on every switch
+// and window move — left an empty file, which load() then reads as no config at all.
 function save(cfg) {
+  const tmp = `${configPath()}.tmp`;
   try {
     fs.writeFileSync(
-      configPath(),
+      tmp,
       JSON.stringify(
         {
           services: cfg.services,
@@ -267,6 +281,7 @@ function save(cfg) {
         2,
       ),
     );
+    fs.renameSync(tmp, configPath());
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[config] failed to save services.json:', err);

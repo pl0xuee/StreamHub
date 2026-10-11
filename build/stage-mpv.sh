@@ -81,7 +81,9 @@ mkdir -p "$lib_dir"
 # and re-staging must not quietly delete that marker along with the old libraries.
 touch "$staging/.gitkeep"
 
-version_line=$("$mpv_bin" --version | head -n 1)
+# sed rather than head: head exits after one line, and if mpv is still writing it gets SIGPIPE,
+# which pipefail turns into the whole script stopping without a word.
+version_line=$("$mpv_bin" --version | sed -n 1p)
 echo "stage-mpv: staging $mpv_bin"
 echo "stage-mpv:   $version_line"
 

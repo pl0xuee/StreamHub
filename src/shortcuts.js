@@ -18,14 +18,20 @@ let registered = false;
  */
 function registerMediaKeys(controls) {
   if (registered) return;
-  globalShortcut.register('MediaPlayPause', () => controls.playPause());
-  globalShortcut.register('MediaNextTrack', () => controls.seek(10));
-  globalShortcut.register('MediaPreviousTrack', () => controls.seek(-10));
-  registered = true;
+  // Counted as registered only if at least one key was actually taken. register() returns false
+  // when another app is holding the key, and marking that as done meant the next focus never
+  // tried again — so the keys stayed dead after that app had let go of them.
+  const got = [
+    globalShortcut.register('MediaPlayPause', () => controls.playPause()),
+    globalShortcut.register('MediaNextTrack', () => controls.seek(10)),
+    globalShortcut.register('MediaPreviousTrack', () => controls.seek(-10)),
+  ];
+  registered = got.some(Boolean);
 }
 
 function unregisterMediaKeys() {
-  if (!registered) return;
+  // Not gated on `registered`: a partial registration (some keys taken, some not) still has keys
+  // to give back, and unregistering nothing is harmless.
   globalShortcut.unregisterAll();
   registered = false;
 }
