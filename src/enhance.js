@@ -10,9 +10,9 @@
 // (config.js) and hands it out (main.js), and the service preload is what applies it.
 
 // The features, by key. Adding one means: a key here, code to honour it in the site's controller
-// (enhance-youtube.js, enhance-twitch.js), and a checkbox in ui/index.html.
+// (enhance-youtube.js, enhance-twitch.js, enhance-crunchyroll.js), and a checkbox in ui/index.html.
 //
-// One key per site rather than one "theater mode" key for both, because that is what makes the
+// One key per site rather than one shared "theater mode" key, because that is what makes the
 // remedy for a site moving its DOM around "untick the one that broke". `theater` is YouTube's and
 // keeps its original name: renaming it to match `twitchTheater` would make every settings file
 // written by an older build look like it has no opinion, quietly switching the feature back on for
@@ -24,6 +24,7 @@
 const ENHANCE_DEFAULTS = {
   theater: true,
   twitchTheater: true,
+  crunchyrollTheater: true,
 };
 
 function defaultEnhance() {
@@ -59,4 +60,19 @@ function isTwitchHost(hostname) {
   return TWITCH_HOSTS.has(hostname);
 }
 
-module.exports = { ENHANCE_DEFAULTS, defaultEnhance, cleanEnhance, isYouTubeHost, isTwitchHost };
+// Which hosts the Crunchyroll enhancement applies to. Episodes play on the main site; the player
+// inside it is an iframe on static.crunchyroll.com, which is left alone.
+const CRUNCHYROLL_HOSTS = new Set(['www.crunchyroll.com', 'crunchyroll.com']);
+
+function isCrunchyrollHost(hostname) {
+  return CRUNCHYROLL_HOSTS.has(hostname);
+}
+
+module.exports = {
+  ENHANCE_DEFAULTS,
+  defaultEnhance,
+  cleanEnhance,
+  isYouTubeHost,
+  isTwitchHost,
+  isCrunchyrollHost,
+};

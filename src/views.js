@@ -14,9 +14,10 @@ const {
   needsSetup,
 } = require('./services');
 const { adblocker } = require('./adblock');
-const { isYouTubeHost, isTwitchHost } = require('./enhance');
+const { isYouTubeHost, isTwitchHost, isCrunchyrollHost } = require('./enhance');
 const { controllerJs: youtubeControllerJs } = require('./enhance-youtube');
 const { controllerJs: twitchControllerJs } = require('./enhance-twitch');
+const { controllerJs: crunchyrollControllerJs } = require('./enhance-crunchyroll');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
 // presents. Only headers Chromium already decided to send are overwritten — adding ones
@@ -441,7 +442,8 @@ class ViewManager {
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
   // controller is how it is reconfigured, so this is safe to call on every document load and on
-  // every settings change alike — see enhance-youtube.js and enhance-twitch.js.
+  // every settings change alike — see enhance-youtube.js, enhance-twitch.js and
+  // enhance-crunchyroll.js.
   applyEnhancements(view) {
     const wc = view && view.webContents;
     if (!wc || wc.isDestroyed()) return;
@@ -454,6 +456,7 @@ class ViewManager {
     let source = null;
     if (isYouTubeHost(host)) source = youtubeControllerJs(this.enhance);
     else if (isTwitchHost(host)) source = twitchControllerJs(this.enhance);
+    else if (isCrunchyrollHost(host)) source = crunchyrollControllerJs(this.enhance);
     if (!source) return; // every other service is loaded exactly as the site serves it
     wc.executeJavaScript(source).catch(() => {});
   }

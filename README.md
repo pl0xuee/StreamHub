@@ -64,6 +64,9 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
   arrives, chat still beside it, instead of sitting in a box with the channel panels underneath.
   Leaving theater mode on one stream lasts until you open the next. On by default; the switch is
   in Settings.
+- **Full-window theater mode on Crunchyroll** — episodes fill the window and the top bar hides
+  until you reach for it. Scroll down for the episode details and what plays next. On by default;
+  the switch is in Settings.
 - **Your own Jellyfin server** — see below.
 - **Jellyfin plays through mpv** — no DRM is involved on your own server, so a real player can
   take the original file instead of the browser asking the server to transcode it, decoded on the
@@ -78,7 +81,7 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 - **Video decoded on the graphics card**, where the driver allows it, so a 4K stream is not a
   CPU core for the length of a film. Switchable in Settings.
 - **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
-  ad blocker, the YouTube and Twitch theater modes, how the sidebar behaves, display size,
+  ad blocker, the YouTube, Twitch and Crunchyroll theater modes, how the sidebar behaves, display size,
   playback, tray behaviour, updates. The removed list is a panel now too.
 - **Optional tray icon** — closing the window keeps a stream running.
 

@@ -837,6 +837,7 @@ const filterAgeEl = document.getElementById('filter-age');
 const refreshBtn = document.getElementById('btn-refresh-filters');
 const theaterEl = document.getElementById('chk-theater');
 const twitchTheaterEl = document.getElementById('chk-twitch-theater');
+const crunchyrollTheaterEl = document.getElementById('chk-crunchyroll-theater');
 const autoHideEl = document.getElementById('chk-autohide');
 const glassEl = document.getElementById('chk-glass');
 const mpvEl = document.getElementById('chk-mpv');
@@ -940,6 +941,7 @@ function renderSheets() {
   renderAdblock(state.adblock);
   theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
   twitchTheaterEl.checked = Boolean(state.enhance && state.enhance.twitchTheater);
+  crunchyrollTheaterEl.checked = Boolean(state.enhance && state.enhance.crunchyrollTheater);
   autoHideEl.checked = state.autoHideSidebar !== false;
   glassEl.checked = state.glassSidebar !== false;
   // With no mpv on the machine there is nothing to switch on: say so in place of the
@@ -1120,6 +1122,9 @@ async function init() {
   theaterEl.addEventListener('change', () => window.shell.setEnhance('theater', theaterEl.checked));
   twitchTheaterEl.addEventListener('change', () =>
     window.shell.setEnhance('twitchTheater', twitchTheaterEl.checked),
+  );
+  crunchyrollTheaterEl.addEventListener('change', () =>
+    window.shell.setEnhance('crunchyrollTheater', crunchyrollTheaterEl.checked),
   );
   autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
   glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));

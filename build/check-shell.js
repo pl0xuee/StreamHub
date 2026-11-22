@@ -71,9 +71,9 @@ if (jellyfinShellJs) {
 // strings, so nothing in this repo parses them before Chromium does — a typo in one reaches the
 // user as a feature that quietly stopped working, with no error anywhere the app can see.
 
-// The two site controllers are plain modules with no Electron dependency, so they can be built
+// The site controllers are plain modules with no Electron dependency, so they can be built
 // here for real. Both settings states, because each one emits a different program.
-for (const name of ['enhance-youtube', 'enhance-twitch']) {
+for (const name of ['enhance-youtube', 'enhance-twitch', 'enhance-crunchyroll']) {
   let controllerJs = null;
   try {
     ({ controllerJs } = require(path.join(__dirname, '..', 'src', name)));
@@ -81,7 +81,7 @@ for (const name of ['enhance-youtube', 'enhance-twitch']) {
     fail(`src/${name}.js does not load`, err);
   }
   if (!controllerJs) continue;
-  for (const settings of [{}, { theater: true, twitchTheater: true }]) {
+  for (const settings of [{}, { theater: true, twitchTheater: true, crunchyrollTheater: true }]) {
     try {
       // eslint-disable-next-line no-new
       new vm.Script(controllerJs(settings), { filename: `${name}.injected.js` });
