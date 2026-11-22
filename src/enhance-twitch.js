@@ -78,19 +78,28 @@ function controllerJs(settings) {
   //
   // This runs per navigation rather than once ever. Leaving theatre mode on one stream reads as a
   // decision about that stream and is honoured until the next one; switching the whole thing off
-  // for good is the settings checkbox, not the player button. Hence also the two-click ceiling —
-  // it covers a button that is on screen a moment before React has wired it up, without ever
-  // turning into an argument with someone who wants theatre mode off.
+  // for good is the settings checkbox, not the player button.
+  //
+  // Getting theatre mode on is not the end of it. Arriving at a stream by Twitch's own in-page
+  // navigation (the sidebar, the directory), Twitch switches theatre mode back off by itself about
+  // a second after we have put it on, once the channel page finishes setting itself up. So the poll
+  // keeps watching for its whole window and presses the button again if the mode drops — unless
+  // the person watching is the one who turned it off (see noteUserChoice), which ends the poll on
+  // the spot. The click ceiling is the backstop against ever arguing with a way of leaving theatre
+  // mode that noteUserChoice does not recognise.
+  let userChose = false;
   function startPoll() {
     stopPoll();
+    userChose = false;
     let tries = 0;
     let clicks = 0;
     timer = setInterval(() => {
       tries += 1;
-      if (inTheater() || clicks >= 2 || tries > 80) {
+      if (userChose || clicks >= 4 || tries > 80) {
         stopPoll();
         return;
       }
+      if (inTheater()) return;
       const button = theaterButton();
       if (button) {
         button.click();
@@ -98,6 +107,20 @@ function controllerJs(settings) {
       }
     }, 250);
   }
+
+  // A real press of the theatre button, or its Alt+T shortcut, is the viewer deciding for this
+  // stream. isTrusted is what separates it from our own button.click(), which is not.
+  function noteUserChoice(e) {
+    if (timer === null || !e.isTrusted) return;
+    if (e.type === 'keydown') {
+      if (e.altKey && e.code === 'KeyT') userChose = true;
+      return;
+    }
+    const button = theaterButton();
+    if (button && e.target instanceof Node && button.contains(e.target)) userChose = true;
+  }
+  document.addEventListener('click', noteUserChoice, true);
+  document.addEventListener('keydown', noteUserChoice, true);
 
   // Twitch is a single-page app, and unlike YouTube it announces nothing we can listen for, so the
   // URL is what tells us a new stream has arrived. A string compare twice a second costs nothing
