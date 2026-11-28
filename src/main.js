@@ -321,15 +321,7 @@ function mediaSeek(seconds) {
     jellyfinPlayer.seekBy(seconds).catch(() => {});
     return;
   }
-  const wc = viewManager && viewManager.getActiveWebContents();
-  if (!wc || wc.isDestroyed()) return;
-  // The playing video rather than merely the first: a page can hold a preview or an ad before it.
-  const delta = Number(seconds) || 0;
-  wc.executeJavaScript(`(() => {
-    const vids = Array.from(document.querySelectorAll('video'));
-    const v = vids.find((x) => x.readyState > 2) || vids[0];
-    if (v) v.currentTime = Math.max(0, v.currentTime + (${delta}));
-  })()`).catch(() => {});
+  if (viewManager) viewManager.seek(seconds);
 }
 
 // Hold the display awake while a service is playing. Watching a film is the one time a
@@ -366,7 +358,7 @@ async function onPlaybackChange(playing) {
   if (wc && !wc.isDestroyed()) {
     // Strip the site's own suffix ("… - YouTube") so the panel does not say it twice.
     const raw = wc.getTitle() || '';
-    const cleaned = raw.replace(/\s*[-|–]\s*(YouTube|Twitch|Netflix|Hulu|Prime Video)\s*$/i, '');
+    const cleaned = raw.replace(/\s*[-|–]\s*(YouTube|Twitch|Rumble|Netflix|Hulu|Prime Video)\s*$/i, '');
     if (cleaned.trim()) title = cleaned.trim();
   }
   mpris.update({ playing, title, service: service ? service.name : '' });
@@ -609,6 +601,7 @@ function statePayload() {
     removed: config.removed,
     activeServiceId,
     sidebarCollapsed,
+    fullscreen: Boolean(baseWindow && !baseWindow.isDestroyed() && baseWindow.isFullScreen()),
     version: APP_VERSION,
     adblock: adblocker.status(),
     updateAvailable: pendingUpdate,
@@ -922,7 +915,7 @@ function createWindow() {
       .reportProgress({
         itemId: current.itemId,
         mediaSourceId: current.mediaSourceId,
-        positionSeconds: jellyfinPlayer ? jellyfinPlayer.state.positionSeconds : 0,
+        positionSeconds: player ? player.state.positionSeconds : 0,
         isPaused: paused,
         playSessionId: current.playSessionId,
         playMethod: current.playMethod,
@@ -1030,11 +1023,14 @@ function createWindow() {
   // something else happened to force a layout. Immediate as well, so a drag stays responsive.
   layoutSettled();
   baseWindow.on('resize', layoutSettled);
-  baseWindow.on('enter-full-screen', layoutSettled);
-  baseWindow.on('leave-full-screen', layoutSettled);
-  // However the window left fullscreen, mpv no longer has the screen it was given.
+  baseWindow.on('enter-full-screen', () => {
+    layoutSettled();
+    broadcast();
+  });
   baseWindow.on('leave-full-screen', () => {
+    layoutSettled();
     if (jellyfinPlayer) jellyfinPlayer.windowLeftFullscreen();
+    broadcast();
   });
   baseWindow.on('maximize', layoutSettled);
   baseWindow.on('unmaximize', layoutSettled);
@@ -1182,7 +1178,13 @@ function buildAppMenu() {
         label: 'View',
         submenu: [
           { role: 'togglefullscreen' },
-          { role: 'reload' },
+          {
+            label: 'Reload',
+            accelerator: 'CmdOrCtrl+R',
+            click: () => {
+              if (viewManager) viewManager.reloadActive();
+            },
+          },
           { type: 'separator' },
           {
             label: 'Settings',
@@ -1612,6 +1614,7 @@ ipcMain.on('remove-service', (_e, serviceId) => {
     if (activeServiceId === serviceId || wasGridded) {
       activeServiceId = null;
       if (config.services[0]) switchService(config.services[0].id);
+      else config.lastServiceId = null;
     }
   }
   persist();

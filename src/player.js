@@ -847,7 +847,12 @@ class Player extends EventEmitter {
     // spawn it again.
     this.mpv.on('client-message', (name) => {
       if (name !== 'streamhub-escape') return;
-      if (this.baseWindow && !this.baseWindow.isDestroyed() && this.baseWindow.isFullScreen()) {
+      if (
+        this.embedded &&
+        this.baseWindow &&
+        !this.baseWindow.isDestroyed() &&
+        this.baseWindow.isFullScreen()
+      ) {
         this.setFullscreen(false);
         if (this.mpv) this.mpv.setProperty('fullscreen', false).catch(() => {});
         return;
@@ -918,6 +923,20 @@ class Player extends EventEmitter {
     // A film that is over has nothing to resume. The hide reasons stay: they describe the app
     // (a sheet is open, another service is showing), and the next item has to respect them too.
     this.autoPaused = false;
+    // If mpv put the app window into fullscreen, release it when playback ends so the chrome
+    // returns and the next film does not inherit a stale ownsFullscreen flag.
+    if (this.ownsFullscreen) {
+      this.ownsFullscreen = false;
+      this.emit('fullscreen', false);
+      if (
+        this.embedded &&
+        this.baseWindow &&
+        !this.baseWindow.isDestroyed() &&
+        this.baseWindow.isFullScreen()
+      ) {
+        this.baseWindow.setFullScreen(false);
+      }
+    }
     // Only say playback ended if it had actually begun. A stop that arrives when nothing was
     // playing — jellyfin-web sends one on navigation — would otherwise announce itself, and the
     // listener that restores the sidebar would put it back over a site that is in fullscreen.

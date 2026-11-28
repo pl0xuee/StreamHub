@@ -10,7 +10,8 @@
 // (config.js) and hands it out (main.js), and the service preload is what applies it.
 
 // The features, by key. Adding one means: a key here, code to honour it in the site's controller
-// (enhance-youtube.js, enhance-twitch.js, enhance-crunchyroll.js), and a checkbox in ui/index.html.
+// (enhance-youtube.js, enhance-twitch.js, enhance-crunchyroll.js, enhance-rumble.js), and a checkbox
+// in ui/index.html.
 //
 // One key per site rather than one shared "theater mode" key, because that is what makes the
 // remedy for a site moving its DOM around "untick the one that broke". `theater` is YouTube's and
@@ -18,13 +19,14 @@
 // written by an older build look like it has no opinion, quietly switching the feature back on for
 // anyone who had turned it off.
 //
-// Both ship on. Unlike the ad blocker — which is off by default because an over-broad filter rule
+// All ship on. Unlike the ad blocker — which is off by default because an over-broad filter rule
 // can stop a video playing — the worst these can do is make a page look wrong, and someone who
 // installed the app to get a bigger player should not have to go hunting for them.
 const ENHANCE_DEFAULTS = {
   theater: true,
   twitchTheater: true,
   crunchyrollTheater: true,
+  rumbleTheater: true,
 };
 
 function defaultEnhance() {
@@ -68,6 +70,14 @@ function isCrunchyrollHost(hostname) {
   return CRUNCHYROLL_HOSTS.has(hostname);
 }
 
+// Which hosts the Rumble enhancement applies to. Deliberately not studio.rumble.com (a creator's
+// own dashboard, not a place anyone is watching a video from).
+const RUMBLE_HOSTS = new Set(['rumble.com', 'www.rumble.com']);
+
+function isRumbleHost(hostname) {
+  return RUMBLE_HOSTS.has(hostname);
+}
+
 module.exports = {
   ENHANCE_DEFAULTS,
   defaultEnhance,
@@ -75,4 +85,5 @@ module.exports = {
   isYouTubeHost,
   isTwitchHost,
   isCrunchyrollHost,
+  isRumbleHost,
 };

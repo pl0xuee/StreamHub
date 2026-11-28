@@ -6,6 +6,7 @@
 const listEl = document.getElementById('service-list');
 const removedCountEl = document.getElementById('removed-count');
 const settingsBtn = document.getElementById('btn-settings');
+const fullscreenBtn = document.getElementById('btn-fullscreen');
 const gridBtn = document.getElementById('btn-grid');
 const gridPanelEl = document.getElementById('grid-panel');
 const gridLayoutEl = document.getElementById('grid-layout');
@@ -152,10 +153,20 @@ function makeServiceEl(svc) {
   li.className = 'service' + (isSelected(svc.id) ? ' active' : '');
   li.dataset.id = svc.id;
   li.draggable = true;
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
   brand(li, svc);
   // The label is dropped in the collapsed rail, which leaves only a coloured initial —
-  // and two services can share one (YouTube and YouTube TV both give "Y").
-  li.title = svc.name;
+  // and two services can share one (YouTube and YouTube TV both give "Y"). In grid mode,
+  // include the occupied pane numbers so tooltips stay informative even in the rail.
+  if (state.gridMode) {
+    const pos = panesFor(svc.id).map((p) => p.position);
+    const panesNote = pos.length ? ` (pane ${pos.join(', ')})` : '';
+    const actionNote = state.gridFull ? ' — grid full' : ' — click to add a pane';
+    li.title = `${svc.name}${panesNote}${actionNote}`;
+  } else {
+    li.title = svc.name;
+  }
 
   const icon = document.createElement('span');
   icon.className = 'icon';
@@ -219,20 +230,32 @@ function makeServiceEl(svc) {
     if (state.gridMode) window.shell.addGridPane(svc.id);
     else window.shell.switchService(svc.id);
   });
+  li.addEventListener('keydown', (e) => {
+    if (e.target !== li) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (state.gridMode) window.shell.addGridPane(svc.id);
+      else window.shell.switchService(svc.id);
+    }
+  });
   li.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     openServiceMenu(svc, e.clientX, e.clientY);
   });
 
   li.addEventListener('dragstart', () => {
+    dragging = true;
+    holdPeek();
     // Defer so the class lands after the drag image is captured.
     requestAnimationFrame(() => li.classList.add('dragging'));
   });
   li.addEventListener('dragend', () => {
+    dragging = false;
     li.classList.remove('dragging');
     // Commit whatever order the DOM ended up in.
     const ids = Array.from(listEl.children).map((c) => c.dataset.id);
     window.shell.reorderServices(ids);
+    releasePeek();
   });
 
   return li;
@@ -310,14 +333,18 @@ function renderGridPreview() {
 
     tile.append(num, mark, close);
     tile.addEventListener('dragstart', () => {
+      dragging = true;
+      holdPeek();
       // Defer so the class lands after the drag image is captured.
       requestAnimationFrame(() => tile.classList.add('dragging'));
     });
     tile.addEventListener('dragend', () => {
+      dragging = false;
       tile.classList.remove('dragging');
       // Commit whatever order the DOM ended up in.
       const ids = Array.from(gridPreviewEl.children).map((c) => c.dataset.paneId);
       window.shell.reorderGridPanes(ids);
+      releasePeek();
     });
     gridPreviewEl.appendChild(tile);
   });
@@ -480,7 +507,7 @@ window.addEventListener('keydown', (e) => {
 
   // Ctrl+K from inside our own chrome. The same chord pressed in a service view belongs to the
   // page, so main.js takes it back there and forwards it — see onOpenPalette in init().
-  if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key || '').toLowerCase() === 'k') {
+  if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && (e.key || '').toLowerCase() === 'k') {
     e.preventDefault();
     if (paletteOpen) closePalette();
     else openPalette();
@@ -592,8 +619,9 @@ function renderStow() {
 // How wide each region is, for comparing one against another. The real widths live in main.js;
 // these only have to sort. 'full' is whatever the window is, so it beats everything.
 const REGION_ORDER = { peek: 0, rail: 1, sidebar: 2, full: 3 };
-// Must match the sidebar's transform transition in styles.css.
-const SLIDE_MS = 220;
+// Must match the sidebar's transform transition (--ease-move: 260ms) in styles.css, plus a small
+// frame margin so the view never shrinks and clips the panel before its slide finishes.
+const SLIDE_MS = 270;
 // A small overshoot off the sidebar should not slam it shut.
 const LEAVE_GRACE_MS = 180;
 // How long the sidebar stays out when nobody is holding it there.
@@ -608,6 +636,7 @@ const IDLE_STOW_MS = 4000;
 // either has anything to say. See the sheet and palette sections further down.
 let openSheetName = null;
 let paletteOpen = false;
+let dragging = false;
 
 let region = 'sidebar'; // the chrome-view region main.js was last asked for
 let dockInset = 'sidebar'; // …and how much of the window the sidebar itself was holding
@@ -670,7 +699,7 @@ function holdPeek() {
 // switch, a service's menu. While any of them is up the pointer is off the sidebar by design, and
 // the sidebar sliding away underneath would leave the panel that came from it hanging in space.
 function heldOpen() {
-  return Boolean(openSheetName || paletteOpen || !menuEl.hidden);
+  return Boolean(openSheetName || paletteOpen || !menuEl.hidden || dragging);
 }
 
 // Let it go, after `delay`. Anything that holds the sidebar in — the pointer arriving, a sheet
@@ -707,6 +736,11 @@ const sheetEls = {
 
 function openSheet(name) {
   if (!sheetEls[name]) return;
+  if (!menuEl.hidden) closeServiceMenu();
+  if (paletteOpen) {
+    paletteOpen = false;
+    paletteEl.hidden = true;
+  }
   openSheetName = name;
   for (const [key, el] of Object.entries(sheetEls)) el.hidden = key !== name;
   scrimEl.hidden = false;
@@ -715,6 +749,7 @@ function openSheet(name) {
   // The sheet is over the page, so the pointer is nowhere near the sidebar — without this the
   // sidebar would stow out from under the panel that was opened from it.
   holdPeek();
+  sheetEls[name].focus();
 }
 
 function closeSheet() {
@@ -771,7 +806,7 @@ function renderPalette() {
     if (i === paletteIndex) {
       const key = document.createElement('kbd');
       key.className = 'go';
-      key.textContent = state.gridMode ? 'Add ↵' : '↵';
+      key.textContent = state.gridMode ? (state.gridFull ? 'Full' : 'Add ↵') : '↵';
       li.appendChild(key);
     }
 
@@ -796,6 +831,11 @@ function renderPalette() {
 }
 
 function openPalette() {
+  if (!menuEl.hidden) closeServiceMenu();
+  if (openSheetName) {
+    openSheetName = null;
+    for (const el of Object.values(sheetEls)) el.hidden = true;
+  }
   paletteOpen = true;
   paletteIndex = 0;
   paletteInputEl.value = '';
@@ -822,8 +862,10 @@ function closePalette() {
 // switch to, so every choice adds a pane.
 function choosePalette(svc, asPane) {
   if (!svc) return;
+  const adding = asPane || state.gridMode;
+  if (adding && state.gridFull) return;
   closePalette();
-  if (asPane || state.gridMode) window.shell.addGridPane(svc.id);
+  if (adding) window.shell.addGridPane(svc.id);
   else window.shell.switchService(svc.id);
 }
 
@@ -838,6 +880,7 @@ const refreshBtn = document.getElementById('btn-refresh-filters');
 const theaterEl = document.getElementById('chk-theater');
 const twitchTheaterEl = document.getElementById('chk-twitch-theater');
 const crunchyrollTheaterEl = document.getElementById('chk-crunchyroll-theater');
+const rumbleTheaterEl = document.getElementById('chk-rumble-theater');
 const autoHideEl = document.getElementById('chk-autohide');
 const glassEl = document.getElementById('chk-glass');
 const mpvEl = document.getElementById('chk-mpv');
@@ -850,6 +893,10 @@ const hwDecodeSubEl = document.getElementById('sub-hwdecode');
 const smoothRowEl = document.getElementById('row-smooth');
 const smoothEl = document.getElementById('chk-smooth');
 const smoothSubEl = document.getElementById('sub-smooth');
+const HWDECODE_DEFAULT_SUB = hwDecodeSubEl.textContent;
+const SMOOTH_DEFAULT_SUB = smoothSubEl.textContent;
+let bootHwDecode = null;
+let bootSmoothPlayback = null;
 const trayEl = document.getElementById('chk-tray');
 const updateBtn = document.getElementById('btn-update');
 const updateTitleEl = document.getElementById('update-title');
@@ -914,6 +961,8 @@ function renderRemoved(removed) {
     const li = document.createElement('li');
     li.className = 'service restorable';
     li.dataset.id = svc.id;
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
     brand(li, svc);
     li.title = `Add ${svc.name} back`;
 
@@ -931,6 +980,12 @@ function renderRemoved(removed) {
 
     li.append(icon, label, plus);
     li.addEventListener('click', () => window.shell.restoreService(svc.id));
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        window.shell.restoreService(svc.id);
+      }
+    });
     removedListEl.appendChild(li);
   }
 }
@@ -942,6 +997,7 @@ function renderSheets() {
   theaterEl.checked = Boolean(state.enhance && state.enhance.theater);
   twitchTheaterEl.checked = Boolean(state.enhance && state.enhance.twitchTheater);
   crunchyrollTheaterEl.checked = Boolean(state.enhance && state.enhance.crunchyrollTheater);
+  rumbleTheaterEl.checked = Boolean(state.enhance && state.enhance.rumbleTheater);
   autoHideEl.checked = state.autoHideSidebar !== false;
   glassEl.checked = state.glassSidebar !== false;
   // With no mpv on the machine there is nothing to switch on: say so in place of the
@@ -955,10 +1011,22 @@ function renderSheets() {
   trayEl.checked = state.minimizeToTray === true;
   renderDisplayScale();
   hwDecodeEl.checked = state.hwDecode !== false;
+  if (bootHwDecode !== null) {
+    hwDecodeSubEl.textContent =
+      hwDecodeEl.checked !== bootHwDecode
+        ? 'Restart StreamHub for this to take effect'
+        : HWDECODE_DEFAULT_SUB;
+  }
   // Only offered where it does anything: under XWayland. Anywhere else it would be a switch that
   // silently changes nothing.
   smoothRowEl.hidden = state.smoothPlaybackApplies !== true;
   smoothEl.checked = state.smoothPlayback !== false;
+  if (bootSmoothPlayback !== null) {
+    smoothSubEl.textContent =
+      smoothEl.checked !== bootSmoothPlayback
+        ? 'Restart StreamHub for this to take effect'
+        : SMOOTH_DEFAULT_SUB;
+  }
   renderUpdate();
   renderRemoved(state.removed || []);
 }
@@ -1024,6 +1092,12 @@ function applyState(next) {
   renderSheets();
   removedCountEl.textContent = String(state.removed.length);
   setCollapsed(state.sidebarCollapsed);
+  document.body.classList.toggle('docked', state.glassSidebar === false);
+  const fs = state.fullscreen === true;
+  fullscreenBtn.classList.toggle('active', fs);
+  fullscreenBtn.setAttribute('aria-pressed', fs ? 'true' : 'false');
+  fullscreenBtn.title = fs ? 'Exit fullscreen (F11)' : 'Fullscreen (F11)';
+  fullscreenBtn.setAttribute('aria-label', fs ? 'Exit fullscreen' : 'Fullscreen');
   renderUpdateBadge();
   renderGridToggle();
   renderGridPreview();
@@ -1042,6 +1116,8 @@ function applyState(next) {
 async function init() {
   // Not `initial` — that name is already the icon-letter helper above.
   const boot = await window.shell.getConfig();
+  bootHwDecode = boot.hwDecode !== false;
+  bootSmoothPlayback = boot.smoothPlayback !== false;
   playing = Boolean(boot.playing);
   document.body.classList.toggle('mpv', Boolean(boot.playerActive));
   applyState(boot);
@@ -1054,8 +1130,14 @@ async function init() {
     window.shell.switchService((last || state.services[0]).id);
   }
 
-  document.getElementById('btn-removed').addEventListener('click', () => openSheet('removed'));
-  settingsBtn.addEventListener('click', () => openSheet('settings'));
+  document.getElementById('btn-removed').addEventListener('click', () => {
+    if (openSheetName === 'removed') closeSheet();
+    else openSheet('removed');
+  });
+  settingsBtn.addEventListener('click', () => {
+    if (openSheetName === 'settings') closeSheet();
+    else openSheet('settings');
+  });
   scrimEl.addEventListener('click', () => {
     closePalette();
     closeSheet();
@@ -1126,6 +1208,9 @@ async function init() {
   crunchyrollTheaterEl.addEventListener('change', () =>
     window.shell.setEnhance('crunchyrollTheater', crunchyrollTheaterEl.checked),
   );
+  rumbleTheaterEl.addEventListener('change', () =>
+    window.shell.setEnhance('rumbleTheater', rumbleTheaterEl.checked),
+  );
   autoHideEl.addEventListener('change', () => window.shell.setAutoHideSidebar(autoHideEl.checked));
   glassEl.addEventListener('change', () => window.shell.setGlassSidebar(glassEl.checked));
   mpvEl.addEventListener('change', () => window.shell.setMpvPlayback(mpvEl.checked));
@@ -1136,14 +1221,8 @@ async function init() {
   });
   // A launch flag, so nothing changes until the next start — say so on the row itself, where the
   // tick was just made, rather than leaving it looking like it did nothing.
-  hwDecodeEl.addEventListener('change', async () => {
-    await window.shell.setHwDecode(hwDecodeEl.checked);
-    hwDecodeSubEl.textContent = 'Restart StreamHub for this to take effect';
-  });
-  smoothEl.addEventListener('change', async () => {
-    await window.shell.setSmoothPlayback(smoothEl.checked);
-    smoothSubEl.textContent = 'Restart StreamHub for this to take effect';
-  });
+  hwDecodeEl.addEventListener('change', () => window.shell.setHwDecode(hwDecodeEl.checked));
+  smoothEl.addEventListener('change', () => window.shell.setSmoothPlayback(smoothEl.checked));
 
   // Downloading the new build takes a while (the AppImage is ~130MB), so report progress on the
   // button rather than leaving it sitting on "Checking…".

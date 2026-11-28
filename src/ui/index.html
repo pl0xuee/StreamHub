@@ -130,7 +130,7 @@
           <button id="btn-grid" title="Grid view — watch up to 4 at once" aria-label="Grid view" aria-pressed="false">
             <svg class="ico" aria-hidden="true"><use href="#i-grid" /></svg>
           </button>
-          <button id="btn-fullscreen" title="Fullscreen (F11)" aria-label="Fullscreen">
+          <button id="btn-fullscreen" title="Fullscreen (F11)" aria-label="Fullscreen" aria-pressed="false">
             <svg class="ico" aria-hidden="true"><use href="#i-fullscreen" /></svg>
           </button>
         </div>
@@ -173,7 +173,7 @@
       </p>
     </div>
 
-    <aside id="sheet-settings" class="sheet" hidden aria-label="Settings">
+    <aside id="sheet-settings" class="sheet" hidden tabindex="-1" aria-label="Settings">
       <header class="sheet-head">
         <h1>Settings</h1>
         <button class="sheet-close" data-close-sheet title="Close (Esc)" aria-label="Close">
@@ -253,6 +253,24 @@
           <p class="section-note">
             Scroll down as usual for the episode details and what plays next. Turn this off if
             Crunchyroll changes its layout and the page starts looking wrong.
+          </p>
+        </section>
+
+        <section class="settings-section">
+          <h2>Rumble</h2>
+          <div class="settings">
+            <label class="setting" for="chk-rumble-theater">
+              <input type="checkbox" id="chk-rumble-theater" />
+              <span class="setting-text">
+                <span class="setting-title">Full-window theater mode</span>
+                <span class="setting-sub">Videos fill the window with the top bar hidden until you reach for it; live chat stays beside livestreams</span>
+              </span>
+            </label>
+          </div>
+          <p class="section-note">
+            Scroll down as usual for the description, comments and related videos. Press T or click
+            the player's theater button to toggle it for the current video; turn this off if Rumble
+            changes its layout and the page starts looking wrong.
           </p>
         </section>
 
@@ -362,7 +380,7 @@
       </div>
     </aside>
 
-    <aside id="sheet-removed" class="sheet" hidden aria-label="Removed services">
+    <aside id="sheet-removed" class="sheet" hidden tabindex="-1" aria-label="Removed services">
       <header class="sheet-head">
         <h1>Removed</h1>
         <button class="sheet-close" data-close-sheet title="Close (Esc)" aria-label="Close">

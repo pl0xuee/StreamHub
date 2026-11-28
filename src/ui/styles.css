@@ -245,6 +245,36 @@ body.mpv:not(.overlay) {
   transition: transform var(--ease-move), box-shadow var(--ease-move);
 }
 
+/* Docked mode (Glass sidebar off): flush against the left window edge, opaque, square corners so
+   it sits solidly beside the inset page instead of floating with margins over bare ink. */
+body.docked:not(.overlay) {
+  background: var(--ink);
+}
+body.docked #sidebar {
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100%;
+  border-radius: 0;
+  border: none;
+  border-right: 1px solid var(--edge);
+  background: var(--sheen), #12151c;
+  box-shadow: none;
+}
+body.docked #sidebar::after {
+  inset: 0 -1px 0 auto;
+  width: 1px;
+  border: none;
+  background: color-mix(in srgb, var(--onair) 65%, #fff 10%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--onair) 60%, transparent);
+}
+body.docked.stowed #sidebar {
+  transform: translateX(-100%);
+}
+body.docked.stowed.peeking #sidebar {
+  transform: none;
+}
+
 .brand {
   position: relative;
   display: flex;
@@ -664,13 +694,25 @@ body.stowed:not(.peeking) .service .eq i {
   color: var(--exit);
   font-size: 11px;
 }
-/* The delete button appears on hover and takes the shield's place. */
-.service:hover .shield {
-  display: none;
+/* The delete button appears on hover (or keyboard focus) and takes the shield/eq's place without
+   reserving 29px of dead flex space at rest, so longer service names keep their full width. */
+body:not(.grid-mode):not(.collapsed) .service:hover,
+body:not(.grid-mode):not(.collapsed) .service:has(.del:focus-visible) {
+  padding-right: 32px;
+}
+.service:hover .shield,
+.service:has(.del:focus-visible) .shield,
+.service:hover .eq,
+.service:has(.del:focus-visible) .eq {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .service .del {
-  flex-shrink: 0;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: grid;
   place-items: center;
   width: 20px;
@@ -1713,6 +1755,9 @@ kbd {
 .palette-list li > span:nth-child(2) {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .palette-list li:hover:not(.on):not(.palette-empty) {
   background: rgba(255, 255, 255, 0.04);
@@ -1850,6 +1895,13 @@ kbd {
 }
 .setting:hover {
   background: rgba(255, 255, 255, 0.035);
+}
+.setting:has(input:disabled) {
+  cursor: default;
+  opacity: 0.72;
+}
+.setting:has(input:disabled):hover {
+  background: transparent;
 }
 /* A switch that means nothing on this machine is left out (renderer.js sets `hidden`), and the
    author `display: flex` above would otherwise outrank the UA stylesheet's `[hidden]`. */

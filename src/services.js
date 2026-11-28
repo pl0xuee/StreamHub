@@ -17,6 +17,7 @@ const DEFAULT_SERVICES = [
   { id: 'peacock',     name: 'Peacock',     url: 'https://www.peacocktv.com',     color: '#8b5cf6' },
   { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com',   color: '#f47521' },
   { id: 'twitch',      name: 'Twitch',      url: 'https://www.twitch.tv',         color: '#9146ff' },
+  { id: 'rumble',      name: 'Rumble',      url: 'https://rumble.com',            color: '#85c742' },
   { id: 'tubi',        name: 'Tubi',        url: 'https://tubitv.com',            color: '#fa382f' },
   // Jellyfin is the one entry here that is not a website: it is the user's own server, so there
   // is no address to ship with the app. `selfHosted` says exactly that — the entry starts with

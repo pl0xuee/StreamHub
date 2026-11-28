@@ -30,6 +30,7 @@ function defaultSettings() {
     // the way it used to sit: some people would rather have nothing at all over the picture, and
     // it is also the way out if a compositor will not composite one view over another.
     glassSidebar: true,
+    mpvPlayback: true,
     // Keep the sidebar off the left edge until the pointer reaches for it. On by default: the
     // chrome floats over the page now, so resting out of the way is the whole point of it — off
     // pins it open, for anyone who would rather give up the space than reach.

@@ -14,10 +14,11 @@ const {
   needsSetup,
 } = require('./services');
 const { adblocker } = require('./adblock');
-const { isYouTubeHost, isTwitchHost, isCrunchyrollHost } = require('./enhance');
+const { isYouTubeHost, isTwitchHost, isCrunchyrollHost, isRumbleHost } = require('./enhance');
 const { controllerJs: youtubeControllerJs } = require('./enhance-youtube');
 const { controllerJs: twitchControllerJs } = require('./enhance-twitch');
 const { controllerJs: crunchyrollControllerJs } = require('./enhance-crunchyroll');
+const { controllerJs: rumbleControllerJs } = require('./enhance-rumble');
 
 // Rewrite the Sec-CH-* client-hint headers so the wire matches the Chrome UA the view
 // presents. Only headers Chromium already decided to send are overwritten — adding ones
@@ -103,6 +104,15 @@ const PLAYPAUSE_JS = `((want) => {
   if (play && v.paused) { const r = v.play(); if (r && r.catch) r.catch(() => {}); }
   else if (!play && !v.paused) v.pause();
   return play ? 'playing' : 'paused';
+})`;
+
+// JS injected to seek the currently visible <video> by a relative number of seconds.
+const SEEK_JS = `((delta) => {
+  const vids = Array.from(document.querySelectorAll('video'));
+  const v = vids.find(x => x.readyState > 2) || vids[0];
+  if (!v) return false;
+  v.currentTime = Math.max(0, v.currentTime + (Number(delta) || 0));
+  return true;
 })`;
 
 // JS injected to pause every playing <video>/<audio> on a page — run on the service being
@@ -442,8 +452,8 @@ class ViewManager {
 
   // Inject the enhancement controller into a view, if the page it is on has one. Re-running the
   // controller is how it is reconfigured, so this is safe to call on every document load and on
-  // every settings change alike — see enhance-youtube.js, enhance-twitch.js and
-  // enhance-crunchyroll.js.
+  // every settings change alike — see enhance-youtube.js, enhance-twitch.js, enhance-crunchyroll.js
+  // and enhance-rumble.js.
   applyEnhancements(view) {
     const wc = view && view.webContents;
     if (!wc || wc.isDestroyed()) return;
@@ -457,6 +467,7 @@ class ViewManager {
     if (isYouTubeHost(host)) source = youtubeControllerJs(this.enhance);
     else if (isTwitchHost(host)) source = twitchControllerJs(this.enhance);
     else if (isCrunchyrollHost(host)) source = crunchyrollControllerJs(this.enhance);
+    else if (isRumbleHost(host)) source = rumbleControllerJs(this.enhance);
     if (!source) return; // every other service is loaded exactly as the site serves it
     wc.executeJavaScript(source).catch(() => {});
   }
@@ -637,7 +648,9 @@ class ViewManager {
     // the one chord we take back, because the whole point of a quick switch is that it works from
     // wherever you are, and by then the sidebar is usually resting off the edge.
     wc.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown' || !input.control || input.alt || input.meta) return;
+      if (input.type !== 'keyDown' || !input.control || input.alt || input.meta || input.shift) {
+        return;
+      }
       if ((input.key || '').toLowerCase() !== 'k') return;
       event.preventDefault();
       this.onCommandPalette();
@@ -1066,9 +1079,9 @@ class ViewManager {
     this.eachFrame(wc, PAUSE_ALL_JS)
       .then((results) => {
         if (!results.some(Boolean)) return; // nothing was playing; nothing to restore
-        // Injection is async, so the user can be back on this service by the time it lands.
-        // Undo it rather than leaving them looking at a video we paused behind their back.
-        if (this.active === view) this.resumeView(view);
+        // Injection is async, so the user can be back on this service (in single view or as any
+        // pane of a grid) by the time it lands. Undo it rather than leaving a visible video paused.
+        if (this.visible.has(view)) this.resumeView(view);
         else this.autoPaused.add(view);
       })
       .catch(() => {});
@@ -1122,16 +1135,49 @@ class ViewManager {
     this.eachFrame(wc, ENFORCE_PAUSE_JS).catch(() => {});
   }
 
+  // Run a media control against the first frame in the active view that actually holds a <video>,
+  // so iframe players (such as Crunchyroll's cross-origin player) respond to media keys and MPRIS
+  // the same way top-frame players do, without toggling a second video in another frame.
+  async runOnFirstVideoFrame(wc, buildCall, handled) {
+    if (!wc || wc.isDestroyed()) return;
+    let frames;
+    try {
+      frames = wc.mainFrame.framesInSubtree;
+    } catch {
+      return;
+    }
+    const code = buildCall();
+    for (const frame of frames) {
+      if (!frame || frame.detached) continue;
+      const res = await frame.executeJavaScript(code).catch(() => undefined);
+      if (handled(res)) return;
+    }
+  }
+
   // `want`: true plays, false pauses, anything else toggles.
   playPause(want = null) {
     const wc = this.getActiveWebContents();
     const arg = want === true || want === false ? String(want) : 'null';
-    if (wc) wc.executeJavaScript(`${PLAYPAUSE_JS}(${arg})`).catch(() => {});
+    this.runOnFirstVideoFrame(
+      wc,
+      () => `${PLAYPAUSE_JS}(${arg})`,
+      (res) => res === 'playing' || res === 'paused',
+    ).catch(() => {});
+  }
+
+  seek(seconds) {
+    const wc = this.getActiveWebContents();
+    const delta = Number(seconds) || 0;
+    this.runOnFirstVideoFrame(
+      wc,
+      () => `${SEEK_JS}(${delta})`,
+      (res) => res === true,
+    ).catch(() => {});
   }
 
   reloadActive() {
     const wc = this.getActiveWebContents();
-    if (wc) wc.reload();
+    if (wc && !wc.isDestroyed()) wc.reload();
   }
 
   // Reload a service's live views — used when its ad-blocking setting changes, which applies to
@@ -1158,9 +1204,10 @@ class ViewManager {
 
   goBack() {
     const wc = this.getActiveWebContents();
-    if (wc && wc.navigationHistory && wc.navigationHistory.canGoBack()) {
+    if (!wc || wc.isDestroyed()) return;
+    if (wc.navigationHistory && wc.navigationHistory.canGoBack()) {
       wc.navigationHistory.goBack();
-    } else if (wc && wc.canGoBack && wc.canGoBack()) {
+    } else if (wc.canGoBack && wc.canGoBack()) {
       wc.goBack();
     }
   }

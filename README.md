@@ -1,8 +1,8 @@
 # StreamHub
 
 One desktop app for the **official** streaming sites — Netflix, Prime Video, Disney+, Max,
-Hulu, YouTube, YouTube TV, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Tubi, your own
-**Jellyfin** server, and any others you add — instead of a drawer full of browser tabs.
+Hulu, YouTube, YouTube TV, Apple TV+, Paramount+, Peacock, Crunchyroll, Twitch, Rumble, Tubi,
+your own **Jellyfin** server, and any others you add — instead of a drawer full of browser tabs.
 
 Each service loads its own website and plays through its own DRM. **No DRM is circumvented,
 extracted, or bypassed:** this is a purpose-built Chromium shell hosting the official web
@@ -28,7 +28,7 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 
 - **Video caps at ~720p.** 1080p/4K needs hardware DRM (Widevine L1 + HDCP), which no Linux
   browser has. Chrome and Firefox are capped the same way — it's a platform limit, not a bug.
-  Non-DRM services (YouTube, Twitch) go higher via their own quality menus.
+  Non-DRM services (YouTube, Twitch, Rumble) go higher via their own quality menus.
 - **No offline downloads** — ECS has no persistent Widevine licenses on Linux.
 - Linux only.
 
@@ -67,6 +67,10 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 - **Full-window theater mode on Crunchyroll** — episodes fill the window and the top bar hides
   until you reach for it. Scroll down for the episode details and what plays next. On by default;
   the switch is in Settings.
+- **Full-window theater mode on Rumble** — videos fill the window and the top bar hides until you
+  reach for it, while live chat stays beside livestreams. Scroll down for the description, comments
+  and related videos, or press `T` / click the player's theater button to toggle it for the current
+  video. On by default; the switch is in Settings.
 - **Your own Jellyfin server** — see below.
 - **Jellyfin plays through mpv** — no DRM is involved on your own server, so a real player can
   take the original file instead of the browser asking the server to transcode it, decoded on the
@@ -81,7 +85,7 @@ Or skip FUSE entirely: `APPIMAGE_EXTRACT_AND_RUN=1 ./StreamHub.AppImage`.
 - **Video decoded on the graphics card**, where the driver allows it, so a 4K stream is not a
   CPU core for the length of a film. Switchable in Settings.
 - **Settings** (sidebar gear, or `Ctrl+,`) — a panel over the page rather than a second window:
-  ad blocker, the YouTube, Twitch and Crunchyroll theater modes, how the sidebar behaves, display size,
+  ad blocker, the YouTube, Twitch, Crunchyroll and Rumble theater modes, how the sidebar behaves, display size,
   playback, tray behaviour, updates. The removed list is a panel now too.
 - **Optional tray icon** — closing the window keeps a stream running.
 

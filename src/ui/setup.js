@@ -86,7 +86,12 @@ formEl.addEventListener('submit', async (e) => {
   unverified = '';
   setStatus('Looking for a server there…', 'busy');
 
-  const result = await window.setup.probe(typed);
+  let result = null;
+  try {
+    result = await window.setup.probe(typed);
+  } catch {
+    result = null;
+  }
 
   if (result && result.ok) {
     // Show what was found before the page goes: the view is rebuilt on the server the moment
@@ -110,7 +115,9 @@ formEl.addEventListener('submit', async (e) => {
 });
 
 anywayEl.addEventListener('click', () => {
-  if (!unverified || !window.setup) return;
+  if (checking || !unverified || !window.setup) return;
+  checking = true;
+  connectEl.disabled = true;
   anywayEl.hidden = true;
   setStatus(`Opening ${unverified}…`, 'busy');
   save(unverified);

@@ -73,7 +73,7 @@ if (jellyfinShellJs) {
 
 // The site controllers are plain modules with no Electron dependency, so they can be built
 // here for real. Both settings states, because each one emits a different program.
-for (const name of ['enhance-youtube', 'enhance-twitch', 'enhance-crunchyroll']) {
+for (const name of ['enhance-youtube', 'enhance-twitch', 'enhance-crunchyroll', 'enhance-rumble']) {
   let controllerJs = null;
   try {
     ({ controllerJs } = require(path.join(__dirname, '..', 'src', name)));
@@ -81,7 +81,10 @@ for (const name of ['enhance-youtube', 'enhance-twitch', 'enhance-crunchyroll'])
     fail(`src/${name}.js does not load`, err);
   }
   if (!controllerJs) continue;
-  for (const settings of [{}, { theater: true, twitchTheater: true, crunchyrollTheater: true }]) {
+  for (const settings of [
+    {},
+    { theater: true, twitchTheater: true, crunchyrollTheater: true, rumbleTheater: true },
+  ]) {
     try {
       // eslint-disable-next-line no-new
       new vm.Script(controllerJs(settings), { filename: `${name}.injected.js` });
@@ -95,7 +98,7 @@ for (const name of ['enhance-youtube', 'enhance-twitch', 'enhance-crunchyroll'])
 
 // views.js cannot be required outside Electron, so its snippets are read out of the source. Each
 // is a top-level `const NAME = \`…\`;`, which is enough structure to lift out reliably.
-const INJECTED_IN_VIEWS = ['PLAYPAUSE_JS', 'PAUSE_ALL_JS', 'RESUME_JS', 'SCROLLBAR_JS'];
+const INJECTED_IN_VIEWS = ['PLAYPAUSE_JS', 'SEEK_JS', 'PAUSE_ALL_JS', 'RESUME_JS', 'SCROLLBAR_JS'];
 const viewsSource = (() => {
   try {
     return fs.readFileSync(path.join(__dirname, '..', 'src', 'views.js'), 'utf8');
