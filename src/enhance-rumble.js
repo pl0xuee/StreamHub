@@ -29,8 +29,13 @@ const THEATER_BTN_SELECTOR =
   '[title="Toggle theater mode" i], [data-js="theater-mode-toggle"], ' +
   'button[title*="theater" i], button[aria-label*="theater" i]';
 const CHAT_ASIDE_SELECTOR = 'aside.media-page-chat-aside-chat';
+const CHAT_PANEL_SELECTOR =
+  '#chat-history-list, .chat-history, .chat--container, .chat--header, ' +
+  '.media-page-chat-aside-chat-wrapper-fixed > .chat, section.chat';
 const CHAT_TOGGLE_SELECTOR =
-  '[data-js="media_page_chat_container_toggle_btn"], button.media-page-chat-container-toggle-btn';
+  '[data-js="media_page_chat_container_toggle_btn"], [data-js*="chat_container_toggle"], ' +
+  '[data-js*="chat_toggle"], button.media-page-chat-container-toggle-btn, ' +
+  '[class*="chat-container-toggle"], [class*="chat-toggle"]';
 
 // Scoped entirely under html.sh-rumble-theater:not(.sh-rumble-fs), which only goes on for a watch
 // page outside HTML5 fullscreen, so home, search, channel, shorts and account pages are left alone.
@@ -38,7 +43,10 @@ const CHAT_TOGGLE_SELECTOR =
 const CSS = `
 /* The top header slides out of the way and comes back when the pointer reaches the top edge.
    #${PEEK_ID} catches that; the header's own :hover holds it open once the pointer moves onto it,
-   and :focus-within keeps it visible when reaching the search box by keyboard. */
+   and :focus-within keeps it visible when reaching the search box by keyboard. The peek strip stays
+   clear of the far-left edge (StreamHub's own sidebar strip) and the top-right corner (Rumble's
+   collapsed chat re-open button), and the hidden header drops pointer-events so it can never eat
+   clicks while stowed. */
 html.${ROOT_CLASS}:not(.${FS_CLASS}) header[data-js="app_header"],
 html.${ROOT_CLASS}:not(.${FS_CLASS}) header.header {
   position: fixed !important;
@@ -47,6 +55,7 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}) header.header {
   right: 0 !important;
   transform: translateY(-100%);
   transition: transform 160ms ease;
+  pointer-events: none !important;
   z-index: 2200 !important;
 }
 html.${ROOT_CLASS}.${PEEK_CLASS}:not(.${FS_CLASS}) header[data-js="app_header"],
@@ -56,22 +65,43 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}) header.header:hover,
 html.${ROOT_CLASS}:not(.${FS_CLASS}) header[data-js="app_header"]:focus-within,
 html.${ROOT_CLASS}:not(.${FS_CLASS}) header.header:focus-within {
   transform: none;
+  pointer-events: auto !important;
 }
 html.${ROOT_CLASS}:not(.${FS_CLASS}) #${PEEK_ID} {
   position: fixed;
   top: 0;
-  left: 0;
-  right: 0;
+  left: 36px;
+  right: 72px;
   height: 6px;
   z-index: 2201;
+}
+
+/* Hide Rumble's fixed left navigation rail (Home / Shorts / My Feed) while in theater mode so it
+   never overlaps the video or collides with StreamHub's own left edge strip. */
+html.${ROOT_CLASS}:not(.${FS_CLASS}) nav.navs,
+html.${ROOT_CLASS}:not(.${FS_CLASS}) nav.sidenav,
+html.${ROOT_CLASS}:not(.${FS_CLASS}) .sidenav,
+html.${ROOT_CLASS}:not(.${FS_CLASS}) #main-menu:not(header *),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) .hover-menu:not(header *),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) .main-menu-nav:not(header *),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) .main-menu:not(header *):not(:has(#videoPlayer)),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [data-js*="main_menu"]:not(header *):not(:has(#videoPlayer)),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) nav:not(header *):not(footer *):not(:has(#videoPlayer)):has(a[href="/shorts"], a[href$="/shorts"]),
+html.${ROOT_CLASS}:not(.${FS_CLASS}) aside:not(${CHAT_ASIDE_SELECTOR}):not(.media-page-related-media-desktop-sidebar):not(:has(#videoPlayer)):has(a[href="/shorts"], a[href$="/shorts"]) {
+  display: none !important;
 }
 
 /* Take back the vertical gap left by the hidden header and any left-rail offset on watch pages. */
 html.${ROOT_CLASS}:not(.${FS_CLASS}) body {
   padding-top: 0 !important;
-}
-html.${ROOT_CLASS}:not(.${FS_CLASS}) main.nav--transition {
+  padding-left: 0 !important;
   margin-left: 0 !important;
+}
+html.${ROOT_CLASS}:not(.${FS_CLASS}) main,
+html.${ROOT_CLASS}:not(.${FS_CLASS}) main.nav--transition,
+html.${ROOT_CLASS}.main-menu-mode-permanent:not(.${FS_CLASS}) main {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
 }
 html.${ROOT_CLASS}:not(.${FS_CLASS}) main[data-js="media_container"],
 html.${ROOT_CLASS}:not(.${FS_CLASS}) main.media-page,
@@ -85,12 +115,40 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}) #player-spacer {
   display: none !important;
 }
 
+/* Keep Rumble's chat collapse/expand toggle above the player and clickable across repeated toggles.
+   When chat is collapsed, pin it neatly in the top-right corner clear of the top peek strip, and
+   ensure any visible button inside a collapsed chat aside keeps pointer-events enabled. */
+html.${ROOT_CLASS}:not(.${FS_CLASS}) button.media-page-chat-container-toggle-btn,
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [data-js="media_page_chat_container_toggle_btn"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [data-js*="chat_container_toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [data-js*="chat_toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [class*="chat-container-toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}) [class*="chat-toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) ${CHAT_ASIDE_SELECTOR} button,
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) ${CHAT_ASIDE_SELECTOR} [role="button"] {
+  z-index: 2150 !important;
+  pointer-events: auto !important;
+}
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) button.media-page-chat-container-toggle-btn,
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_page_chat_container_toggle_btn"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js*="chat_container_toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js*="chat_toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [class*="chat-container-toggle"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [class*="chat-toggle"] {
+  position: fixed !important;
+  top: 12px !important;
+  right: 12px !important;
+}
+
 /* Watch layout without a side-by-side live chat column (VODs, streams with chat collapsed, or
-   narrow grid panes): stack the related-videos sidebar below so the player gets the full width
-   and nothing on the page is lost — scrolling down still reaches everything underneath. */
+   narrow grid panes): collapse any multi-column grid and the hidden chat aside so the player gets
+   100% of the window width, while scrolling down still reaches everything underneath. */
 html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .main-and-sidebar,
-html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_container"]:has(> aside.media-page-related-media-desktop-sidebar) {
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_container"],
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) main.media-page,
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) main:has(#videoPlayer) {
   display: block !important;
+  grid-template-columns: none !important;
   width: 100% !important;
   max-width: 100% !important;
   margin-left: 0 !important;
@@ -99,11 +157,33 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_contain
   padding-right: 0 !important;
 }
 html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .main-and-sidebar .main-content,
-html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-container:has(#videoPlayer) {
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-container:has(#videoPlayer),
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_container"] > div:has(#videoPlayer),
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) [data-js="media_container"] > section:has(#videoPlayer) {
+  display: block !important;
+  grid-template-columns: none !important;
   width: 100% !important;
   max-width: 100% !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
   padding-left: 0 !important;
   padding-right: 0 !important;
+}
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) ${CHAT_ASIDE_SELECTOR},
+html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-page-chat-aside-chat-wrapper-fixed {
+  position: static !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: visible !important;
+  pointer-events: none !important;
 }
 
 /* Livestreams with visible chat: keep chat docked beside the full-height player on desktop widths,
@@ -121,11 +201,14 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-container:has(#v
     gap: 0 !important;
   }
   html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .main-and-sidebar .main-content,
-  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .media-container:has(#videoPlayer) {
+  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .media-container:has(#videoPlayer),
+  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) [data-js="media_container"]:has(> ${CHAT_ASIDE_SELECTOR}) > :not(aside):has(#videoPlayer) {
     min-width: 0 !important;
     width: 100% !important;
     max-width: 100% !important;
     padding: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
   }
   html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) ${CHAT_ASIDE_SELECTOR} {
     width: var(--sh-chat-w, 360px) !important;
@@ -136,6 +219,7 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-container:has(#v
     position: sticky !important;
     top: 0 !important;
     margin-top: 0 !important;
+    z-index: 20 !important;
   }
   html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .media-page-chat-aside-chat-wrapper-fixed {
     top: 0 !important;
@@ -153,7 +237,8 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}):not(.${LIVE_CLASS}) .media-container:has(#v
     padding: 0 !important;
   }
   html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .main-and-sidebar .main-content,
-  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .media-container:has(#videoPlayer) {
+  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) .media-container:has(#videoPlayer),
+  html.${ROOT_CLASS}.${LIVE_CLASS}:not(.${FS_CLASS}) [data-js="media_container"]:has(> ${CHAT_ASIDE_SELECTOR}) > :not(aside):has(#videoPlayer) {
     width: 100% !important;
     max-width: 100% !important;
     padding: 0 !important;
@@ -172,7 +257,8 @@ html.${ROOT_CLASS}:not(.${FS_CLASS}) body:not(.rumble-player--fullscreen) .video
   height: 100vh !important;
   max-height: 100vh !important;
   min-height: 0 !important;
-  margin-top: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
   background: #000 !important;
 }
 html.${ROOT_CLASS}:not(.${FS_CLASS}) body:not(.rumble-player--fullscreen) #videoPlayer .videoPlayer-Rumble-cls,
@@ -221,6 +307,7 @@ function controllerJs(settings) {
     header: HEADER_SELECTOR,
     theaterBtn: THEATER_BTN_SELECTOR,
     chatAside: CHAT_ASIDE_SELECTOR,
+    chatPanel: CHAT_PANEL_SELECTOR,
     chatToggle: CHAT_TOGGLE_SELECTOR,
   });
   const wanted = JSON.stringify(settings || {});
@@ -237,6 +324,9 @@ function controllerJs(settings) {
   let userExited = false;  // whether the viewer toggled theater off for this video
   let urlTimer = null;     // fallback watcher for Rumble's in-page/htmx navigations
   let liveTimer = null;    // bounded poll waiting for live chat to hydrate on watch pages
+  let chatObserver = null; // watches live chat collapse/expand attribute and mount changes
+  let observedChat = null; // the chat aside currently wired to chatObserver
+  let liveRaf = 0;         // coalesced frame callback for chatObserver mutations
   let lastRoute = location.pathname + location.search;
 
   const root = () => document.documentElement;
@@ -272,20 +362,136 @@ function controllerJs(settings) {
     liveTimer = null;
   }
 
+  function stopChatObserver() {
+    if (chatObserver) {
+      chatObserver.disconnect();
+      chatObserver = null;
+    }
+    observedChat = null;
+    if (liveRaf) {
+      cancelAnimationFrame(liveRaf);
+      liveRaf = 0;
+    }
+  }
+
+  function isElementShown(el, stopAt) {
+    if (!el || !el.isConnected) return false;
+    for (let n = el; n && n instanceof Element; n = n.parentElement) {
+      if (n.hidden || n.getAttribute('aria-hidden') === 'true') return false;
+      const cs = getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) {
+        return false;
+      }
+      if (n === stopAt) break;
+    }
+    return true;
+  }
+
+  // Rumble can collapse live chat either by hiding aside.media-page-chat-aside-chat directly
+  // (display:none / .hidden) or by hiding the inner chat panel while keeping the aside in the DOM
+  // for the re-open button. Check both without relying on aside's layout width, which our own
+  // collapsed-state CSS intentionally sets to 0.
+  function isChatOpen(chat) {
+    if (!isElementShown(chat, document.body)) return false;
+    if (chat.style.width === '0px' || chat.style.maxWidth === '0px') return false;
+    if (/\\b(collapsed|chat-collapsed|chat-hidden|is-collapsed)\\b/i.test(String(chat.className || ''))) {
+      return false;
+    }
+    const toggle = document.querySelector(CFG.chatToggle);
+    if (toggle && toggle.getAttribute('aria-expanded') === 'false') return false;
+    const panels = chat.querySelectorAll(CFG.chatPanel);
+    if (panels.length > 0) {
+      let anyShown = false;
+      for (const panel of panels) {
+        if (isElementShown(panel, chat)) {
+          anyShown = true;
+          break;
+        }
+      }
+      if (!anyShown) return false;
+    }
+    return true;
+  }
+
+  function scheduleLiveSync() {
+    if (liveRaf) return;
+    let ran = false;
+    const run = () => {
+      ran = true;
+      liveRaf = 0;
+      const was = root().classList.contains(CFG.liveClass);
+      const now = syncLive();
+      if (was !== now) nudgePlayer();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      const id = requestAnimationFrame(run);
+      if (!ran) liveRaf = id;
+    } else {
+      run();
+    }
+  }
+
+  function ensureChatObserver(chat) {
+    if (!chat || typeof MutationObserver !== 'function') return;
+    if (observedChat === chat && chatObserver) return;
+    stopChatObserver();
+    observedChat = chat;
+    chatObserver = new MutationObserver((records) => {
+      for (const rec of records) {
+        const t = rec.target;
+        // Ignore live chat message rows inside #chat-history-list so incoming chat never churns
+        // layout checks; attribute changes on the list container itself still trigger a sync.
+        if (
+          t instanceof Element &&
+          t.id !== 'chat-history-list' &&
+          t.closest &&
+          t.closest('#chat-history-list')
+        ) {
+          continue;
+        }
+        scheduleLiveSync();
+        return;
+      }
+    });
+    chatObserver.observe(chat, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'aria-expanded'],
+      subtree: true,
+    });
+    if (chat.parentElement) {
+      chatObserver.observe(chat.parentElement, {
+        childList: true,
+        attributes: true,
+        attributeFilter: ['style', 'class'],
+      });
+    }
+  }
+
   // Detect whether a live chat sidebar is present and visible, so livestreams keep chat docked
   // beside the player while VODs and streams with collapsed chat expand to the full width.
   function syncLive() {
     if (!active || !isWatchPage() || userExited) {
+      stopChatObserver();
       root().classList.remove(CFG.liveClass);
       root().style.removeProperty('--sh-chat-w');
       return false;
     }
     const chat = document.querySelector(CFG.chatAside);
-    const visible = Boolean(chat && !chat.hidden && getComputedStyle(chat).display !== 'none');
+    if (!chat) {
+      stopChatObserver();
+      root().classList.remove(CFG.liveClass);
+      root().style.removeProperty('--sh-chat-w');
+      return false;
+    }
+    ensureChatObserver(chat);
+    const visible = isChatOpen(chat);
+    const wasVisible = root().classList.contains(CFG.liveClass);
     if (visible) {
-      const rect = chat.getBoundingClientRect();
-      if (rect.width >= 280 && rect.width <= 480) {
-        root().style.setProperty('--sh-chat-w', Math.round(rect.width) + 'px');
+      if (wasVisible) {
+        const rect = chat.getBoundingClientRect();
+        if (rect.width >= 280 && rect.width <= 480) {
+          root().style.setProperty('--sh-chat-w', Math.round(rect.width) + 'px');
+        }
       }
     } else {
       root().style.removeProperty('--sh-chat-w');
@@ -301,9 +507,12 @@ function controllerJs(settings) {
     let tries = 0;
     liveTimer = setInterval(() => {
       tries += 1;
-      if (syncLive() || tries >= 20 || !active || !isWatchPage() || userExited) {
+      const chatFound = Boolean(document.querySelector(CFG.chatAside));
+      const was = root().classList.contains(CFG.liveClass);
+      const now = syncLive();
+      if (was !== now) nudgePlayer();
+      if (chatFound || tries >= 20 || !active || !isWatchPage() || userExited) {
         stopLivePoll();
-        nudgePlayer();
       }
     }, 500);
   }
@@ -323,13 +532,15 @@ function controllerJs(settings) {
     root().classList.toggle(CFG.rootClass, on);
     if (!on) {
       stopLivePoll();
+      stopChatObserver();
       root().classList.remove(CFG.peekClass, CFG.liveClass);
       root().style.removeProperty('--sh-chat-w');
       nudgePlayer();
       return;
     }
     ensurePeek();
-    if (!syncLive()) startLivePoll();
+    syncLive();
+    if (!document.querySelector(CFG.chatAside)) startLivePoll();
     nudgePlayer();
   }
 
@@ -359,6 +570,14 @@ function controllerJs(settings) {
     return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
   }
 
+  function isChatToggleTarget(target) {
+    if (target.closest(CFG.chatToggle)) return true;
+    const btn = target.closest('button, [role="button"]');
+    if (!btn) return false;
+    const label = ((btn.getAttribute('aria-label') || '') + ' ' + (btn.getAttribute('title') || '')).toLowerCase();
+    return label.includes('chat');
+  }
+
   function onDocumentClick(e) {
     if (!active || !isWatchPage() || !(e.target instanceof Element)) return;
     if (e.isTrusted && e.target.closest(CFG.theaterBtn)) {
@@ -368,11 +587,14 @@ function controllerJs(settings) {
       sync();
       return;
     }
-    if (e.target.closest(CFG.chatToggle)) {
-      setTimeout(() => {
-        syncLive();
-        nudgePlayer();
-      }, 60);
+    if (isChatToggleTarget(e.target)) {
+      const recheck = () => {
+        const was = root().classList.contains(CFG.liveClass);
+        const now = syncLive();
+        if (was !== now) nudgePlayer();
+      };
+      setTimeout(recheck, 60);
+      setTimeout(recheck, 260);
     }
   }
 
@@ -385,6 +607,21 @@ function controllerJs(settings) {
     e.stopImmediatePropagation();
     userExited = !userExited;
     sync();
+  }
+
+  function clearPeek() {
+    root().classList.remove(CFG.peekClass);
+  }
+
+  // Safety net alongside header mouseleave: if the pointer moves well below the peeking header
+  // (e.g. diagonally across a gap or after a click), release sh-peek so the header never sticks.
+  function onPointerMove(e) {
+    if (!root().classList.contains(CFG.peekClass)) return;
+    const t = e.target;
+    if (t instanceof Element && (t.id === CFG.peekId || t.closest(CFG.header))) return;
+    const header = document.querySelector(CFG.header);
+    const bottom = header ? header.getBoundingClientRect().bottom : 64;
+    if (e.clientY > Math.max(80, bottom + 12)) clearPeek();
   }
 
   function watchUrl() {
@@ -413,6 +650,7 @@ function controllerJs(settings) {
 
     if (!active) {
       stopLivePoll();
+      stopChatObserver();
       stopWatchUrl();
       userExited = false;
       root().classList.remove(CFG.rootClass, CFG.peekClass, CFG.liveClass, CFG.fsClass);
@@ -422,12 +660,14 @@ function controllerJs(settings) {
       const peek = document.getElementById(CFG.peekId);
       if (peek) peek.remove();
       window.removeEventListener('popstate', onRouteChange);
+      window.removeEventListener('blur', clearPeek);
       document.removeEventListener('htmx:afterSwap', onHtmx);
       document.removeEventListener('htmx:afterSettle', onHtmx);
       document.removeEventListener('htmx:historyRestore', onHtmx);
       document.removeEventListener('fullscreenchange', syncFullscreen);
       document.removeEventListener('click', onDocumentClick, true);
       document.removeEventListener('keydown', onDocumentKeydown, true);
+      document.removeEventListener('mousemove', onPointerMove, true);
       nudgePlayer();
       return;
     }
@@ -436,12 +676,14 @@ function controllerJs(settings) {
     lastRoute = location.pathname + location.search;
     userExited = false;
     window.addEventListener('popstate', onRouteChange);
+    window.addEventListener('blur', clearPeek);
     document.addEventListener('htmx:afterSwap', onHtmx);
     document.addEventListener('htmx:afterSettle', onHtmx);
     document.addEventListener('htmx:historyRestore', onHtmx);
     document.addEventListener('fullscreenchange', syncFullscreen);
     document.addEventListener('click', onDocumentClick, true);
     document.addEventListener('keydown', onDocumentKeydown, true);
+    document.addEventListener('mousemove', onPointerMove, true);
     watchUrl();
     whenReady(sync);
   }
